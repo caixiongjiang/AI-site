@@ -3,14 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { MessageSquare, ChevronDown, FileText, BarChart3, Globe, Code } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-interface Mode {
-  id: string;
-  name: string;
-  icon: React.ComponentType<{ className?: string }>;
-  description: string;
-  placeholder: string;
-}
+import { Mode } from "@/lib/types";
 
 const modes: Mode[] = [
   {

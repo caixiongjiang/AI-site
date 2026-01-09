@@ -41,3 +41,11 @@ export interface MountedSource {
   type: "kb" | "file";
   icon: string;
 }
+
+export interface Mode {
+  id: string;
+  name: string;
+  icon: React.ComponentType<{ className?: string }>;
+  description: string;
+  placeholder: string;
+}

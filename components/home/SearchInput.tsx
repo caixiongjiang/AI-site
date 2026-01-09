@@ -5,8 +5,9 @@ import { Send, Paperclip, Sparkles } from "lucide-react";
 import { ModeSelector } from "./ModeSelector";
 import { MessageSquare } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { Mode } from "@/lib/types";
 
-const defaultMode = {
+const defaultMode: Mode = {
   id: "chat",
   name: "普通对话",
   icon: MessageSquare,
@@ -37,7 +38,7 @@ export const SearchInput = () => {
       <div className="group rounded-2xl border-2 border-transparent bg-dark-card p-4.5 shadow-2xl transition-all focus-within:border-primary focus-within:shadow-primary/20">
         <div className="flex items-center gap-3">
           {/* Mode Selector */}
-          <ModeSelector value={mode} onChange={setMode} />
+          <ModeSelector value={mode} onChange={(newMode) => setMode(newMode)} />
 
           {/* @ Symbol */}
           <span className="text-muted">@</span>

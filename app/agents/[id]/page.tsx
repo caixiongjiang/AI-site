@@ -1,18 +1,13 @@
 "use client";
 
-import { use } from "react";
 import { mockAgents } from "@/lib/mock-data";
 import { AgentInfo } from "@/components/agents/AgentInfo";
 import { ChatPanel } from "@/components/agents/ChatPanel";
 import { Check } from "lucide-react";
 import Link from "next/link";
 
-export default function AgentUsagePage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = use(params);
+export default function AgentUsagePage({ params }: { params: { id: string } }) {
+  const { id } = params;
   const agent = mockAgents.find((a) => a.id === id) || mockAgents[0];
 
   return (
@@ -69,13 +64,13 @@ export default function AgentUsagePage({
               <ul className="space-y-2">
                 {[
                   "在右侧对话框中直接输入问题或需求",
-                  "点击"挂载知识库"快速关联您的文档库",
+                  "点击&ldquo;挂载知识库&rdquo;快速关联您的文档库",
                   "上传文件进行专业分析",
                   "查看分析结果并获取建议",
                 ].map((item, index) => (
                   <li key={index} className="flex items-start gap-2 text-sm text-gray-300">
                     <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                    <span>{item}</span>
+                    <span dangerouslySetInnerHTML={{ __html: item }} />
                   </li>
                 ))}
               </ul>
