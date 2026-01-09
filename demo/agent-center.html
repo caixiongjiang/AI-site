@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能体应用中心</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: #1A1A1A;
+            color: #E0E0E0;
+            overflow-x: hidden;
+        }
+
+        /* 左侧导航栏 */
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 60px;
+            height: 100vh;
+            background: #252526;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px 0;
+            z-index: 1000;
+        }
+
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #00B36B, #00D980);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 30px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .user-avatar:hover {
+            transform: scale(1.1);
+        }
+
+        .nav-items {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .nav-item {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            position: relative;
+        }
+
+        .nav-item:hover {
+            background: rgba(0, 179, 107, 0.1);
+        }
+
+        .nav-item.active {
+            background: rgba(0, 179, 107, 0.2);
+        }
+
+        .nav-item.active::before {
+            content: '';
+            position: absolute;
+            left: -10px;
+            width: 3px;
+            height: 20px;
+            background: #00B36B;
+            border-radius: 0 3px 3px 0;
+        }
+
+        .nav-icon {
+            font-size: 20px;
+        }
+
+        .nav-bottom {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        /* 主内容区 */
+        .main-content {
+            margin-left: 60px;
+            min-height: 100vh;
+            padding: 40px 60px;
+        }
+
+        /* 顶部栏 */
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 40px;
+        }
+
+        .page-title {
+            font-size: 32px;
+            font-weight: 300;
+            color: #E0E0E0;
+        }
+
+        .new-agent-btn {
+            background: #00B36B;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.3s;
+        }
+
+        .new-agent-btn:hover {
+            background: #00D980;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(0, 179, 107, 0.3);
+        }
+
+        /* 搜索框 */
+        .search-box {
+            background: #252526;
+            border-radius: 10px;
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 40px;
+            max-width: 500px;
+            border: 2px solid transparent;
+            transition: all 0.3s;
+        }
+
+        .search-box:focus-within {
+            border-color: #00B36B;
+        }
+
+        .search-icon {
+            color: #888;
+            font-size: 18px;
+        }
+
+        .search-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: #E0E0E0;
+            font-size: 14px;
+        }
+
+        .search-input::placeholder {
+            color: #666;
+        }
+
+        /* 分类标题 */
+        .section-title {
+            font-size: 20px;
+            font-weight: 400;
+            color: #C0C0C0;
+            margin-bottom: 24px;
+        }
+
+        /* 智能体卡片网格 */
+        .agent-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 24px;
+            margin-bottom: 60px;
+        }
+
+        /* 智能体卡片 */
+        .agent-card {
+            background: #252526;
+            border-radius: 16px;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+            border: 2px solid transparent;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .agent-card:hover {
+            border-color: #00B36B;
+            transform: translateY(-4px);
+            box-shadow: 0 8px 32px rgba(0, 179, 107, 0.2);
+        }
+
+        .agent-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(90deg, #00B36B, #00D980);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .agent-card:hover::before {
+            opacity: 1;
+        }
+
+        /* 卡片头部 */
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .card-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, rgba(0, 179, 107, 0.2), rgba(0, 217, 128, 0.1));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            flex-shrink: 0;
+        }
+
+        .card-title-area {
+            flex: 1;
+        }
+
+        .card-title {
+            font-size: 16px;
+            font-weight: 500;
+            color: #E0E0E0;
+            margin-bottom: 4px;
+        }
+
+        .card-category {
+            font-size: 12px;
+            color: #888;
+        }
+
+        /* 卡片描述 */
+        .card-description {
+            font-size: 13px;
+            line-height: 1.6;
+            color: #A0A0A0;
+            flex: 1;
+        }
+
+        /* 卡片底部 */
+        .card-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 12px;
+            border-top: 1px solid #333;
+        }
+
+        .card-stats {
+            display: flex;
+            gap: 16px;
+            font-size: 12px;
+            color: #888;
+        }
+
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .use-btn {
+            background: #00B36B;
+            color: white;
+            border: none;
+            padding: 8px 20px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+
+        .use-btn:hover {
+            background: #00D980;
+            transform: scale(1.05);
+        }
+
+        /* 标签 */
+        .card-tags {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .tag {
+            background: rgba(0, 179, 107, 0.15);
+            color: #00D980;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            border: 1px solid rgba(0, 179, 107, 0.3);
+        }
+
+        /* 特殊卡片样式 */
+        .agent-card.featured {
+            background: linear-gradient(135deg, rgba(0, 179, 107, 0.05), rgba(0, 217, 128, 0.02));
+        }
+
+        /* 空状态 */
+        .empty-state {
+            text-align: center;
+            padding: 80px 20px;
+            color: #666;
+        }
+
+        .empty-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        .empty-text {
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <!-- 左侧导航栏 -->
+    <div class="sidebar">
+        <div class="user-avatar" title="用户中心">
+            <span style="color: white; font-weight: bold;">蔡</span>
+        </div>
+
+        <div class="nav-items">
+            <div class="nav-item" title="首页" onclick="location.href='index.html'">
+                <span class="nav-icon">🏠</span>
+            </div>
+            <div class="nav-item active" title="Agent应用">
+                <span class="nav-icon">🤖</span>
+            </div>
+            <div class="nav-item" title="知识库" onclick="location.href='knowledge-qa.html'">
+                <span class="nav-icon">📚</span>
+            </div>
+        </div>
+
+        <div class="nav-bottom">
+            <div class="nav-item" title="设置">
+                <span class="nav-icon">⚙️</span>
+            </div>
+            <div class="nav-item" title="帮助">
+                <span class="nav-icon">❓</span>
+            </div>
+            <div class="nav-item" title="作者简介" onclick="alert('作者简介功能')">
+                <span class="nav-icon">ℹ️</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主内容区 -->
+    <div class="main-content">
+        <!-- 顶部栏 -->
+        <div class="top-bar">
+            <h1 class="page-title">智能体应用中心</h1>
+            <!-- 注意：根据文档要求，这里不应该有创建按钮 -->
+        </div>
+
+        <!-- 搜索框 -->
+        <div class="search-box">
+            <span class="search-icon">🔍</span>
+            <input type="text" class="search-input" placeholder="搜索入智能体...">
+        </div>
+
+        <!-- 官方智能体 -->
+        <div class="section-title">官方智能体</div>
+        <div class="agent-grid" id="agentGrid">
+            <!-- 合同风险审查 -->
+            <div class="agent-card featured" onclick="openAgent('合同风险审查')">
+                <div class="card-header">
+                    <div class="card-icon">📄</div>
+                    <div class="card-title-area">
+                        <div class="card-title">合同风险审查</div>
+                        <div class="card-category">法务 · 风险管理</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    快速识别合同隐患条款，为您提供完整的法律风险报告。分析包括但不限于免责条款、违约责任、知识产权保护等。
+                </div>
+                <div class="card-tags">
+                    <span class="tag">法律</span>
+                    <span class="tag">合同</span>
+                </div>
+                <div class="card-footer">
+                    <div class="card-stats">
+                        <div class="stat-item">
+                            <span>👥</span>
+                            <span>1.2k</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>⭐</span>
+                            <span>4.8</span>
+                        </div>
+                    </div>
+                    <button class="use-btn" onclick="event.stopPropagation(); openAgent('合同风险审查')">去使用</button>
+                </div>
+            </div>
+
+            <!-- 企业知识问答 -->
+            <div class="agent-card" onclick="openAgent('企业知识问答')">
+                <div class="card-header">
+                    <div class="card-icon">📚</div>
+                    <div class="card-title-area">
+                        <div class="card-title">企业知识问答</div>
+                        <div class="card-category">知识管理</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    提供精确的基础知识检索，企业规程快速查询及答复。
+                </div>
+                <div class="card-tags">
+                    <span class="tag">问答</span>
+                    <span class="tag">知识库</span>
+                </div>
+                <div class="card-footer">
+                    <div class="card-stats">
+                        <div class="stat-item">
+                            <span>👥</span>
+                            <span>856</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>⭐</span>
+                            <span>4.6</span>
+                        </div>
+                    </div>
+                    <button class="use-btn" onclick="event.stopPropagation(); openAgent('企业知识问答')">去使用</button>
+                </div>
+            </div>
+
+            <!-- 个人方播 -->
+            <div class="agent-card" onclick="openAgent('个人方播')">
+                <div class="card-header">
+                    <div class="card-icon">💬</div>
+                    <div class="card-title-area">
+                        <div class="card-title">个人方播</div>
+                        <div class="card-category">内容创作</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    根据您的信息规建站经验构建，帮助调优您的推文。
+                </div>
+                <div class="card-tags">
+                    <span class="tag">写作</span>
+                </div>
+                <div class="card-footer">
+                    <div class="card-stats">
+                        <div class="stat-item">
+                            <span>👥</span>
+                            <span>642</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>⭐</span>
+                            <span>4.7</span>
+                        </div>
+                    </div>
+                    <button class="use-btn" onclick="event.stopPropagation(); openAgent('个人方播')">去使用</button>
+                </div>
+            </div>
+
+            <!-- 营销中心 -->
+            <div class="agent-card" onclick="openAgent('营销中心')">
+                <div class="card-header">
+                    <div class="card-icon">🎯</div>
+                    <div class="card-title-area">
+                        <div class="card-title">营销中心</div>
+                        <div class="card-category">市场营销</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    帮您获得巧妙问询材料，管营销创意规划内容，规划您快捷策略定制。
+                </div>
+                <div class="card-tags">
+                    <span class="tag">营销</span>
+                    <span class="tag">策略</span>
+                </div>
+                <div class="card-footer">
+                    <div class="card-stats">
+                        <div class="stat-item">
+                            <span>👥</span>
+                            <span>523</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>⭐</span>
+                            <span>4.5</span>
+                        </div>
+                    </div>
+                    <button class="use-btn" onclick="event.stopPropagation(); openAgent('营销中心')">去使用</button>
+                </div>
+            </div>
+
+            <!-- 文档翻译 -->
+            <div class="agent-card" onclick="openAgent('文档翻译')">
+                <div class="card-header">
+                    <div class="card-icon">🌐</div>
+                    <div class="card-title-area">
+                        <div class="card-title">文档翻译</div>
+                        <div class="card-category">语言处理</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    精确高效支持多语言的文档翻译服务，适用于商务、技术、学术等领域。
+                </div>
+                <div class="card-tags">
+                    <span class="tag">翻译</span>
+                    <span class="tag">多语言</span>
+                </div>
+                <div class="card-footer">
+                    <div class="card-stats">
+                        <div class="stat-item">
+                            <span>👥</span>
+                            <span>1.5k</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>⭐</span>
+                            <span>4.9</span>
+                        </div>
+                    </div>
+                    <button class="use-btn" onclick="event.stopPropagation(); openAgent('文档翻译')">去使用</button>
+                </div>
+            </div>
+
+            <!-- 营销应用盒 -->
+            <div class="agent-card" onclick="openAgent('营销应用盒')">
+                <div class="card-header">
+                    <div class="card-icon">📦</div>
+                    <div class="card-title-area">
+                        <div class="card-title">营销应用盒</div>
+                        <div class="card-category">营销工具集</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    综合营销方案规划编制规整服务，掌握易具规划指导，帮解规全整增物。
+                </div>
+                <div class="card-tags">
+                    <span class="tag">营销</span>
+                </div>
+                <div class="card-footer">
+                    <div class="card-stats">
+                        <div class="stat-item">
+                            <span>👥</span>
+                            <span>389</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>⭐</span>
+                            <span>4.4</span>
+                        </div>
+                    </div>
+                    <button class="use-btn" onclick="event.stopPropagation(); openAgent('营销应用盒')">去使用</button>
+                </div>
+            </div>
+
+            <!-- 清讲营伟人羞酱训调 -->
+            <div class="agent-card" onclick="openAgent('清讲营伟人羞酱训调')">
+                <div class="card-header">
+                    <div class="card-icon">🎓</div>
+                    <div class="card-title-area">
+                        <div class="card-title">清讲营伟人羞酱训调</div>
+                        <div class="card-category">培训</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    入检影多定回适或处置培训站建經络调湿规。
+                </div>
+                <div class="card-tags">
+                    <span class="tag">培训</span>
+                </div>
+                <div class="card-footer">
+                    <div class="card-stats">
+                        <div class="stat-item">
+                            <span>👥</span>
+                            <span>267</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>⭐</span>
+                            <span>4.3</span>
+                        </div>
+                    </div>
+                    <button class="use-btn" onclick="event.stopPropagation(); openAgent('清讲营伟人羞酱训调')">去使用</button>
+                </div>
+            </div>
+
+            <!-- 其他方程 -->
+            <div class="agent-card" onclick="openAgent('其他方程')">
+                <div class="card-header">
+                    <div class="card-icon">🔧</div>
+                    <div class="card-title-area">
+                        <div class="card-title">其他方程</div>
+                        <div class="card-category">工具</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    项频填住程视线特备受雅服装管规湿，视屏整站境物规期，帮解规正调听。
+                </div>
+                <div class="card-tags">
+                    <span class="tag">工具</span>
+                </div>
+                <div class="card-footer">
+                    <div class="card-stats">
+                        <div class="stat-item">
+                            <span>👥</span>
+                            <span>445</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>⭐</span>
+                            <span>4.5</span>
+                        </div>
+                    </div>
+                    <button class="use-btn" onclick="event.stopPropagation(); openAgent('其他方程')">去使用</button>
+                </div>
+            </div>
+
+            <!-- 周报生成 -->
+            <div class="agent-card" onclick="openAgent('周报生成')">
+                <div class="card-header">
+                    <div class="card-icon">📊</div>
+                    <div class="card-title-area">
+                        <div class="card-title">周报生成</div>
+                        <div class="card-category">办公效率</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    根据您提供的工作记录，自动生成专业规范的工作周报，节省您的时间。
+                </div>
+                <div class="card-tags">
+                    <span class="tag">办公</span>
+                    <span class="tag">写作</span>
+                </div>
+                <div class="card-footer">
+                    <div class="card-stats">
+                        <div class="stat-item">
+                            <span>👥</span>
+                            <span>982</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>⭐</span>
+                            <span>4.7</span>
+                        </div>
+                    </div>
+                    <button class="use-btn" onclick="event.stopPropagation(); openAgent('周报生成')">去使用</button>
+                </div>
+            </div>
+
+            <!-- 智能论调 -->
+            <div class="agent-card" onclick="openAgent('智能论调')">
+                <div class="card-header">
+                    <div class="card-icon">💡</div>
+                    <div class="card-title-area">
+                        <div class="card-title">智能论调</div>
+                        <div class="card-category">分析</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    快速整理并深度规范市场趋势、竞品分析或研究话题。
+                </div>
+                <div class="card-tags">
+                    <span class="tag">分析</span>
+                </div>
+                <div class="card-footer">
+                    <div class="card-stats">
+                        <div class="stat-item">
+                            <span>👥</span>
+                            <span>334</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>⭐</span>
+                            <span>4.6</span>
+                        </div>
+                    </div>
+                    <button class="use-btn" onclick="event.stopPropagation(); openAgent('智能论调')">去使用</button>
+                </div>
+            </div>
+
+            <!-- 解能论调 -->
+            <div class="agent-card" onclick="openAgent('解能论调')">
+                <div class="card-header">
+                    <div class="card-icon">🔍</div>
+                    <div class="card-title-area">
+                        <div class="card-title">解能论调</div>
+                        <div class="card-category">研究</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    供信管架进，类他造世培别碗时规建沉，测频规规培频碗规。
+                </div>
+                <div class="card-tags">
+                    <span class="tag">研究</span>
+                </div>
+                <div class="card-footer">
+                    <div class="card-stats">
+                        <div class="stat-item">
+                            <span>👥</span>
+                            <span>289</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>⭐</span>
+                            <span>4.4</span>
+                        </div>
+                    </div>
+                    <button class="use-btn" onclick="event.stopPropagation(); openAgent('解能论调')">去使用</button>
+                </div>
+            </div>
+
+            <!-- 企业组织问答 -->
+            <div class="agent-card" onclick="openAgent('企业组织问答')">
+                <div class="card-header">
+                    <div class="card-icon">🏢</div>
+                    <div class="card-title-area">
+                        <div class="card-title">企业组织问答</div>
+                        <div class="card-category">组织管理</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    快速查询盘查，找位提高其或规始组织信问湿。
+                </div>
+                <div class="card-tags">
+                    <span class="tag">组织</span>
+                </div>
+                <div class="card-footer">
+                    <div class="card-stats">
+                        <div class="stat-item">
+                            <span>👥</span>
+                            <span>567</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>⭐</span>
+                            <span>4.5</span>
+                        </div>
+                    </div>
+                    <button class="use-btn" onclick="event.stopPropagation(); openAgent('企业组织问答')">去使用</button>
+                </div>
+            </div>
+
+            <!-- 代码审查 -->
+            <div class="agent-card" onclick="openAgent('代码审查')">
+                <div class="card-header">
+                    <div class="card-icon">💻</div>
+                    <div class="card-title-area">
+                        <div class="card-title">代码审查</div>
+                        <div class="card-category">开发工具</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    提供详细的代码质量审查，包括性能优化建议、安全漏洞检测和最佳实践推荐。
+                </div>
+                <div class="card-tags">
+                    <span class="tag">开发</span>
+                    <span class="tag">代码</span>
+                </div>
+                <div class="card-footer">
+                    <div class="card-stats">
+                        <div class="stat-item">
+                            <span>👥</span>
+                            <span>1.8k</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>⭐</span>
+                            <span>4.9</span>
+                        </div>
+                    </div>
+                    <button class="use-btn" onclick="event.stopPropagation(); openAgent('代码审查')">去使用</button>
+                </div>
+            </div>
+
+            <!-- 合同风险审查 -->
+            <div class="agent-card" onclick="openAgent('合同风险审查2')">
+                <div class="card-header">
+                    <div class="card-icon">📋</div>
+                    <div class="card-title-area">
+                        <div class="card-title">合同风险审查</div>
+                        <div class="card-category">法务</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    通操整规调，布其感规规机规查看規。
+                </div>
+                <div class="card-tags">
+                    <span class="tag">法务</span>
+                </div>
+                <div class="card-footer">
+                    <div class="card-stats">
+                        <div class="stat-item">
+                            <span>👥</span>
+                            <span>678</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>⭐</span>
+                            <span>4.6</span>
+                        </div>
+                    </div>
+                    <button class="use-btn" onclick="event.stopPropagation(); openAgent('合同风险审查2')">去使用</button>
+                </div>
+            </div>
+
+            <!-- 南僚翻绍 -->
+            <div class="agent-card" onclick="openAgent('南僚翻绍')">
+                <div class="card-header">
+                    <div class="card-icon">📝</div>
+                    <div class="card-title-area">
+                        <div class="card-title">南僚翻绍</div>
+                        <div class="card-category">文档处理</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    规法独频通雅规则规程，规便制规规通刚规。
+                </div>
+                <div class="card-tags">
+                    <span class="tag">文档</span>
+                </div>
+                <div class="card-footer">
+                    <div class="card-stats">
+                        <div class="stat-item">
+                            <span>👥</span>
+                            <span>234</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>⭐</span>
+                            <span>4.2</span>
+                        </div>
+                    </div>
+                    <button class="use-btn" onclick="event.stopPropagation(); openAgent('南僚翻绍')">去使用</button>
+                </div>
+            </div>
+
+            <!-- 繁酶文化 -->
+            <div class="agent-card" onclick="openAgent('繁酶文化')">
+                <div class="card-header">
+                    <div class="card-icon">🎭</div>
+                    <div class="card-title-area">
+                        <div class="card-title">繁酶文化</div>
+                        <div class="card-category">文化</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    规建管建雅建规架通规，视持建规建通架建。
+                </div>
+                <div class="card-tags">
+                    <span class="tag">文化</span>
+                </div>
+                <div class="card-footer">
+                    <div class="card-stats">
+                        <div class="stat-item">
+                            <span>👥</span>
+                            <span>156</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>⭐</span>
+                            <span>4.3</span>
+                        </div>
+                    </div>
+                    <button class="use-btn" onclick="event.stopPropagation(); openAgent('繁酶文化')">去使用</button>
+                </div>
+            </div>
+
+            <!-- 端硬收格时响 -->
+            <div class="agent-card" onclick="openAgent('端硬收格时响')">
+                <div class="card-header">
+                    <div class="card-icon">📁</div>
+                    <div class="card-title-area">
+                        <div class="card-title">端硬收格时响</div>
+                        <div class="card-category">数据</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    规便制格规制格管，视便制规规通刚规。
+                </div>
+                <div class="card-tags">
+                    <span class="tag">数据</span>
+                </div>
+                <div class="card-footer">
+                    <div class="card-stats">
+                        <div class="stat-item">
+                            <span>👥</span>
+                            <span>423</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>⭐</span>
+                            <span>4.4</span>
+                        </div>
+                    </div>
+                    <button class="use-btn" onclick="event.stopPropagation(); openAgent('端硬收格时响')">去使用</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 打开智能体使用页面
+        function openAgent(agentName) {
+            sessionStorage.setItem('currentAgent', agentName);
+            window.location.href = 'agent-usage.html';
+        }
+
+        // 搜索功能
+        const searchInput = document.querySelector('.search-input');
+        searchInput.addEventListener('input', function(e) {
+            const searchTerm = e.target.value.toLowerCase();
+            const cards = document.querySelectorAll('.agent-card');
+            
+            cards.forEach(card => {
+                const title = card.querySelector('.card-title').textContent.toLowerCase();
+                const description = card.querySelector('.card-description').textContent.toLowerCase();
+                
+                if (title.includes(searchTerm) || description.includes(searchTerm)) {
+                    card.style.display = 'flex';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+        });
+    </script>
+</body>
+</html>

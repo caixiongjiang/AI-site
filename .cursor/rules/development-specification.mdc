@@ -1,0 +1,55 @@
+---
+alwaysApply: true
+---
+
+# Tech Stack Constraints (Strict)
+- **Framework**: Next.js 14+ (App Router). DO NOT use the Pages Router.
+- **Language**: TypeScript (Strict mode).
+- **Styling**: Tailwind CSS. DO NOT create separate `.css` files or use `styled-components`.
+- **UI Library**: shadcn/ui. Always assume these components are available in `@/components/ui`.
+- **Icons**: Lucide React.
+- **State Management**: React Hooks (`useState`, `useEffect`, `useContext`) or Zustand.
+- **AI Integration**: Vercel AI SDK (`ai/react`, `useChat`, `useCompletion`).
+- **Data Fetching**: Native `fetch` or Vercel AI SDK for streaming.
+
+# Coding Guidelines
+
+## Functional Components
+- Use const arrow functions for components.
+- Always strict type Props.
+- Example: `const ChatBox = ({ messages }: { messages: Message[] }) => { ... }`
+
+## Tailwind CSS & Styling
+- Use utility classes for everything.
+- Use `cn()` utility (from shadcn standard) for conditional class merging.
+- Example: `className={cn("bg-blue-500", isError && "bg-red-500")}`
+- Focus on mobile responsiveness (use `md:`, `lg:` prefixes).
+
+## Project Structure (Next.js App Router)
+- Pages go in `app/page.tsx` or `app/(routes)/.../page.tsx`.
+- Reusable components go in `components/`.
+- UI primitives (buttons, inputs) go in `components/ui/`.
+- Utility functions go in `lib/`.
+
+## AI/LLM Specifics
+- When implementing chat interfaces, always use Vercel AI SDK's `useChat` hook for automatic state management and streaming handling.
+- For rendering Markdown responses from LLMs, use `react-markdown` with `remark-gfm`.
+- Ensure UI handles "Thinking" or "Loading" states gracefully.
+
+## Explanation Style
+- Since the user is a Backend Engineer, explain frontend concepts via analogies:
+  - Explain `props` as "function arguments".
+  - Explain `state` as "variables that trigger a re-render when changed".
+  - Explain `useEffect` as "side effects like database connections or signal handlers".
+- Keep logic simple. Avoid over-engineering optimization (like `useMemo`) unless necessary.
+
+# Code Generation Rules
+- **Don't leave placeholders.** Write the full code implementation.
+- **Check for imports.** Ensure all components (especially shadcn/ui) are imported correctly from `@/components/ui/...`.
+- **Error Handling.** Add basic error handling for API calls.
+- **Type Safety.** Avoid `any`. Define interfaces for your data models (e.g., `interface Message { role: string; content: string }`).
+
+# Integration with Python Backend
+- Assume the backend API runs on `http://localhost:8000`.
+- When making fetch requests, explain CORS issues if likely to occur.
+- For Streaming APIs (SSE), ensure the frontend reader handles the stream correctly (or use Vercel AI SDK to handle it automatically).

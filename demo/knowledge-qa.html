@@ -1,0 +1,1174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>知识库问答</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: #1A1A1A;
+            color: #E0E0E0;
+            overflow: hidden;
+        }
+
+        /* 左侧导航栏 */
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 60px;
+            height: 100vh;
+            background: #252526;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px 0;
+            z-index: 1000;
+        }
+
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #00B36B, #00D980);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 30px;
+            cursor: pointer;
+        }
+
+        .nav-items {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .nav-item {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            position: relative;
+        }
+
+        .nav-item:hover {
+            background: rgba(0, 179, 107, 0.1);
+        }
+
+        .nav-item.active {
+            background: rgba(0, 179, 107, 0.2);
+        }
+
+        .nav-item.active::before {
+            content: '';
+            position: absolute;
+            left: -10px;
+            width: 3px;
+            height: 20px;
+            background: #00B36B;
+            border-radius: 0 3px 3px 0;
+        }
+
+        .nav-icon {
+            font-size: 20px;
+        }
+
+        .nav-bottom {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        /* 主布局 */
+        .main-layout {
+            margin-left: 60px;
+            height: 100vh;
+            display: flex;
+            position: relative;
+        }
+
+        /* 左侧面板：知识库列表 */
+        .left-panel {
+            width: 280px;
+            background: #1E1E1E;
+            border-right: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+
+        .panel-header {
+            padding: 20px;
+            border-bottom: 1px solid #333;
+        }
+
+        .panel-title {
+            font-size: 18px;
+            color: #E0E0E0;
+            margin-bottom: 16px;
+        }
+
+        .search-box {
+            background: #252526;
+            border-radius: 8px;
+            padding: 10px 14px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border: 2px solid transparent;
+            transition: all 0.3s;
+        }
+
+        .search-box:focus-within {
+            border-color: #00B36B;
+        }
+
+        .search-icon {
+            color: #888;
+            font-size: 16px;
+        }
+
+        .search-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: #E0E0E0;
+            font-size: 13px;
+        }
+
+        .search-input::placeholder {
+            color: #666;
+        }
+
+        /* 知识库列表 */
+        .knowledge-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+        }
+
+        .kb-item {
+            padding: 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #252526;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .kb-item:hover {
+            background: #2A2A2A;
+        }
+
+        .kb-item.active {
+            background: rgba(0, 179, 107, 0.15);
+            border-left: 3px solid #00B36B;
+        }
+
+        .kb-icon {
+            font-size: 24px;
+            flex-shrink: 0;
+        }
+
+        .kb-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .kb-name {
+            font-size: 14px;
+            color: #E0E0E0;
+            margin-bottom: 4px;
+            font-weight: 500;
+        }
+
+        .kb-meta {
+            font-size: 11px;
+            color: #888;
+        }
+
+        /* 中间面板：文件列表或文档内容 */
+        .middle-panel {
+            flex: 1;
+            background: #1A1A1A;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            transition: margin-right 0.3s ease;
+        }
+
+        .middle-panel.with-chat {
+            margin-right: 420px;
+        }
+
+        /* 中间面板头部 */
+        .middle-header {
+            padding: 20px 30px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .middle-title {
+            font-size: 20px;
+            color: #E0E0E0;
+        }
+
+        .breadcrumb {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: #888;
+            margin-top: 6px;
+        }
+
+        .breadcrumb-link {
+            color: #00B36B;
+            cursor: pointer;
+            transition: color 0.2s;
+        }
+
+        .breadcrumb-link:hover {
+            color: #00D980;
+        }
+
+        .breadcrumb-separator {
+            color: #666;
+        }
+
+        .middle-actions {
+            display: flex;
+            gap: 12px;
+        }
+
+        .action-btn {
+            background: #252526;
+            border: 1px solid #333;
+            color: #E0E0E0;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+
+        .action-btn:hover {
+            background: #2A2A2A;
+            border-color: #00B36B;
+        }
+
+        .action-btn.primary {
+            background: #00B36B;
+            border-color: #00B36B;
+            color: white;
+        }
+
+        .action-btn.primary:hover {
+            background: #00D980;
+        }
+
+        /* 中间内容区 */
+        .middle-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 30px;
+        }
+
+        /* 欢迎状态 */
+        .welcome-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            text-align: center;
+        }
+
+        .welcome-icon {
+            font-size: 72px;
+            margin-bottom: 24px;
+            opacity: 0.6;
+        }
+
+        .welcome-title {
+            font-size: 24px;
+            color: #E0E0E0;
+            margin-bottom: 12px;
+        }
+
+        .welcome-text {
+            font-size: 14px;
+            color: #888;
+            line-height: 1.6;
+        }
+
+        /* 文件列表视图 */
+        .file-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 16px;
+        }
+
+        .file-card {
+            background: #252526;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .file-card:hover {
+            border-color: #00B36B;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 179, 107, 0.15);
+        }
+
+        .file-card-icon {
+            font-size: 36px;
+        }
+
+        .file-card-name {
+            font-size: 14px;
+            color: #E0E0E0;
+            font-weight: 500;
+            word-break: break-all;
+        }
+
+        .file-card-meta {
+            font-size: 12px;
+            color: #888;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        /* 文档内容视图 */
+        .document-view {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .document-header {
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #333;
+        }
+
+        .document-title {
+            font-size: 28px;
+            color: #E0E0E0;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .document-icon {
+            font-size: 32px;
+        }
+
+        .document-meta {
+            display: flex;
+            gap: 20px;
+            font-size: 13px;
+            color: #888;
+        }
+
+        .meta-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .document-content {
+            background: #252526;
+            border-radius: 12px;
+            padding: 30px;
+            line-height: 1.8;
+            font-size: 14px;
+            color: #C0C0C0;
+            margin-bottom: 30px;
+        }
+
+        .document-content h1,
+        .document-content h2,
+        .document-content h3 {
+            color: #E0E0E0;
+            margin-top: 24px;
+            margin-bottom: 12px;
+        }
+
+        .document-content h1 {
+            font-size: 22px;
+        }
+
+        .document-content h2 {
+            font-size: 18px;
+        }
+
+        .document-content h3 {
+            font-size: 16px;
+        }
+
+        .document-content p {
+            margin-bottom: 16px;
+        }
+
+        .ask-btn-container {
+            position: sticky;
+            bottom: 30px;
+            display: flex;
+            justify-content: center;
+            margin-top: 30px;
+        }
+
+        .ask-xiaocai-btn {
+            background: linear-gradient(135deg, #00B36B, #00D980);
+            color: white;
+            border: none;
+            padding: 14px 32px;
+            border-radius: 50px;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 4px 16px rgba(0, 179, 107, 0.3);
+            transition: all 0.3s;
+        }
+
+        .ask-xiaocai-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 24px rgba(0, 179, 107, 0.4);
+        }
+
+        .ask-xiaocai-btn:active {
+            transform: translateY(0);
+        }
+
+        /* 右侧问答侧边栏 */
+        .chat-sidebar {
+            position: fixed;
+            right: 0;
+            top: 0;
+            width: 420px;
+            height: 100vh;
+            background: #1E1E1E;
+            border-left: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+            transform: translateX(100%);
+            transition: transform 0.3s ease;
+            z-index: 900;
+            box-shadow: -4px 0 24px rgba(0, 0, 0, 0.3);
+        }
+
+        .chat-sidebar.show {
+            transform: translateX(0);
+        }
+
+        .chat-header {
+            padding: 20px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chat-title-area {
+            flex: 1;
+        }
+
+        .chat-title {
+            font-size: 16px;
+            color: #E0E0E0;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .chat-subtitle {
+            font-size: 12px;
+            color: #888;
+        }
+
+        .close-chat-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: transparent;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            font-size: 18px;
+        }
+
+        .close-chat-btn:hover {
+            background: rgba(255, 107, 107, 0.2);
+            color: #FF6B6B;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        /* 消息气泡 */
+        .message {
+            display: flex;
+            gap: 10px;
+            animation: fadeIn 0.3s;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+
+        .message-avatar.bot {
+            background: linear-gradient(135deg, #00B36B, #00D980);
+        }
+
+        .message-avatar.user {
+            background: #333;
+        }
+
+        .message-content {
+            flex: 1;
+        }
+
+        .message-bubble {
+            background: #252526;
+            border-radius: 10px;
+            padding: 12px 14px;
+            line-height: 1.6;
+            font-size: 13px;
+            color: #E0E0E0;
+        }
+
+        .message.user .message-bubble {
+            background: rgba(0, 179, 107, 0.15);
+        }
+
+        .message-time {
+            font-size: 10px;
+            color: #666;
+            margin-top: 4px;
+            margin-left: 4px;
+        }
+
+        .message-reference {
+            margin-top: 8px;
+            background: rgba(0, 179, 107, 0.08);
+            border-left: 3px solid #00B36B;
+            border-radius: 0 6px 6px 0;
+            padding: 8px 12px;
+            font-size: 11px;
+            color: #00D980;
+        }
+
+        /* 输入区域 */
+        .chat-input-area {
+            padding: 16px;
+            border-top: 1px solid #333;
+        }
+
+        .chat-input-wrapper {
+            background: #252526;
+            border-radius: 12px;
+            border: 2px solid transparent;
+            padding: 10px 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: all 0.3s;
+        }
+
+        .chat-input-wrapper:focus-within {
+            border-color: #00B36B;
+        }
+
+        .chat-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: #E0E0E0;
+            font-size: 13px;
+            font-family: inherit;
+            resize: none;
+            max-height: 100px;
+        }
+
+        .chat-input::placeholder {
+            color: #666;
+        }
+
+        .chat-send-btn {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            background: #00B36B;
+            border: none;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+
+        .chat-send-btn:hover {
+            background: #00D980;
+        }
+    </style>
+</head>
+<body>
+    <!-- 左侧导航栏 -->
+    <div class="sidebar">
+        <div class="user-avatar" title="用户中心">
+            <span style="color: white; font-weight: bold;">蔡</span>
+        </div>
+
+        <div class="nav-items">
+            <div class="nav-item" title="首页" onclick="location.href='index.html'">
+                <span class="nav-icon">🏠</span>
+            </div>
+            <div class="nav-item" title="Agent应用" onclick="location.href='agent-center.html'">
+                <span class="nav-icon">🤖</span>
+            </div>
+            <div class="nav-item active" title="知识库">
+                <span class="nav-icon">📚</span>
+            </div>
+        </div>
+
+        <div class="nav-bottom">
+            <div class="nav-item" title="设置">
+                <span class="nav-icon">⚙️</span>
+            </div>
+            <div class="nav-item" title="帮助">
+                <span class="nav-icon">❓</span>
+            </div>
+            <div class="nav-item" title="作者简介" onclick="alert('作者简介功能')">
+                <span class="nav-icon">ℹ️</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主布局 -->
+    <div class="main-layout">
+        <!-- 左侧面板：知识库列表 -->
+        <div class="left-panel">
+            <div class="panel-header">
+                <div class="panel-title">知识库</div>
+                <div class="search-box">
+                    <span class="search-icon">🔍</span>
+                    <input type="text" class="search-input" placeholder="搜索知识库...">
+                </div>
+            </div>
+
+            <div class="knowledge-list">
+                <div class="kb-item active" onclick="selectKB(this, '公司法务共享库', '📚', 125)">
+                    <span class="kb-icon">📚</span>
+                    <div class="kb-info">
+                        <div class="kb-name">公司法务共享库</div>
+                        <div class="kb-meta">125个文件 · 2天前</div>
+                    </div>
+                </div>
+
+                <div class="kb-item" onclick="selectKB(this, '技术文档库', '💼', 89)">
+                    <span class="kb-icon">💼</span>
+                    <div class="kb-info">
+                        <div class="kb-name">技术文档库</div>
+                        <div class="kb-meta">89个文件 · 1小时前</div>
+                    </div>
+                </div>
+
+                <div class="kb-item" onclick="selectKB(this, '产品需求文档', '📊', 45)">
+                    <span class="kb-icon">📊</span>
+                    <div class="kb-info">
+                        <div class="kb-name">产品需求文档</div>
+                        <div class="kb-meta">45个文件 · 3天前</div>
+                    </div>
+                </div>
+
+                <div class="kb-item" onclick="selectKB(this, '财务报表汇总', '📈', 23)">
+                    <span class="kb-icon">📈</span>
+                    <div class="kb-info">
+                        <div class="kb-name">财务报表汇总</div>
+                        <div class="kb-meta">23个文件 · 2周前</div>
+                    </div>
+                </div>
+
+                <div class="kb-item" onclick="selectKB(this, '市场营销资料', '📢', 67)">
+                    <span class="kb-icon">📢</span>
+                    <div class="kb-info">
+                        <div class="kb-name">市场营销资料</div>
+                        <div class="kb-meta">67个文件 · 5天前</div>
+                    </div>
+                </div>
+
+                <div class="kb-item" onclick="selectKB(this, '人力资源文档', '👥', 34)">
+                    <span class="kb-icon">👥</span>
+                    <div class="kb-info">
+                        <div class="kb-name">人力资源文档</div>
+                        <div class="kb-meta">34个文件 · 1周前</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 中间面板：文件列表或文档内容 -->
+        <div class="middle-panel" id="middlePanel">
+            <div class="middle-header">
+                <div>
+                    <div class="middle-title" id="middleTitle">公司法务共享库</div>
+                    <div class="breadcrumb">
+                        <span class="breadcrumb-link" onclick="showWelcome()">知识库</span>
+                        <span class="breadcrumb-separator">›</span>
+                        <span id="currentKB">公司法务共享库</span>
+                        <span class="breadcrumb-separator" id="fileSeparator" style="display: none;">›</span>
+                        <span id="currentFile" style="display: none;"></span>
+                    </div>
+                </div>
+                <div class="middle-actions">
+                    <button class="action-btn" id="backBtn" onclick="backToFileList()" style="display: none;">
+                        <span>←</span>
+                        <span>返回列表</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="middle-content" id="middleContent">
+                <!-- 文件列表视图 -->
+                <div class="file-grid" id="fileListView">
+                    <!-- 示例文件 -->
+                    <div class="file-card" onclick="openDocument('标准合同范本2023版.pdf', '📄', '2.3MB')">
+                        <div class="file-card-icon">📄</div>
+                        <div class="file-card-name">标准合同范本2023版.pdf</div>
+                        <div class="file-card-meta">
+                            <span>2.3MB</span>
+                            <span>2天前</span>
+                        </div>
+                    </div>
+
+                    <div class="file-card" onclick="openDocument('法律合规指南.pdf', '📄', '1.8MB')">
+                        <div class="file-card-icon">📄</div>
+                        <div class="file-card-name">法律合规指南.pdf</div>
+                        <div class="file-card-meta">
+                            <span>1.8MB</span>
+                            <span>3天前</span>
+                        </div>
+                    </div>
+
+                    <div class="file-card" onclick="openDocument('知识产权保护条款.docx', '📝', '456KB')">
+                        <div class="file-card-icon">📝</div>
+                        <div class="file-card-name">知识产权保护条款.docx</div>
+                        <div class="file-card-meta">
+                            <span>456KB</span>
+                            <span>1周前</span>
+                        </div>
+                    </div>
+
+                    <div class="file-card" onclick="openDocument('劳动合同模板.pdf', '📄', '1.2MB')">
+                        <div class="file-card-icon">📄</div>
+                        <div class="file-card-name">劳动合同模板.pdf</div>
+                        <div class="file-card-meta">
+                            <span>1.2MB</span>
+                            <span>5天前</span>
+                        </div>
+                    </div>
+
+                    <div class="file-card" onclick="openDocument('商业秘密保护协议.pdf', '📄', '980KB')">
+                        <div class="file-card-icon">📄</div>
+                        <div class="file-card-name">商业秘密保护协议.pdf</div>
+                        <div class="file-card-meta">
+                            <span>980KB</span>
+                            <span>1周前</span>
+                        </div>
+                    </div>
+
+                    <div class="file-card" onclick="openDocument('股权转让协议模板.docx', '📝', '1.5MB')">
+                        <div class="file-card-icon">📝</div>
+                        <div class="file-card-name">股权转让协议模板.docx</div>
+                        <div class="file-card-meta">
+                            <span>1.5MB</span>
+                            <span>2周前</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 文档内容视图（初始隐藏） -->
+                <div class="document-view" id="documentView" style="display: none;">
+                    <div class="document-header">
+                        <div class="document-title">
+                            <span class="document-icon" id="docIcon">📄</span>
+                            <span id="docTitle">标准合同范本2023版.pdf</span>
+                        </div>
+                        <div class="document-meta">
+                            <div class="meta-item">
+                                <span>📦</span>
+                                <span id="docSize">2.3MB</span>
+                            </div>
+                            <div class="meta-item">
+                                <span>📚</span>
+                                <span id="docKB">公司法务共享库</span>
+                            </div>
+                            <div class="meta-item">
+                                <span>🕒</span>
+                                <span>2天前更新</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="document-content" id="docContent">
+                        <h1>第一章 总则</h1>
+                        <p>本合同范本旨在为企业提供标准化的合同模板，确保合同条款的完整性和合规性。本文档包含了常见商业合同的核心条款和注意事项。</p>
+
+                        <h2>1.1 合同目的</h2>
+                        <p>明确合同双方的权利义务关系，规范交易行为，预防和减少合同纠纷。本范本适用于一般商业交易场景，具体使用时需根据实际情况进行调整。</p>
+
+                        <h2>1.2 适用范围</h2>
+                        <p>本范本适用于货物买卖、服务提供、技术转让等多种商业场景。使用者应当根据交易的具体性质选择合适的条款，并在必要时咨询专业法律人士。</p>
+
+                        <h1>第二章 合同主体</h1>
+                        <p>合同主体是指合同的当事人，包括甲方（供应方/服务方）和乙方（需求方/客户方）。双方应当具备相应的民事权利能力和民事行为能力。</p>
+
+                        <h2>2.1 主体资格</h2>
+                        <p>甲方应为依法设立并有效存续的企业法人或其他组织，具有履行本合同的能力和资质。乙方同样应具备合法的主体资格，有权签署和履行本合同。</p>
+
+                        <h2>2.2 授权代表</h2>
+                        <p>签署合同的代表应当具有相应的授权，并能够代表其所在组织行使权利和承担义务。必要时应提供授权委托书等证明文件。</p>
+
+                        <h1>第三章 合同内容</h1>
+                        <p>合同内容应当明确、具体，包括但不限于标的物、数量、质量、价款、履行期限、履行方式、违约责任等核心条款。</p>
+
+                        <h2>3.1 标的物</h2>
+                        <p>明确约定交易的标的物，包括名称、规格、型号、技术参数等详细信息。对于服务类合同，应详细描述服务的内容、标准和验收方式。</p>
+
+                        <h2>3.2 价款与支付</h2>
+                        <p>约定合同总价款、支付方式、支付时间和支付条件。如涉及分期付款，应明确各期的金额和支付时间节点。</p>
+
+                        <h2>3.3 履行期限</h2>
+                        <p>明确合同的履行期限，包括开始时间和完成时间。对于分阶段履行的合同，应列明各阶段的时间节点和交付物。</p>
+
+                        <h1>第四章 违约责任</h1>
+                        <p>违约责任是保障合同履行的重要条款，应当明确约定违约情形、违约责任的承担方式和违约金的计算方法。</p>
+
+                        <h2>4.1 违约情形</h2>
+                        <p>详细列举可能构成违约的各种情形，包括但不限于延迟履行、质量不符、拒绝履行等。应当尽可能具体和明确，避免产生歧义。</p>
+
+                        <h2>4.2 违约责任</h2>
+                        <p>约定违约方应当承担的责任，可以是继续履行、采取补救措施、赔偿损失、支付违约金等。违约金的数额应当合理，不得过分高于实际损失。</p>
+
+                        <h1>第五章 争议解决</h1>
+                        <p>约定争议解决的方式，可以选择协商、调解、仲裁或诉讼。明确争议解决的管辖地和适用法律。</p>
+
+                        <h2>5.1 协商与调解</h2>
+                        <p>鼓励双方在发生争议时首先通过友好协商解决。协商不成的，可以请求有关部门进行调解。</p>
+
+                        <h2>5.2 仲裁与诉讼</h2>
+                        <p>如协商和调解均不能解决争议，可以选择仲裁或向有管辖权的人民法院提起诉讼。应明确约定仲裁机构或管辖法院。</p>
+                    </div>
+
+                    <div class="ask-btn-container">
+                        <button class="ask-xiaocai-btn" onclick="openChatSidebar()">
+                            <span>🤖</span>
+                            <span>问问小蔡</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧问答侧边栏 -->
+        <div class="chat-sidebar" id="chatSidebar">
+            <div class="chat-header">
+                <div class="chat-title-area">
+                    <div class="chat-title">
+                        <span>🤖</span>
+                        <span>小蔡助手</span>
+                    </div>
+                    <div class="chat-subtitle" id="chatDocName">正在查看：标准合同范本2023版.pdf</div>
+                </div>
+                <button class="close-chat-btn" onclick="closeChatSidebar()">✕</button>
+            </div>
+
+            <div class="chat-messages" id="chatMessages">
+                <div class="message">
+                    <div class="message-avatar bot">🤖</div>
+                    <div class="message-content">
+                        <div class="message-bubble">
+                            您好！我是小蔡，您的智能文档助手。我已经准备好回答关于这份文档的任何问题了。您可以问我：<br><br>
+                            • 这份文档的核心内容是什么？<br>
+                            • 帮我总结关键要点<br>
+                            • 文档中的某个条款是什么意思？
+                        </div>
+                        <div class="message-time">刚刚</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="chat-input-area">
+                <div class="chat-input-wrapper">
+                    <textarea 
+                        class="chat-input" 
+                        id="chatInput" 
+                        placeholder="询问关于文档的问题..." 
+                        rows="1"
+                        onkeydown="handleChatKeydown(event)"
+                    ></textarea>
+                    <button class="chat-send-btn" onclick="sendChatMessage()">
+                        ➤
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentKB = '公司法务共享库';
+        let currentDoc = '';
+
+        // 选择知识库
+        function selectKB(element, kbName, icon, fileCount) {
+            // 更新激活状态
+            document.querySelectorAll('.kb-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            element.classList.add('active');
+
+            currentKB = kbName;
+            currentDoc = '';
+
+            // 更新标题
+            document.getElementById('middleTitle').textContent = kbName;
+            document.getElementById('currentKB').textContent = kbName;
+            document.getElementById('fileSeparator').style.display = 'none';
+            document.getElementById('currentFile').style.display = 'none';
+
+            // 显示文件列表，隐藏文档视图
+            document.getElementById('fileListView').style.display = 'grid';
+            document.getElementById('documentView').style.display = 'none';
+            document.getElementById('backBtn').style.display = 'none';
+
+            // 关闭聊天侧边栏
+            closeChatSidebar();
+
+            // 这里可以加载对应知识库的文件列表
+            console.log(`加载知识库: ${kbName}, 文件数: ${fileCount}`);
+        }
+
+        // 打开文档
+        function openDocument(fileName, icon, size) {
+            currentDoc = fileName;
+
+            // 更新面包屑
+            document.getElementById('middleTitle').textContent = fileName;
+            document.getElementById('fileSeparator').style.display = 'inline';
+            document.getElementById('currentFile').textContent = fileName;
+            document.getElementById('currentFile').style.display = 'inline';
+
+            // 更新文档信息
+            document.getElementById('docIcon').textContent = icon;
+            document.getElementById('docTitle').textContent = fileName;
+            document.getElementById('docSize').textContent = size;
+            document.getElementById('docKB').textContent = currentKB;
+
+            // 切换视图
+            document.getElementById('fileListView').style.display = 'none';
+            document.getElementById('documentView').style.display = 'block';
+            document.getElementById('backBtn').style.display = 'flex';
+
+            // 滚动到顶部
+            document.getElementById('middleContent').scrollTop = 0;
+        }
+
+        // 返回文件列表
+        function backToFileList() {
+            currentDoc = '';
+
+            // 更新标题
+            document.getElementById('middleTitle').textContent = currentKB;
+            document.getElementById('fileSeparator').style.display = 'none';
+            document.getElementById('currentFile').style.display = 'none';
+
+            // 切换视图
+            document.getElementById('fileListView').style.display = 'grid';
+            document.getElementById('documentView').style.display = 'none';
+            document.getElementById('backBtn').style.display = 'none';
+
+            // 关闭聊天侧边栏
+            closeChatSidebar();
+        }
+
+        // 打开聊天侧边栏
+        function openChatSidebar() {
+            const sidebar = document.getElementById('chatSidebar');
+            const middlePanel = document.getElementById('middlePanel');
+            
+            sidebar.classList.add('show');
+            middlePanel.classList.add('with-chat');
+
+            // 更新聊天标题
+            document.getElementById('chatDocName').textContent = `正在查看：${currentDoc}`;
+
+            // 清空之前的对话，保留欢迎消息
+            const messagesContainer = document.getElementById('chatMessages');
+            messagesContainer.innerHTML = `
+                <div class="message">
+                    <div class="message-avatar bot">🤖</div>
+                    <div class="message-content">
+                        <div class="message-bubble">
+                            您好！我是小蔡，您的智能文档助手。我已经准备好回答关于「${currentDoc}」的任何问题了。您可以问我：<br><br>
+                            • 这份文档的核心内容是什么？<br>
+                            • 帮我总结关键要点<br>
+                            • 文档中的某个条款是什么意思？
+                        </div>
+                        <div class="message-time">刚刚</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 关闭聊天侧边栏
+        function closeChatSidebar() {
+            const sidebar = document.getElementById('chatSidebar');
+            const middlePanel = document.getElementById('middlePanel');
+            
+            sidebar.classList.remove('show');
+            middlePanel.classList.remove('with-chat');
+        }
+
+        // 发送聊天消息
+        function sendChatMessage() {
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+            
+            if (!message) return;
+
+            const messagesContainer = document.getElementById('chatMessages');
+            const time = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+            
+            // 添加用户消息
+            const userMsg = document.createElement('div');
+            userMsg.className = 'message user';
+            userMsg.innerHTML = `
+                <div class="message-avatar user">👤</div>
+                <div class="message-content">
+                    <div class="message-bubble">${message}</div>
+                    <div class="message-time">${time}</div>
+                </div>
+            `;
+            messagesContainer.appendChild(userMsg);
+
+            // 清空输入框
+            input.value = '';
+            input.style.height = 'auto';
+
+            // 滚动到底部
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+            // 模拟AI回复
+            setTimeout(() => {
+                const responses = [
+                    {
+                        text: `根据「${currentDoc}」的内容，我为您找到了以下信息：\n\n这份文档主要涵盖了合同的基本要素和注意事项。文档详细说明了合同主体、合同内容、履行方式、违约责任等核心条款，为企业提供了标准化的合同模板。`,
+                        reference: '参考：第一章 总则、第三章 合同内容'
+                    },
+                    {
+                        text: `让我为您总结一下要点：\n\n1. 明确了合同双方的主体资格要求\n2. 详细规定了合同的核心条款\n3. 强调了违约责任的重要性\n4. 提供了争议解决的多种途径\n5. 确保了合同的合规性和可执行性`,
+                        reference: '参考：第二章至第五章'
+                    },
+                    {
+                        text: `关于这个问题，文档中有明确说明：\n\n违约责任是保障合同履行的重要条款。违约方应当承担继续履行、采取补救措施、赔偿损失或支付违约金等责任。违约金的数额应当合理，不得过分高于实际损失。`,
+                        reference: '参考：第四章 违约责任'
+                    }
+                ];
+                
+                const response = responses[Math.floor(Math.random() * responses.length)];
+                
+                const botMsg = document.createElement('div');
+                botMsg.className = 'message';
+                botMsg.innerHTML = `
+                    <div class="message-avatar bot">🤖</div>
+                    <div class="message-content">
+                        <div class="message-bubble">${response.text.replace(/\n/g, '<br>')}</div>
+                        <div class="message-reference">📍 ${response.reference}</div>
+                        <div class="message-time">${time}</div>
+                    </div>
+                `;
+                messagesContainer.appendChild(botMsg);
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }, 800);
+        }
+
+        // 处理回车发送
+        function handleChatKeydown(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendChatMessage();
+            }
+        }
+
+        // 自动调整输入框高度
+        document.getElementById('chatInput').addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = this.scrollHeight + 'px';
+        });
+    </script>
+</body>
+</html>

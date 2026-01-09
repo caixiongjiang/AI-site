@@ -1,0 +1,1244 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能体使用 - 知识挂载</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: #1A1A1A;
+            color: #E0E0E0;
+            overflow: hidden;
+        }
+
+        /* 左侧导航栏 */
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 60px;
+            height: 100vh;
+            background: #252526;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px 0;
+            z-index: 1000;
+        }
+
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #00B36B, #00D980);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 30px;
+            cursor: pointer;
+        }
+
+        .nav-items {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .nav-item {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .nav-item:hover {
+            background: rgba(0, 179, 107, 0.1);
+        }
+
+        .nav-icon {
+            font-size: 20px;
+        }
+
+        .nav-bottom {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        /* 三栏布局 */
+        .main-layout {
+            margin-left: 60px;
+            height: 100vh;
+            display: flex;
+        }
+
+        /* 左侧面板：代理列表 */
+        .left-panel {
+            width: 280px;
+            background: #1E1E1E;
+            border-right: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .panel-header {
+            padding: 20px;
+            border-bottom: 1px solid #333;
+        }
+
+        .panel-title {
+            font-size: 14px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+        }
+
+        .add-agent-btn {
+            width: 100%;
+            background: transparent;
+            border: 1px dashed #00B36B;
+            color: #00B36B;
+            padding: 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.3s;
+        }
+
+        .add-agent-btn:hover {
+            background: rgba(0, 179, 107, 0.1);
+        }
+
+        .agent-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+        }
+
+        .agent-item {
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #252526;
+        }
+
+        .agent-item:hover {
+            background: #2A2A2A;
+        }
+
+        .agent-item.active {
+            background: rgba(0, 179, 107, 0.15);
+            border-left: 3px solid #00B36B;
+        }
+
+        .agent-item-name {
+            font-size: 14px;
+            color: #E0E0E0;
+            margin-bottom: 4px;
+        }
+
+        .agent-item-category {
+            font-size: 12px;
+            color: #888;
+        }
+
+        /* 中间面板：智能体信息和知识管理 */
+        .middle-panel {
+            flex: 1;
+            background: #1A1A1A;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        .agent-info {
+            padding: 30px;
+            border-bottom: 1px solid #333;
+        }
+
+        .agent-icon-large {
+            width: 64px;
+            height: 64px;
+            border-radius: 16px;
+            background: linear-gradient(135deg, rgba(0, 179, 107, 0.2), rgba(0, 217, 128, 0.1));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            margin-bottom: 20px;
+        }
+
+        .agent-name {
+            font-size: 24px;
+            font-weight: 400;
+            margin-bottom: 8px;
+        }
+
+        .agent-category {
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 16px;
+        }
+
+        .agent-description {
+            font-size: 14px;
+            line-height: 1.6;
+            color: #A0A0A0;
+        }
+
+        .agent-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 20px;
+        }
+
+        .action-icon-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            background: #252526;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .action-icon-btn:hover {
+            background: #2A2A2A;
+            color: #E0E0E0;
+        }
+
+        /* 使用说明区域 */
+        .usage-section {
+            padding: 30px;
+            flex: 1;
+        }
+
+        .section-title {
+            font-size: 16px;
+            color: #E0E0E0;
+            margin-bottom: 16px;
+            font-weight: 500;
+        }
+
+        .usage-content {
+            background: #252526;
+            border-radius: 12px;
+            padding: 24px;
+            border: 1px solid #333;
+        }
+
+        .usage-item {
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #333;
+        }
+
+        .usage-item:last-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+
+        .usage-label {
+            font-size: 13px;
+            color: #888;
+            margin-bottom: 8px;
+        }
+
+        .usage-text {
+            font-size: 14px;
+            color: #C0C0C0;
+            line-height: 1.6;
+        }
+
+        .usage-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .usage-tag {
+            background: rgba(0, 179, 107, 0.15);
+            border: 1px solid rgba(0, 179, 107, 0.3);
+            color: #00D980;
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+        }
+
+        .capability-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .capability-list li {
+            font-size: 14px;
+            color: #C0C0C0;
+            margin-bottom: 8px;
+            padding-left: 20px;
+            position: relative;
+        }
+
+        .capability-list li::before {
+            content: '✓';
+            position: absolute;
+            left: 0;
+            color: #00B36B;
+            font-weight: bold;
+        }
+
+        /* 右侧面板：对话区 */
+        .right-panel {
+            width: 480px;
+            background: #1E1E1E;
+            border-left: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat-header {
+            padding: 20px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chat-title {
+            font-size: 16px;
+            color: #E0E0E0;
+        }
+
+        .chat-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        /* 消息气泡 */
+        .message {
+            display: flex;
+            gap: 12px;
+            animation: fadeIn 0.3s;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+
+        .message-avatar.bot {
+            background: linear-gradient(135deg, #00B36B, #00D980);
+        }
+
+        .message-avatar.user {
+            background: #333;
+        }
+
+        .message-content {
+            flex: 1;
+        }
+
+        .message-bubble {
+            background: #252526;
+            border-radius: 12px;
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            line-height: 1.6;
+            font-size: 14px;
+        }
+
+        .message.user .message-bubble {
+            background: rgba(0, 179, 107, 0.15);
+        }
+
+        .message-reference {
+            font-size: 12px;
+            padding: 8px 12px;
+            background: rgba(0, 179, 107, 0.1);
+            border-left: 3px solid #00B36B;
+            border-radius: 0 6px 6px 0;
+            margin-top: 8px;
+        }
+
+        .reference-link {
+            color: #00D980;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .reference-link:hover {
+            text-decoration: underline;
+        }
+
+        /* 挂载的知识源标签 */
+        .mounted-sources {
+            padding: 12px 20px;
+            border-bottom: 1px solid #333;
+            display: none;
+        }
+
+        .mounted-sources.show {
+            display: block;
+        }
+
+        .mounted-label {
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .source-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .source-chip {
+            background: rgba(0, 179, 107, 0.15);
+            border: 1px solid rgba(0, 179, 107, 0.3);
+            color: #00D980;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .source-chip:hover {
+            background: rgba(0, 179, 107, 0.25);
+            border-color: #00B36B;
+        }
+
+        .chip-icon {
+            font-size: 14px;
+        }
+
+        .chip-remove {
+            margin-left: 4px;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+        }
+
+        .chip-remove:hover {
+            opacity: 1;
+        }
+
+        /* 输入区域 */
+        .chat-input-area {
+            padding: 20px;
+            border-top: 1px solid #333;
+        }
+
+        .input-toolbar {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .toolbar-btn {
+            background: #252526;
+            border: 1px solid #333;
+            color: #888;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+
+        .toolbar-btn:hover {
+            background: #2A2A2A;
+            border-color: #00B36B;
+            color: #E0E0E0;
+        }
+
+        .chat-input-wrapper {
+            background: #252526;
+            border-radius: 12px;
+            border: 2px solid transparent;
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            transition: all 0.3s;
+        }
+
+        .chat-input-wrapper:focus-within {
+            border-color: #00B36B;
+        }
+
+        .chat-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: #E0E0E0;
+            font-size: 14px;
+            font-family: inherit;
+            resize: none;
+            max-height: 120px;
+        }
+
+        .chat-input::placeholder {
+            color: #666;
+        }
+
+        .chat-send-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            background: #00B36B;
+            border: none;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+
+        .chat-send-btn:hover {
+            background: #00D980;
+        }
+
+        .chat-send-btn:disabled {
+            background: #333;
+            color: #666;
+            cursor: not-allowed;
+        }
+
+        /* 模态框：选择知识源 */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            animation: fadeIn 0.2s;
+        }
+
+        .modal-overlay.show {
+            display: flex;
+        }
+
+        .modal {
+            background: #252526;
+            border-radius: 16px;
+            width: 90%;
+            max-width: 700px;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            animation: slideUp 0.3s;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(40px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .modal-header {
+            padding: 24px;
+            border-bottom: 1px solid #333;
+        }
+
+        .modal-title {
+            font-size: 18px;
+            color: #E0E0E0;
+        }
+
+        .modal-tabs {
+            display: flex;
+            gap: 24px;
+            margin-top: 16px;
+        }
+
+        .modal-tab {
+            padding: 8px 0;
+            font-size: 14px;
+            color: #888;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .modal-tab:hover {
+            color: #E0E0E0;
+        }
+
+        .modal-tab.active {
+            color: #00B36B;
+            border-bottom-color: #00B36B;
+        }
+
+        .modal-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px 24px;
+        }
+
+        .modal-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 8px;
+        }
+
+        .modal-item:hover {
+            background: rgba(0, 179, 107, 0.05);
+        }
+
+        .modal-checkbox {
+            width: 18px;
+            height: 18px;
+            border: 2px solid #666;
+            border-radius: 4px;
+            cursor: pointer;
+            position: relative;
+            transition: all 0.2s;
+        }
+
+        .modal-checkbox.checked {
+            background: #00B36B;
+            border-color: #00B36B;
+        }
+
+        .modal-checkbox.checked::after {
+            content: '✓';
+            position: absolute;
+            color: white;
+            font-size: 12px;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        .modal-item-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            background: rgba(0, 179, 107, 0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .modal-item-info {
+            flex: 1;
+        }
+
+        .modal-item-name {
+            font-size: 14px;
+            color: #E0E0E0;
+            margin-bottom: 2px;
+        }
+
+        .modal-item-meta {
+            font-size: 12px;
+            color: #888;
+        }
+
+        .modal-footer {
+            padding: 20px 24px;
+            border-top: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-count {
+            font-size: 13px;
+            color: #888;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 12px;
+        }
+
+        .modal-btn {
+            padding: 10px 24px;
+            border-radius: 8px;
+            border: none;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .modal-btn.cancel {
+            background: transparent;
+            color: #888;
+        }
+
+        .modal-btn.cancel:hover {
+            background: #2A2A2A;
+            color: #E0E0E0;
+        }
+
+        .modal-btn.confirm {
+            background: #00B36B;
+            color: white;
+        }
+
+        .modal-btn.confirm:hover {
+            background: #00D980;
+        }
+
+        .modal-btn.confirm:disabled {
+            background: #333;
+            color: #666;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <!-- 左侧导航栏 -->
+    <div class="sidebar">
+        <div class="user-avatar" title="用户中心">
+            <span style="color: white; font-weight: bold;">蔡</span>
+        </div>
+
+        <div class="nav-items">
+            <div class="nav-item" title="首页" onclick="location.href='index.html'">
+                <span class="nav-icon">🏠</span>
+            </div>
+            <div class="nav-item" title="Agent应用" onclick="location.href='agent-center.html'">
+                <span class="nav-icon">🤖</span>
+            </div>
+            <div class="nav-item" title="知识库" onclick="location.href='knowledge-qa.html'">
+                <span class="nav-icon">📚</span>
+            </div>
+        </div>
+
+        <div class="nav-bottom">
+            <div class="nav-item" title="设置">
+                <span class="nav-icon">⚙️</span>
+            </div>
+            <div class="nav-item" title="帮助">
+                <span class="nav-icon">❓</span>
+            </div>
+            <div class="nav-item" title="作者简介" onclick="alert('作者简介功能')">
+                <span class="nav-icon">ℹ️</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 三栏布局 -->
+    <div class="main-layout">
+        <!-- 左侧：代理列表 -->
+        <div class="left-panel">
+            <div class="panel-header">
+                <div class="panel-title">代理列表</div>
+                <button class="add-agent-btn" onclick="location.href='agent-center.html'">+ 浏览更多智能体</button>
+            </div>
+            <div class="agent-list">
+                <div class="agent-item active">
+                    <div class="agent-item-name">📄 合同风险审查</div>
+                    <div class="agent-item-category">法务 · 风险管理</div>
+                </div>
+                <div class="agent-item">
+                    <div class="agent-item-name">📊 周报生成</div>
+                    <div class="agent-item-category">办公效率</div>
+                </div>
+                <div class="agent-item">
+                    <div class="agent-item-name">🌐 文档翻译</div>
+                    <div class="agent-item-category">语言处理</div>
+                </div>
+                <div class="agent-item">
+                    <div class="agent-item-name">💻 代码审查</div>
+                    <div class="agent-item-category">开发工具</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 中间：智能体信息和知识管理 -->
+        <div class="middle-panel">
+            <!-- 智能体信息 -->
+            <div class="agent-info">
+                <div class="agent-icon-large">📄</div>
+                <div class="agent-name" id="agentName">合同风险审查</div>
+                <div class="agent-category">法务 · 风险管理</div>
+                <div class="agent-description" id="agentDescription">
+                    合同风险审查，修理审查助手。请先在左侧挂载您的合同文件或相关知识库，我才能开始为您加工。合同风险审查涵盖的相关知识库，我才开始为您工作。
+                </div>
+                <div class="agent-actions">
+                    <button class="action-icon-btn" title="编辑">✏️</button>
+                    <button class="action-icon-btn" title="删除">🗑️</button>
+                </div>
+            </div>
+
+            <!-- 使用说明 -->
+            <div class="usage-section">
+                <div class="section-title">使用说明</div>
+                <div class="usage-content">
+                    <div class="usage-item">
+                        <div class="usage-label">主要功能</div>
+                        <div class="usage-text">
+                            该智能体可以帮助您快速识别合同中的潜在法律风险，包括但不限于：免责条款、违约责任、知识产权保护、数据安全等关键内容。
+                        </div>
+                    </div>
+
+                    <div class="usage-item">
+                        <div class="usage-label">使用方式</div>
+                        <ul class="capability-list">
+                            <li>在右侧对话框中直接粘贴合同内容或提出问题</li>
+                            <li>点击"挂载知识库"快速关联您的法律文档库</li>
+                            <li>上传合同文件进行全面分析</li>
+                            <li>查看分析结果并获取专业建议</li>
+                        </ul>
+                    </div>
+
+                    <div class="usage-item">
+                        <div class="usage-label">适用场景</div>
+                        <div class="usage-tags">
+                            <span class="usage-tag">合同审查</span>
+                            <span class="usage-tag">风险评估</span>
+                            <span class="usage-tag">法律咨询</span>
+                            <span class="usage-tag">条款对比</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧：对话区 -->
+        <div class="right-panel">
+            <div class="chat-header">
+                <div class="chat-title">问答</div>
+                <div class="chat-actions">
+                    <button class="action-icon-btn" title="新建对话">💬</button>
+                    <button class="action-icon-btn" title="更多">⋯</button>
+                </div>
+            </div>
+
+            <!-- 已挂载的知识源标签 -->
+            <div class="mounted-sources" id="mountedSources">
+                <div class="mounted-label">已挂载的知识源 (点击查看详情)</div>
+                <div class="source-chips" id="sourceChips">
+                    <!-- 挂载的知识源标签会显示在这里 -->
+                </div>
+            </div>
+
+            <div class="chat-messages" id="chatMessages">
+                <!-- 欢迎消息 -->
+                <div class="message">
+                    <div class="message-avatar bot">🤖</div>
+                    <div class="message-content">
+                        <div class="message-bubble">
+                            您好，我是合同风险审查助手。请先在左侧挂载您的合同文件或相关知识库，我才能开始为您工作。
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 用户问题示例 -->
+                <div class="message user">
+                    <div class="message-avatar user">👤</div>
+                    <div class="message-content">
+                        <div class="message-bubble">
+                            帮我看看这份合同的免责条款有问题吗？
+                        </div>
+                    </div>
+                </div>
+
+                <!-- AI回复示例 -->
+                <div class="message">
+                    <div class="message-avatar bot">🤖</div>
+                    <div class="message-content">
+                        <div class="message-bubble">
+                            您好，我是合同风险审查助手。请先在左侧挂载您的合同文件或相关知识库，我才能开始为您工作。请准位在左侧挂载您的合同文件或相关知识库，我才能开始为您加工。请准位在左侧挂载您的合同文件或相关知识库，我才能开始为您加工。根据您提供的合同架架析，兔责条款较现以下问题，公司法务共享库警觉有本人所性合同的兔责，兔责条款及问题之作，其推晴及一路附赖兔合同苑料、低应，公司法务等合同的兔责观源，请准合同的较行兔合同的兔责数欲，合同兔责数欲或是诉法正确的合同的事情，请先正确的信后防推的，而且以外公司的条欲合同，并可以下其他用小常，由普适常公司条的兔责合同系欲或看诉法正确兔，而且给予兔对借行反用，其将条权分明等一分的合同规库，该规球月的，并合同期就兔获征兔桥兔等表限的或间诉行反应。
+                        </div>
+                        <div class="message-reference">
+                            引用自：<a href="#" class="reference-link">[公司法务共享库]</a> > <a href="#" class="reference-link">[标准合同范本2023版.pdf]</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="chat-input-area">
+                <!-- 输入工具栏 -->
+                <div class="input-toolbar">
+                    <button class="toolbar-btn" onclick="openMountModal()">
+                        <span>📚</span>
+                        <span>挂载知识库</span>
+                    </button>
+                    <button class="toolbar-btn" onclick="uploadFile()">
+                        <span>📎</span>
+                        <span>上传文件</span>
+                    </button>
+                </div>
+
+                <!-- 输入框 -->
+                <div class="chat-input-wrapper">
+                    <textarea 
+                        class="chat-input" 
+                        id="chatInput" 
+                        placeholder="输入您的问题，或粘贴合同内容..." 
+                        rows="1"
+                        onkeydown="handleChatKeydown(event)"
+                    ></textarea>
+                    <button class="chat-send-btn" onclick="sendChatMessage()">
+                        ➤
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 模态框：选择知识源 -->
+    <div class="modal-overlay" id="mountModal">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">挂载知识库/文件</div>
+                <div class="modal-tabs">
+                    <div class="modal-tab active" onclick="switchTab('knowledge')">我的知识库</div>
+                    <div class="modal-tab" onclick="switchTab('files')">工作空间文件</div>
+                </div>
+            </div>
+
+            <div class="modal-body" id="modalBody">
+                <!-- 知识库列表 -->
+                <div id="knowledgeTab">
+                    <div class="modal-item" onclick="toggleSelect(this)">
+                        <div class="modal-checkbox"></div>
+                        <div class="modal-item-icon">📚</div>
+                        <div class="modal-item-info">
+                            <div class="modal-item-name">技术文档库</div>
+                            <div class="modal-item-meta">89个文件 · 最后更新: 1小时前</div>
+                        </div>
+                    </div>
+
+                    <div class="modal-item" onclick="toggleSelect(this)">
+                        <div class="modal-checkbox"></div>
+                        <div class="modal-item-icon">📁</div>
+                        <div class="modal-item-info">
+                            <div class="modal-item-name">产品需求文档</div>
+                            <div class="modal-item-meta">45个文件 · 最后更新: 3天前</div>
+                        </div>
+                    </div>
+
+                    <div class="modal-item" onclick="toggleSelect(this)">
+                        <div class="modal-checkbox"></div>
+                        <div class="modal-item-icon">📄</div>
+                        <div class="modal-item-info">
+                            <div class="modal-item-name">法律合规资料</div>
+                            <div class="modal-item-meta">67个文件 · 最后更新: 1周前</div>
+                        </div>
+                    </div>
+
+                    <div class="modal-item" onclick="toggleSelect(this)">
+                        <div class="modal-checkbox"></div>
+                        <div class="modal-item-icon">📊</div>
+                        <div class="modal-item-info">
+                            <div class="modal-item-name">财务报表汇总</div>
+                            <div class="modal-item-meta">23个文件 · 最后更新: 2周前</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 文件列表（初始隐藏） -->
+                <div id="filesTab" style="display: none;">
+                    <div class="modal-item" onclick="toggleSelect(this)">
+                        <div class="modal-checkbox"></div>
+                        <div class="modal-item-icon">📄</div>
+                        <div class="modal-item-info">
+                            <div class="modal-item-name">2024年度合同.pdf</div>
+                            <div class="modal-item-meta">2.3 MB · 上传于: 今天</div>
+                        </div>
+                    </div>
+
+                    <div class="modal-item" onclick="toggleSelect(this)">
+                        <div class="modal-checkbox"></div>
+                        <div class="modal-item-icon">📊</div>
+                        <div class="modal-item-info">
+                            <div class="modal-item-name">项目进度表.xlsx</div>
+                            <div class="modal-item-meta">456 KB · 上传于: 昨天</div>
+                        </div>
+                    </div>
+
+                    <div class="modal-item" onclick="toggleSelect(this)">
+                        <div class="modal-checkbox"></div>
+                        <div class="modal-item-icon">📝</div>
+                        <div class="modal-item-info">
+                            <div class="modal-item-name">会议纪要.docx</div>
+                            <div class="modal-item-meta">128 KB · 上传于: 3天前</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <div class="modal-count" id="selectedCount">已选择 0 项</div>
+                <div class="modal-actions">
+                    <button class="modal-btn cancel" onclick="closeMountModal()">取消</button>
+                    <button class="modal-btn confirm" id="confirmBtn" onclick="confirmMount()" disabled>确认挂载</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 初始化
+        let selectedItems = new Set();
+        let currentTab = 'knowledge';
+        let mountedSources = []; // 存储已挂载的知识源
+
+        // 从首页获取智能体信息
+        const agentName = sessionStorage.getItem('currentAgent');
+        const initialMessage = sessionStorage.getItem('initialMessage');
+
+        if (agentName) {
+            document.getElementById('agentName').textContent = agentName;
+        }
+
+        // 上传文件
+        function uploadFile() {
+            alert('上传文件功能（将打开文件选择器）');
+        }
+
+        // 打开挂载模态框
+        function openMountModal() {
+            document.getElementById('mountModal').classList.add('show');
+            selectedItems.clear();
+            updateSelectedCount();
+        }
+
+        // 关闭挂载模态框
+        function closeMountModal() {
+            document.getElementById('mountModal').classList.remove('show');
+        }
+
+        // 切换标签页
+        function switchTab(tab) {
+            currentTab = tab;
+            const tabs = document.querySelectorAll('.modal-tab');
+            tabs.forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+
+            document.getElementById('knowledgeTab').style.display = tab === 'knowledge' ? 'block' : 'none';
+            document.getElementById('filesTab').style.display = tab === 'files' ? 'block' : 'none';
+
+            selectedItems.clear();
+            document.querySelectorAll('.modal-checkbox').forEach(cb => cb.classList.remove('checked'));
+            updateSelectedCount();
+        }
+
+        // 切换选择
+        function toggleSelect(item) {
+            const checkbox = item.querySelector('.modal-checkbox');
+            const name = item.querySelector('.modal-item-name').textContent;
+            
+            if (checkbox.classList.contains('checked')) {
+                checkbox.classList.remove('checked');
+                selectedItems.delete(name);
+            } else {
+                checkbox.classList.add('checked');
+                selectedItems.add(name);
+            }
+            
+            updateSelectedCount();
+        }
+
+        // 更新选中数量
+        function updateSelectedCount() {
+            const count = selectedItems.size;
+            document.getElementById('selectedCount').textContent = `已选择 ${count} 项`;
+            document.getElementById('confirmBtn').disabled = count === 0;
+        }
+
+        // 确认挂载
+        function confirmMount() {
+            selectedItems.forEach(name => {
+                // 添加到已挂载列表
+                if (!mountedSources.find(s => s.name === name)) {
+                    const isKB = currentTab === 'knowledge';
+                    mountedSources.push({
+                        name: name,
+                        type: isKB ? 'kb' : 'file',
+                        icon: isKB ? '📚' : '📄'
+                    });
+                }
+            });
+
+            updateMountedChips();
+            closeMountModal();
+        }
+
+        // 更新已挂载的标签显示
+        function updateMountedChips() {
+            const chipsContainer = document.getElementById('sourceChips');
+            const mountedSection = document.getElementById('mountedSources');
+            
+            if (mountedSources.length === 0) {
+                mountedSection.classList.remove('show');
+                return;
+            }
+
+            mountedSection.classList.add('show');
+            chipsContainer.innerHTML = '';
+
+            mountedSources.forEach((source, index) => {
+                const chip = document.createElement('div');
+                chip.className = 'source-chip';
+                chip.innerHTML = `
+                    <span class="chip-icon">${source.icon}</span>
+                    <span>${source.name}</span>
+                    <span class="chip-remove" onclick="event.stopPropagation(); removeSource(${index})">✕</span>
+                `;
+                
+                // 点击标签跳转到知识库问答页面
+                chip.onclick = function(e) {
+                    if (!e.target.classList.contains('chip-remove')) {
+                        const kbName = source.type === 'kb' ? source.name : '';
+                        const fileName = source.type === 'file' ? source.name : '';
+                        window.location.href = `knowledge-qa.html?kb=${encodeURIComponent(kbName || '知识库')}&file=${encodeURIComponent(fileName)}`;
+                    }
+                };
+                
+                chipsContainer.appendChild(chip);
+            });
+        }
+
+        // 移除已挂载的知识源
+        function removeSource(index) {
+            if (confirm('确定要移除这个知识源吗？')) {
+                mountedSources.splice(index, 1);
+                updateMountedChips();
+            }
+        }
+
+        // 发送聊天消息
+        function sendChatMessage() {
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+            
+            if (!message) return;
+
+            const messagesContainer = document.getElementById('chatMessages');
+            
+            // 添加用户消息
+            const userMsg = document.createElement('div');
+            userMsg.className = 'message user';
+            userMsg.innerHTML = `
+                <div class="message-avatar user">👤</div>
+                <div class="message-content">
+                    <div class="message-bubble">${message}</div>
+                </div>
+            `;
+            messagesContainer.appendChild(userMsg);
+
+            // 清空输入框
+            input.value = '';
+            input.style.height = 'auto';
+
+            // 模拟AI回复
+            setTimeout(() => {
+                const botMsg = document.createElement('div');
+                botMsg.className = 'message';
+                botMsg.innerHTML = `
+                    <div class="message-avatar bot">🤖</div>
+                    <div class="message-content">
+                        <div class="message-bubble">
+                            正在分析您的问题，请稍候...
+                        </div>
+                    </div>
+                `;
+                messagesContainer.appendChild(botMsg);
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }, 500);
+        }
+
+        // 处理回车发送
+        function handleChatKeydown(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendChatMessage();
+            }
+        }
+
+        // 自动调整输入框高度
+        document.getElementById('chatInput').addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = this.scrollHeight + 'px';
+        });
+
+        // 点击模态框外部关闭
+        document.getElementById('mountModal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeMountModal();
+            }
+        });
+    </script>
+</body>
+</html>
