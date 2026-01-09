@@ -77,7 +77,7 @@ jobs:
             
             # 3. 安装/更新依赖
             echo "📦 安装依赖包..."
-            npm install --production || { echo "❌ 错误：依赖安装失败"; exit 1; }
+            npm install || { echo "❌ 错误：依赖安装失败"; exit 1; }
             
             # 4. 构建生产版本
             echo "🔨 构建生产版本..."
