@@ -2,6 +2,17 @@ import { Agent, KnowledgeBase, FileItem } from "./types";
 
 export const mockAgents: Agent[] = [
   {
+    id: "document-compliance",
+    name: "文稿检查助手",
+    category: "办公效率 · 合规检查",
+    description:
+      "智能检查会议记录等文稿的合规性和完整性，自动识别缺失字段、数据异常，并生成详细的检查报告。支持本地规则引擎和 AI 深度校验。",
+    icon: "FileCheck",
+    tags: ["合规", "校验", "文档"],
+    stats: { users: 856, rating: 4.7 },
+    featured: true,
+  },
+  {
     id: "contract-review",
     name: "合同风险审查",
     category: "法务 · 风险管理",
