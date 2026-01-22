@@ -1,39 +1,42 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Plus, Trash2, Edit2, Check, X, Lock, AlertTriangle, CopyPlus } from "lucide-react";
+import { Plus, Trash2, Edit2, Check, X, AlertTriangle, CopyPlus } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { CheckRule, CheckField, DEFAULT_CHECK_RULES } from "@/lib/types";
+import { CheckRule, CheckField } from "@/lib/types";
+import { createCheckRule, updateCheckRule, deleteCheckRule } from "@/lib/api/agents/document-compliance";
 
 interface CheckRulesManagerProps {
   rules: CheckRule[];
   onRulesChange: (rules: CheckRule[]) => void;
   disabled?: boolean;
+  onShowToast?: (message: string, type: "success" | "error" | "warning") => void;
 }
 
 export const CheckRulesManager = ({
   rules,
   onRulesChange,
   disabled = false,
+  onShowToast,
 }: CheckRulesManagerProps) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Partial<CheckRule>>({});
   const [isAdding, setIsAdding] = useState(false);
-  const [canEditDefaults, setCanEditDefaults] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorDialog, setErrorDialog] = useState<{ show: boolean; message: string }>({ 
     show: false, 
     message: "" 
   });
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // 判断是否为默认规则
-  const isDefaultRule = (ruleId: string) => {
-    return DEFAULT_CHECK_RULES.some(r => r.id === ruleId);
-  };
-
   // 显示错误对话框
   const showError = (message: string) => {
     setErrorDialog({ show: true, message });
+  };
+
+  // 显示成功提示
+  const showSuccess = (message: string) => {
+    onShowToast?.(message, "success");
   };
 
   const handleAdd = () => {
@@ -110,7 +113,7 @@ export const CheckRulesManager = ({
     }
   };
 
-  const handleSaveNew = () => {
+  const handleSaveNew = async () => {
     if (!editForm.name || !editForm.fields || editForm.fields.length === 0) {
       showError("请填写规则名称并至少添加一个字段");
       return;
@@ -132,17 +135,27 @@ export const CheckRulesManager = ({
       return;
     }
 
-    const newRule: CheckRule = {
-      id: editForm.id!,
-      name: editForm.name,
-      description: editForm.description,
-      fields: editForm.fields,
-    };
+    setIsSubmitting(true);
 
-    onRulesChange([...rules, newRule]);
-    setIsAdding(false);
-    setEditForm({});
-    scrollToBottom(); // 新增后滚动到底部
+    try {
+      // 调用 API 创建检查规则
+      const createdRule = await createCheckRule({
+        name: editForm.name,
+        description: editForm.description,
+        fields: editForm.fields,
+      });
+
+      // 更新本地状态
+      onRulesChange([...rules, createdRule]);
+      setIsAdding(false);
+      setEditForm({});
+      scrollToBottom(); // 新增后滚动到底部
+      showSuccess("检查规则创建成功");
+    } catch (error) {
+      showError(error instanceof Error ? error.message : "创建检查规则失败");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleEdit = (rule: CheckRule) => {
@@ -150,7 +163,7 @@ export const CheckRulesManager = ({
     setEditForm(rule);
   };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (!editForm.name || !editForm.fields || editForm.fields.length === 0) {
       showError("请填写规则名称并至少添加一个字段");
       return;
@@ -171,24 +184,53 @@ export const CheckRulesManager = ({
       return;
     }
 
-    const updatedRules = rules.map((rule) =>
-      rule.id === editingId
-        ? {
-            id: rule.id,
-            name: editForm.name!,
-            description: editForm.description,
-            fields: editForm.fields!,
-          }
-        : rule
-    );
+    setIsSubmitting(true);
 
-    onRulesChange(updatedRules);
-    setEditingId(null);
-    setEditForm({});
+    try {
+      // 调用 API 更新检查规则
+      const updatedRule = await updateCheckRule({
+        id: editingId!,
+        name: editForm.name!,
+        description: editForm.description,
+        fields: editForm.fields!,
+      });
+
+      // 更新本地状态
+      const updatedRules = rules.map((rule) =>
+        rule.id === editingId ? updatedRule : rule
+      );
+
+      onRulesChange(updatedRules);
+      setEditingId(null);
+      setEditForm({});
+      showSuccess("检查规则更新成功");
+    } catch (error) {
+      showError(error instanceof Error ? error.message : "更新检查规则失败");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleDelete = (ruleId: string) => {
-    onRulesChange(rules.filter((rule) => rule.id !== ruleId));
+  const handleDelete = async (ruleId: string) => {
+    // 显示确认对话框
+    if (!confirm("确定要删除这个检查规则吗？")) {
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      // 调用 API 删除检查规则
+      await deleteCheckRule(ruleId);
+
+      // 更新本地状态
+      onRulesChange(rules.filter((rule) => rule.id !== ruleId));
+      showSuccess("检查规则删除成功");
+    } catch (error) {
+      showError(error instanceof Error ? error.message : "删除检查规则失败");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleCancel = () => {
@@ -436,16 +478,24 @@ export const CheckRulesManager = ({
       <div className="flex justify-end gap-2">
         <button
           onClick={handleCancel}
-          className="rounded-lg border border-dark-border bg-dark-card px-3 py-1.5 text-xs font-medium text-foreground transition-all hover:bg-dark-card/80"
+          disabled={isSubmitting}
+          className={cn(
+            "rounded-lg border border-dark-border bg-dark-card px-3 py-1.5 text-xs font-medium text-foreground transition-all hover:bg-dark-card/80",
+            isSubmitting && "opacity-50 cursor-not-allowed"
+          )}
         >
           取消
         </button>
         <button
           onClick={isAdding ? handleSaveNew : handleSaveEdit}
-          className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-all hover:bg-primary-light"
+          disabled={isSubmitting}
+          className={cn(
+            "flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-all hover:bg-primary-light",
+            isSubmitting && "opacity-50 cursor-not-allowed"
+          )}
         >
           <Check className="h-3.5 w-3.5" />
-          保存
+          {isSubmitting ? "保存中..." : "保存"}
         </button>
       </div>
     </div>
@@ -468,7 +518,11 @@ export const CheckRulesManager = ({
             {!disabled && !isAdding && !editingId && (
               <button
                 onClick={handleAdd}
-                className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-all hover:bg-primary-light"
+                disabled={isSubmitting}
+                className={cn(
+                  "flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-all hover:bg-primary-light",
+                  isSubmitting && "opacity-50 cursor-not-allowed"
+                )}
               >
                 <Plus className="h-3.5 w-3.5" />
                 添加
@@ -476,33 +530,6 @@ export const CheckRulesManager = ({
             )}
           </div>
         </div>
-
-        {/* 修改默认配置开关 */}
-        {!disabled && (
-          <div className="mt-3 flex items-center justify-between rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
-            <div className="flex items-center gap-2">
-              <Lock className="h-4 w-4 text-amber-500" />
-              <span className="text-xs text-foreground">修改默认配置</span>
-              <span className="text-xs text-muted">
-                (开启后可编辑/删除默认检查项)
-              </span>
-            </div>
-            <div
-              onClick={() => setCanEditDefaults(!canEditDefaults)}
-              className={cn(
-                "relative h-5 w-9 rounded-full transition-colors cursor-pointer",
-                canEditDefaults ? "bg-amber-500" : "bg-dark-border"
-              )}
-            >
-              <div
-                className={cn(
-                  "absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform",
-                  canEditDefaults ? "left-4" : "left-0.5"
-                )}
-              />
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Content - Scrollable */}
@@ -538,12 +565,6 @@ export const CheckRulesManager = ({
                           <h4 className="text-sm font-medium text-foreground">
                             {rule.name}
                           </h4>
-                          {isDefaultRule(rule.id) && (
-                            <span className="flex items-center gap-1 rounded bg-amber-500/20 px-1.5 py-0.5 text-xs text-amber-500">
-                              <Lock className="h-3 w-3" />
-                              默认
-                            </span>
-                          )}
                         </div>
                         {rule.description && (
                           <p className="mt-1 text-xs text-muted">
@@ -556,19 +577,21 @@ export const CheckRulesManager = ({
                         <div className="flex shrink-0 gap-1">
                           <button
                             onClick={() => handleDuplicateRule(rule)}
-                            className="rounded p-1.5 text-muted transition-colors hover:bg-primary/10 hover:text-primary"
+                            disabled={isSubmitting}
+                            className={cn(
+                              "rounded p-1.5 text-muted transition-colors hover:bg-primary/10 hover:text-primary",
+                              isSubmitting && "opacity-50 cursor-not-allowed"
+                            )}
                             title="创建副本"
                           >
                             <CopyPlus className="h-3.5 w-3.5" />
                           </button>
                           <button
                             onClick={() => handleEdit(rule)}
-                            disabled={isDefaultRule(rule.id) && !canEditDefaults}
+                            disabled={isSubmitting}
                             className={cn(
-                              "rounded p-1.5 transition-colors",
-                              isDefaultRule(rule.id) && !canEditDefaults
-                                ? "text-muted/50 cursor-not-allowed"
-                                : "text-muted hover:bg-primary/10 hover:text-primary"
+                              "rounded p-1.5 text-muted transition-colors hover:bg-primary/10 hover:text-primary",
+                              isSubmitting && "opacity-50 cursor-not-allowed"
                             )}
                             title="编辑此检查项"
                           >
@@ -576,12 +599,10 @@ export const CheckRulesManager = ({
                           </button>
                           <button
                             onClick={() => handleDelete(rule.id)}
-                            disabled={isDefaultRule(rule.id) && !canEditDefaults}
+                            disabled={isSubmitting}
                             className={cn(
-                              "rounded p-1.5 transition-colors",
-                              isDefaultRule(rule.id) && !canEditDefaults
-                                ? "text-muted/50 cursor-not-allowed"
-                                : "text-muted hover:bg-red-500/10 hover:text-red-500"
+                              "rounded p-1.5 text-muted transition-colors hover:bg-red-500/10 hover:text-red-500",
+                              isSubmitting && "opacity-50 cursor-not-allowed"
                             )}
                             title="删除此检查项"
                           >

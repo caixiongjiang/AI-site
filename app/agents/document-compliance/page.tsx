@@ -6,20 +6,20 @@ import Link from "next/link";
 import { MultiFileUploader } from "@/components/agents/document-compliance/MultiFileUploader";
 import { CheckRulesManager } from "@/components/agents/document-compliance/CheckRulesManager";
 import { ValidationResults } from "@/components/agents/document-compliance/ValidationResults";
-import { checkDocument } from "@/lib/api/agents/document-compliance";
+import { checkDocument, fetchUserCheckRules } from "@/lib/api/agents/document-compliance";
 import {
   DocumentCheckStatus,
   DocumentCheckResponse,
   UploadedFile,
   CheckRule,
-  DEFAULT_CHECK_RULES,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export default function DocumentCompliancePage() {
   const [status, setStatus] = useState<DocumentCheckStatus>("idle");
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
-  const [checkRules, setCheckRules] = useState<CheckRule[]>(DEFAULT_CHECK_RULES);
+  const [checkRules, setCheckRules] = useState<CheckRule[]>([]);
+  const [isLoadingRules, setIsLoadingRules] = useState(true);
   const [saveToKb, setSaveToKb] = useState(false);
   const [useExternalLLM, setUseExternalLLM] = useState(false);
   const [showRiskDialog, setShowRiskDialog] = useState(false);
@@ -38,6 +38,24 @@ export default function DocumentCompliancePage() {
   
   // 语义检查配置展开状态
   const [semanticConfigExpanded, setSemanticConfigExpanded] = useState(false);
+
+  // 加载用户的检查规则配置
+  useEffect(() => {
+    const loadCheckRules = async () => {
+      setIsLoadingRules(true);
+      try {
+        const rules = await fetchUserCheckRules();
+        setCheckRules(rules);
+      } catch (err) {
+        console.error("Failed to load check rules:", err);
+        showToast("加载检查规则失败，请刷新页面重试", "error");
+      } finally {
+        setIsLoadingRules(false);
+      }
+    };
+
+    loadCheckRules();
+  }, []);
 
   // 处理添加文件（立即开始上传）
   const handleFilesAdd = async (files: File[]) => {
@@ -531,11 +549,21 @@ ${llmResponse}
           >
             {/* Check Rules Manager */}
             <div>
-              <CheckRulesManager
-                rules={checkRules}
-                onRulesChange={setCheckRules}
-                disabled={isProcessing}
-              />
+              {isLoadingRules ? (
+                <div className="flex items-center justify-center rounded-xl border border-dark-border bg-dark-card" style={{ height: '800px' }}>
+                  <div className="flex flex-col items-center text-center">
+                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+                    <p className="mt-4 text-sm text-muted">加载检查规则配置...</p>
+                  </div>
+                </div>
+              ) : (
+                <CheckRulesManager
+                  rules={checkRules}
+                  onRulesChange={setCheckRules}
+                  disabled={isProcessing}
+                  onShowToast={showToast}
+                />
+              )}
             </div>
 
             {/* Results Section or Waiting State - 这个区域与右侧 AI 分析对齐 */}
@@ -916,11 +944,21 @@ ${llmResponse}
         <div className="flex flex-col gap-6 lg:hidden">
           {/* Left Column Content - Mobile */}
           <div className="space-y-6">
-            <CheckRulesManager
-              rules={checkRules}
-              onRulesChange={setCheckRules}
-              disabled={isProcessing || isUploading}
-            />
+            {isLoadingRules ? (
+              <div className="flex items-center justify-center rounded-xl border border-dark-border bg-dark-card p-12">
+                <div className="flex flex-col items-center text-center">
+                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+                  <p className="mt-4 text-sm text-muted">加载检查规则配置...</p>
+                </div>
+              </div>
+            ) : (
+              <CheckRulesManager
+                rules={checkRules}
+                onRulesChange={setCheckRules}
+                disabled={isProcessing || isUploading}
+                onShowToast={showToast}
+              />
+            )}
 
             {status === "completed" && response && (
               <ValidationResults results={response.validation_results} />
