@@ -50,7 +50,28 @@ npm install
 npm run dev
 \`\`\`
 
-打开 [http://localhost:3000](http://localhost:3000) 查看应用。
+打开 [http://localhost:4000](http://localhost:4000) 查看应用。
+
+### Logto 前端接入配置
+
+在 `.env.local` 中补充以下环境变量：
+
+\`\`\`bash
+NEXT_PUBLIC_APP_URL=http://localhost:4000
+NEXT_PUBLIC_LOGTO_ENDPOINT=http://localhost:3001
+NEXT_PUBLIC_LOGTO_APP_ID=your_logto_spa_app_id
+NEXT_PUBLIC_LOGTO_REDIRECT_URI=http://localhost:4000/callback
+NEXT_PUBLIC_LOGTO_POST_LOGOUT_REDIRECT_URI=http://localhost:4000
+NEXT_PUBLIC_LOGTO_SCOPES=openid profile email offline_access read:profile
+NEXT_PUBLIC_LOGTO_RESOURCE=https://api.local
+\`\`\`
+
+Logto Console 中需要同步配置：
+
+- `Applications` 里创建 `SPA` 应用
+- `Redirect URI` 配置为前端 `/callback`
+- `Post logout redirect URI` 配置为前端首页
+- `API resources` 中创建你的后端 API resource，并把对应 scope 写入 `NEXT_PUBLIC_LOGTO_SCOPES`
 
 ### 构建生产版本
 

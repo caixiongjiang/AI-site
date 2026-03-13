@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { Sidebar } from "@/components/layout/Sidebar";
+import { AuthProvider } from "@/components/auth/AuthProvider";
+import { AuthModalProvider } from "@/components/auth/AuthModalProvider";
+import { AppShell } from "@/components/layout/AppShell";
 
 export const metadata: Metadata = {
   title: "JarsonCai's Assistant",
@@ -15,8 +17,11 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <body>
-        <Sidebar />
-        <main className="ml-[60px]">{children}</main>
+        <AuthProvider>
+          <AuthModalProvider>
+            <AppShell>{children}</AppShell>
+          </AuthModalProvider>
+        </AuthProvider>
       </body>
     </html>
   );

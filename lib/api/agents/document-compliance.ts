@@ -3,190 +3,166 @@
  * 文稿检查助手 API 封装
  */
 
-import { DocumentCheckResponse, CheckRule, MeetingRecord } from "@/lib/types";
+import { DocumentCheckResponse, CheckRule, CheckField, MeetingRecord } from "@/lib/types";
+import { API_CONFIG, getCommonHeaders, getCurrentUserId } from "@/lib/config";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-// Mock 数据存储的 key
-const STORAGE_KEY = "document_compliance_check_rules";
-
-// 默认的 Mock 数据
-const DEFAULT_MOCK_RULES: CheckRule[] = [
-  {
-    id: "mock-rule-1",
-    name: "会议基本信息",
-    description: "会议的基本信息字段",
-    fields: [
-      {
-        id: "mock-field-1-1",
-        name: "会议主持人",
-        key: "host",
-        type: "text",
-        required: true,
-      },
-      {
-        id: "mock-field-1-2",
-        name: "会议记录员",
-        key: "recorder",
-        type: "text",
-        required: true,
-      },
-      {
-        id: "mock-field-1-3",
-        name: "会议地点",
-        key: "place",
-        type: "text",
-        required: true,
-      },
-    ],
-  },
-  {
-    id: "mock-rule-2",
-    name: "会议时间检查",
-    description: "检查会议时长是否合理",
-    fields: [
-      {
-        id: "mock-field-2-1",
-        name: "会议时长",
-        key: "meeting_duration",
-        type: "numeric",
-        required: false,
-        validation: { max: 240 },
-      },
-    ],
-  },
-  {
-    id: "mock-rule-3",
-    name: "参会人员信息",
-    description: "检查参会人员相关信息",
-    fields: [
-      {
-        id: "mock-field-3-1",
-        name: "实到人数",
-        key: "attendees_actual",
-        type: "numeric",
-        required: true,
-        validation: { min: 3 },
-      },
-      {
-        id: "mock-field-3-2",
-        name: "应到人数",
-        key: "attendees_expected",
-        type: "numeric",
-        required: true,
-      },
-      {
-        id: "mock-field-3-3",
-        name: "缺席原因",
-        key: "absent_reason",
-        type: "text",
-        required: false,
-      },
-    ],
-  },
-];
+// ========== 类型映射 ==========
 
 /**
- * 从 localStorage 获取检查规则（Mock 实现）
+ * 后端规则配置模型（对应 OpenAPI 中的 RuleConfigModel）
  */
-function getStoredRules(): CheckRule[] {
-  if (typeof window === "undefined") return DEFAULT_MOCK_RULES;
-  
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-    // 首次访问，存储默认数据
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_MOCK_RULES));
-    return DEFAULT_MOCK_RULES;
-  } catch (error) {
-    console.error("Failed to read from localStorage:", error);
-    return DEFAULT_MOCK_RULES;
-  }
+interface BackendRuleConfig {
+  rule_id: string;
+  rule_name: string;
+  user_id: string;
+  category: "completeness" | "logic" | "format" | "content";
+  description?: string | null;
+  enabled: boolean;
+  severity: "error" | "warning" | "info";
+  parameters: Record<string, any>;
+  validator_function: string;
+  error_message_template: string;
+  display_order: number;
+  group_name?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 /**
- * 保存检查规则到 localStorage（Mock 实现）
+ * 将前端 CheckRule 转换为后端 RuleConfigModel
  */
-function saveRulesToStorage(rules: CheckRule[]): void {
-  if (typeof window === "undefined") return;
-  
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(rules));
-  } catch (error) {
-    console.error("Failed to save to localStorage:", error);
-  }
+function toBackendRule(rule: CheckRule): Omit<BackendRuleConfig, "rule_id" | "user_id" | "created_at" | "updated_at"> {
+  // 将前端的 fields 转换为后端的 parameters
+  const parameters: Record<string, any> = {
+    fields: rule.fields.map(field => ({
+      id: field.id,
+      name: field.name,
+      key: field.key,
+      type: field.type,
+      required: field.required,
+      validation: field.validation,
+    })),
+  };
+
+  return {
+    rule_name: rule.name,
+    category: "completeness", // 默认类别，可以根据业务调整
+    description: rule.description || null,
+    enabled: true,
+    severity: "error",
+    parameters,
+    validator_function: "validate_custom_fields",
+    error_message_template: `{field} 不符合要求`,
+    display_order: 0,
+    group_name: rule.name,
+  };
 }
 
 /**
- * 获取用户的检查规则配置（Mock 实现）
+ * 将后端 RuleConfigModel 转换为前端 CheckRule
+ */
+function fromBackendRule(backendRule: BackendRuleConfig): CheckRule {
+  // 从 parameters 中提取 fields
+  const fields: CheckField[] = backendRule.parameters?.fields || [];
+
+  return {
+    id: backendRule.rule_id,
+    name: backendRule.rule_name,
+    description: backendRule.description || undefined,
+    fields,
+  };
+}
+
+/**
+ * 获取用户的检查规则配置
  * @returns 用户的检查规则列表
  */
 export async function fetchUserCheckRules(): Promise<CheckRule[]> {
-  // 模拟网络延迟
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  
   try {
-    const rules = getStoredRules();
-    return rules;
+    const response = await fetch(
+      `${API_CONFIG.BASE_URL}${API_CONFIG.VERSION}/apps/document-compliance/config/rules?enabled_only=false`,
+      {
+        method: "GET",
+        headers: getCommonHeaders(),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    
+    // 将后端的 RuleListResponse 转换为前端的 CheckRule[]
+    const backendRules: BackendRuleConfig[] = data.rules || [];
+    return backendRules.map(fromBackendRule);
   } catch (error) {
     console.error("Fetch check rules failed:", error);
-    return DEFAULT_MOCK_RULES;
+    // 返回空数组，让用户创建新规则
+    return [];
   }
 }
 
 /**
- * 创建新的检查规则（Mock 实现）
+ * 创建新的检查规则
  * @param rule 检查规则
- * @returns 创建的检查规则（包含生成的ID）
+ * @returns 创建的检查规则（包含服务器生成的ID）
  */
 export async function createCheckRule(rule: Omit<CheckRule, "id">): Promise<CheckRule> {
-  // 模拟网络延迟
-  await new Promise((resolve) => setTimeout(resolve, 300));
-  
   try {
-    const rules = getStoredRules();
+    const backendRuleData = toBackendRule({ ...rule, id: "" } as CheckRule);
     
-    // 生成新 ID
-    const newRule: CheckRule = {
-      ...rule,
-      id: `rule-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-    };
-    
-    // 保存到 localStorage
-    rules.push(newRule);
-    saveRulesToStorage(rules);
-    
-    return newRule;
+    const response = await fetch(
+      `${API_CONFIG.BASE_URL}${API_CONFIG.VERSION}/apps/document-compliance/config/rules`,
+      {
+        method: "POST",
+        headers: getCommonHeaders(),
+        body: JSON.stringify(backendRuleData),
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({
+        detail: "创建检查规则失败",
+      }));
+      throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    }
+
+    const backendRule: BackendRuleConfig = await response.json();
+    return fromBackendRule(backendRule);
   } catch (error) {
     console.error("Create check rule failed:", error);
-    throw new Error("创建检查规则失败");
+    throw new Error(error instanceof Error ? error.message : "创建检查规则失败");
   }
 }
 
 /**
- * 更新检查规则（Mock 实现）
+ * 更新检查规则
  * @param rule 检查规则
  * @returns 更新后的检查规则
  */
 export async function updateCheckRule(rule: CheckRule): Promise<CheckRule> {
-  // 模拟网络延迟
-  await new Promise((resolve) => setTimeout(resolve, 300));
-  
   try {
-    const rules = getStoredRules();
-    const index = rules.findIndex((r) => r.id === rule.id);
+    const backendRuleData = toBackendRule(rule);
     
-    if (index === -1) {
-      throw new Error("检查规则不存在");
+    const response = await fetch(
+      `${API_CONFIG.BASE_URL}${API_CONFIG.VERSION}/apps/document-compliance/config/rules/${rule.id}`,
+      {
+        method: "PUT",
+        headers: getCommonHeaders(),
+        body: JSON.stringify(backendRuleData),
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({
+        detail: "更新检查规则失败",
+      }));
+      throw new Error(error.detail || `HTTP error! status: ${response.status}`);
     }
-    
-    // 更新规则
-    rules[index] = rule;
-    saveRulesToStorage(rules);
-    
-    return rule;
+
+    const backendRule: BackendRuleConfig = await response.json();
+    return fromBackendRule(backendRule);
   } catch (error) {
     console.error("Update check rule failed:", error);
     throw new Error(error instanceof Error ? error.message : "更新检查规则失败");
@@ -194,22 +170,25 @@ export async function updateCheckRule(rule: CheckRule): Promise<CheckRule> {
 }
 
 /**
- * 删除检查规则（Mock 实现）
+ * 删除检查规则
  * @param ruleId 规则ID
  */
 export async function deleteCheckRule(ruleId: string): Promise<void> {
-  // 模拟网络延迟
-  await new Promise((resolve) => setTimeout(resolve, 300));
-  
   try {
-    const rules = getStoredRules();
-    const filteredRules = rules.filter((r) => r.id !== ruleId);
-    
-    if (filteredRules.length === rules.length) {
-      throw new Error("检查规则不存在");
+    const response = await fetch(
+      `${API_CONFIG.BASE_URL}${API_CONFIG.VERSION}/apps/document-compliance/config/rules/${ruleId}`,
+      {
+        method: "DELETE",
+        headers: getCommonHeaders(),
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({
+        detail: "删除检查规则失败",
+      }));
+      throw new Error(error.detail || `HTTP error! status: ${response.status}`);
     }
-    
-    saveRulesToStorage(filteredRules);
   } catch (error) {
     console.error("Delete check rule failed:", error);
     throw new Error(error instanceof Error ? error.message : "删除检查规则失败");
@@ -219,51 +198,97 @@ export async function deleteCheckRule(ruleId: string): Promise<void> {
 export interface CheckDocumentParams {
   files: File[]; // 支持多文件
   save_to_kb?: boolean;
-  mode?: "auto_check" | "export_prompt";
-  check_rules?: CheckRule[]; // 自定义检查规则
+  session_id?: string;
 }
 
 /**
- * 检查文档合规性（支持多文件）
+ * 上传文件到 Storage Service
+ * @param file 文件
+ * @param sessionId 会话ID
+ * @returns 文件ID
+ */
+async function uploadFileToStorage(file: File, sessionId?: string): Promise<string> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("category", "session");
+  formData.append("agent_type", "document_compliance");
+  if (sessionId) {
+    formData.append("session_id", sessionId);
+  }
+  formData.append("user_id", getCurrentUserId());
+
+  try {
+    const headers = getCommonHeaders();
+    delete headers["Content-Type"];
+
+    const response = await fetch(
+      `${API_CONFIG.BASE_URL}${API_CONFIG.VERSION}/common/storage/upload`,
+      {
+        method: "POST",
+        headers,
+        body: formData,
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Upload failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.file_id;
+  } catch (error) {
+    console.error("File upload failed:", error);
+    throw new Error("文件上传失败");
+  }
+}
+
+/**
+ * 检查文档合规性
  * @param params 检查参数
  * @returns 检查结果
  */
 export async function checkDocument(
   params: CheckDocumentParams
 ): Promise<DocumentCheckResponse> {
-  const formData = new FormData();
-  
-  // 添加多个文件
-  params.files.forEach((file) => {
-    formData.append("files", file);
-  });
-  
-  formData.append("save_to_kb", String(params.save_to_kb ?? false));
-  formData.append("mode", params.mode ?? "auto_check");
-  
-  // 添加自定义检查规则
-  if (params.check_rules) {
-    formData.append("check_rules", JSON.stringify(params.check_rules));
-  }
-
   try {
+    // 1. 上传文件到 Storage Service（暂时只支持单文件）
+    if (params.files.length === 0) {
+      throw new Error("请至少选择一个文件");
+    }
+
+    const fileId = await uploadFileToStorage(params.files[0], params.session_id);
+
+    // 2. 调用检查接口
     const response = await fetch(
-      `${API_BASE_URL}/api/agents/document-compliance/check`,
+      `${API_CONFIG.BASE_URL}${API_CONFIG.VERSION}/apps/document-compliance/check`,
       {
         method: "POST",
-        body: formData,
+        headers: getCommonHeaders(),
+        body: JSON.stringify({
+          file_id: fileId,
+          save_to_kb: params.save_to_kb ?? false,
+          session_id: params.session_id,
+        }),
       }
     );
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({
-        error: "服务器响应错误",
+        detail: "检查失败",
       }));
-      throw new Error(error.error || `HTTP error! status: ${response.status}`);
+      throw new Error(error.detail || `HTTP error! status: ${response.status}`);
     }
 
     const data = await response.json();
-    return data;
+    
+    // 将后端响应转换为前端格式
+    return {
+      success: data.status === "completed",
+      record: data.meeting_record || {},
+      validation_results: data.validation_results || [],
+      prompt: undefined, // 如果需要提示词，需要另外调用 export-prompt 接口
+      error: data.status === "failed" ? data.message : undefined,
+    };
   } catch (error) {
     console.error("Document check failed:", error);
     throw error;
@@ -272,26 +297,33 @@ export async function checkDocument(
 
 /**
  * 导出 AI 提示词
- * @param record 会议记录
+ * @param checkId 检查任务ID
+ * @param templateName 提示词模板名称
  * @returns 生成的提示词
  */
 export async function exportPrompt(
-  record: MeetingRecord
+  checkId: string,
+  templateName: string = "default"
 ): Promise<string> {
   try {
     const response = await fetch(
-      `${API_BASE_URL}/api/agents/document-compliance/export-prompt`,
+      `${API_CONFIG.BASE_URL}${API_CONFIG.VERSION}/apps/document-compliance/export-prompt`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(record),
+        headers: getCommonHeaders(),
+        body: JSON.stringify({
+          check_id: checkId,
+          template_name: templateName,
+          include_raw_data: false,
+        }),
       }
     );
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      const error = await response.json().catch(() => ({
+        detail: "导出提示词失败",
+      }));
+      throw new Error(error.detail || `HTTP error! status: ${response.status}`);
     }
 
     const data = await response.json();

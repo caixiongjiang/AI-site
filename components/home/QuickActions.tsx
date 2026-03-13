@@ -1,6 +1,8 @@
 "use client";
 
 import { FileText, PenTool, BarChart3, Target } from "lucide-react";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { useAuthModal } from "@/components/auth/AuthModalProvider";
 
 const actions = [
   { icon: FileText, label: "文档翻译" },
@@ -10,6 +12,9 @@ const actions = [
 ];
 
 export const QuickActions = () => {
+  const { isAuthenticated } = useAuth();
+  const { openAuthModal } = useAuthModal();
+
   return (
     <div className="grid w-full max-w-[800px] grid-cols-4 gap-5">
       {actions.map((action) => {
@@ -17,6 +22,18 @@ export const QuickActions = () => {
         return (
           <button
             key={action.label}
+            type="button"
+            onClick={() => {
+              if (!isAuthenticated) {
+                openAuthModal({
+                  title: `登录后即可使用${action.label}`,
+                  description:
+                    "这些效率工具会结合你的会话状态、历史记录与个性化设置来持续优化结果，登录后体验会更完整。",
+                  nextPath: "/",
+                  featureLabel: action.label,
+                });
+              }
+            }}
             className="group flex flex-col items-center gap-2.5 rounded-xl border border-transparent bg-dark-card p-5 transition-all hover:-translate-y-1 hover:border-primary hover:shadow-lg hover:shadow-primary/15"
           >
             <Icon className="h-8 w-8 text-foreground" />

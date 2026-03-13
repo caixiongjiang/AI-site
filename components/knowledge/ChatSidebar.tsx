@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
-import { Send, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Message } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
+import { Bot, Send, Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ChatSidebarProps {
@@ -12,97 +12,122 @@ interface ChatSidebarProps {
   documentName: string;
 }
 
-export const ChatSidebar = ({ isOpen, onClose, documentName }: ChatSidebarProps) => {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "assistant",
-      content: `您好！我是小蔡，您的智能文档助手。我已经准备好回答关于「${documentName}」的任何问题了。您可以问我：\n\n• 这份文档的核心内容是什么？\n• 帮我总结关键要点\n• 文档中的某个条款是什么意思？`,
-      timestamp: new Date(),
-    },
-  ]);
+const starterPrompts = [
+  "总结这份文档的核心结论",
+  "列出值得继续追问的 5 个问题",
+  "帮我按汇报口径提炼重点",
+];
+
+export const ChatSidebar = ({
+  isOpen,
+  onClose,
+  documentName,
+}: ChatSidebarProps) => {
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
 
-  const handleSend = () => {
-    if (!input.trim()) return;
+  useEffect(() => {
+    setMessages([
+      {
+        role: "assistant",
+        content: `已接入「${documentName}」的上下文。你可以让我做摘要、找重点、列风险点，或给出后续追问建议。`,
+        timestamp: new Date(),
+      },
+    ]);
+  }, [documentName]);
+
+  const handleSend = (preset?: string) => {
+    const content = (preset ?? input).trim();
+    if (!content) return;
 
     const userMessage: Message = {
       role: "user",
-      content: input,
+      content,
       timestamp: new Date(),
     };
 
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
 
-    // Simulate AI response
     setTimeout(() => {
-      const responses = [
-        `根据「${documentName}」的内容，我为您找到了以下信息：\n\n这份文档主要涵盖了相关的核心要点和注意事项。文档详细说明了关键条款和实施方式。`,
-        `让我为您总结一下要点：\n\n1. 明确了核心内容的定义和范围\n2. 详细规定了相关的执行标准\n3. 强调了重要条款的关键性\n4. 提供了多种处理途径\n5. 确保了流程的规范性和可执行性`,
-        `关于这个问题，文档中有明确说明：\n\n根据相关规定，应当按照标准流程执行。具体操作时需要注意关键要点，确保符合要求。`,
-      ];
-
-      const aiMessage: Message = {
+      const assistantMessage: Message = {
         role: "assistant",
-        content: responses[Math.floor(Math.random() * responses.length)],
-        reference: `参考：${documentName}`,
+        content: `基于「${documentName}」的已知上下文，这个问题适合从“核心事实、结论依据、待补信息”三个维度来看。当前界面还没有接入真实问答接口，所以这里先展示占位响应；接入后端后可直接返回带引用的答案。`,
+        reference: `引用范围：${documentName}`,
         timestamp: new Date(),
       };
-
-      setMessages((prev) => [...prev, aiMessage]);
-    }, 800);
+      setMessages((prev) => [...prev, assistantMessage]);
+    }, 500);
   };
 
   return (
     <aside
       className={cn(
-        "fixed right-0 top-0 z-[900] flex h-screen w-[420px] flex-col border-l border-dark-border bg-[#1E1E1E] shadow-2xl transition-transform duration-300",
+        "fixed right-0 top-0 z-[900] flex h-screen w-[440px] flex-col border-l border-white/5 bg-[#121516]/95 shadow-2xl backdrop-blur transition-transform duration-300",
         isOpen ? "translate-x-0" : "translate-x-full"
       )}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-dark-border p-5">
-        <div>
-          <div className="mb-1 flex items-center gap-2 text-base text-foreground">
-            <span>🤖</span>
-            <span>小蔡助手</span>
+      <div className="border-b border-white/5 p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 text-base text-foreground">
+              <Bot className="h-5 w-5 text-primary-light" />
+              文档问答
+            </div>
+            <div className="mt-1 text-xs text-muted">当前上下文：{documentName}</div>
           </div>
-          <div className="text-xs text-muted">正在查看：{documentName}</div>
+          <button
+            onClick={onClose}
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 text-muted transition-all hover:border-red-500/40 hover:text-red-400"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
-        <button
-          onClick={onClose}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-all hover:bg-red-500/20 hover:text-red-500"
-        >
-          <X className="h-5 w-5" />
-        </button>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          {starterPrompts.map((prompt) => (
+            <button
+              key={prompt}
+              onClick={() => handleSend(prompt)}
+              className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-foreground transition-colors hover:border-primary"
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Messages */}
       <div className="flex-1 space-y-4 overflow-y-auto p-5">
         {messages.map((message, index) => (
-          <div key={index} className="flex gap-2.5 animate-fadeIn">
+          <div key={index} className="flex gap-3 animate-fadeIn">
             <div
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+              className={cn(
+                "flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl",
                 message.role === "assistant"
-                  ? "bg-gradient-to-br from-primary to-primary-light"
-                  : "bg-dark-border"
-              }`}
+                  ? "bg-primary/15 text-primary-light"
+                  : "bg-white/10 text-foreground"
+              )}
             >
-              {message.role === "assistant" ? "🤖" : "👤"}
+              {message.role === "assistant" ? (
+                <Sparkles className="h-4 w-4" />
+              ) : (
+                "你"
+              )}
             </div>
             <div className="flex-1">
               <div
-                className={`rounded-xl p-3 text-sm leading-relaxed whitespace-pre-line ${
+                className={cn(
+                  "rounded-2xl p-3 text-sm leading-6 whitespace-pre-line",
                   message.role === "assistant"
                     ? "bg-dark-card text-foreground"
-                    : "bg-primary/15 text-foreground"
-                }`}
+                    : "bg-primary/10 text-foreground"
+                )}
               >
                 {message.content}
               </div>
               {message.reference && (
-                <div className="mt-2 rounded-r-md border-l-2 border-primary bg-primary/10 px-3 py-2 text-xs text-primary-light">
-                  📍 {message.reference}
+                <div className="mt-2 rounded-2xl border border-primary/20 bg-primary/10 px-3 py-2 text-xs text-primary-light">
+                  {message.reference}
                 </div>
               )}
               <div className="mt-1 text-[10px] text-muted">
@@ -113,9 +138,8 @@ export const ChatSidebar = ({ isOpen, onClose, documentName }: ChatSidebarProps)
         ))}
       </div>
 
-      {/* Input */}
-      <div className="border-t border-dark-border p-4">
-        <div className="flex items-center gap-2.5 rounded-xl border-2 border-transparent bg-dark-card p-2.5 transition-all focus-within:border-primary">
+      <div className="border-t border-white/5 p-4">
+        <div className="flex items-end gap-2 rounded-[24px] border border-white/10 bg-dark-card p-2.5 focus-within:border-primary">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -125,14 +149,14 @@ export const ChatSidebar = ({ isOpen, onClose, documentName }: ChatSidebarProps)
                 handleSend();
               }
             }}
-            placeholder="询问关于文档的问题..."
-            rows={1}
-            className="max-h-[100px] flex-1 resize-none bg-transparent text-sm text-foreground outline-none placeholder:text-muted"
+            placeholder="向文档提问..."
+            rows={2}
+            className="min-h-[48px] flex-1 resize-none bg-transparent px-2 text-sm text-foreground outline-none placeholder:text-muted"
           />
           <button
-            onClick={handleSend}
+            onClick={() => handleSend()}
             disabled={!input.trim()}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary text-white transition-all hover:bg-primary-light disabled:cursor-not-allowed disabled:bg-dark-border disabled:text-muted"
+            className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-black transition-colors hover:bg-primary-light disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-muted"
           >
             <Send className="h-4 w-4" />
           </button>
