@@ -2,7 +2,7 @@
 
 import { KnowledgeFile } from "@/lib/knowledge-types";
 import { formatBytes, formatDate } from "@/lib/utils";
-import { FileText, MoreHorizontal, Trash2 } from "lucide-react";
+import { ExternalLink, FileText, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface FileGridProps {
@@ -16,17 +16,17 @@ const statusMap: Record<
   { label: string; className: string; barClassName: string }
 > = {
   pending: {
-    label: "待索引",
+    label: "待处理",
     className: "bg-amber-500/15 text-amber-300 border-amber-500/30",
     barClassName: "bg-amber-500",
   },
   processing: {
-    label: "索引中",
+    label: "处理中",
     className: "bg-sky-500/15 text-sky-300 border-sky-500/30",
     barClassName: "bg-sky-500",
   },
   success: {
-    label: "已完成",
+    label: "可提问",
     className: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
     barClassName: "bg-emerald-500",
   },
@@ -47,7 +47,7 @@ export const FileGrid = ({
       <div className="rounded-[28px] border border-dashed border-white/10 bg-dark-card/70 p-10 text-center">
         <div className="text-base text-foreground">当前目录还没有资料</div>
         <div className="mt-2 text-sm text-muted">
-          上传文档后可立即触发索引，并在右侧发起知识问答。
+          上传文件后，系统会自动处理内容，你可以直接开始问答。
         </div>
       </div>
     );
@@ -106,7 +106,7 @@ export const FileGrid = ({
                     />
                   </div>
                   <div className="mt-1 text-[11px] text-muted">
-                    {Math.round(progress * 100)}% · 正在构建索引
+                    {Math.round(progress * 100)}% · 正在处理文档
                   </div>
                 </div>
               )}
@@ -115,9 +115,9 @@ export const FileGrid = ({
               <button
                 onClick={() => onFileClick(file)}
                 className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 text-muted transition-colors hover:border-primary hover:text-foreground"
-                aria-label={`查看 ${file.file_name}`}
+                aria-label={`打开 ${file.file_name}`}
               >
-                <MoreHorizontal className="h-4 w-4" />
+                <ExternalLink className="h-4 w-4" />
               </button>
               {onDeleteFile && (
                 <button

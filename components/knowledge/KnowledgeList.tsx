@@ -39,7 +39,7 @@ export const KnowledgeList = ({
                 ima 风格知识库
               </div>
               <p className="mt-2 text-xs leading-5 text-muted">
-                管理资料、触发索引、快速进入文档问答。
+                管理资料、自动处理文件、快速进入文档问答。
               </p>
             </div>
             <span className="rounded-full border border-white/10 px-2 py-1 text-[11px] text-foreground">
@@ -107,7 +107,7 @@ export const KnowledgeList = ({
                 </div>
               )}
               <div className="sr-only">
-                  {kb.knowledge_base_name}
+                {kb.knowledge_base_name}
               </div>
             </button>
           );

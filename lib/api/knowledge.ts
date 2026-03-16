@@ -98,6 +98,7 @@ export async function fetchKnowledgeBases(): Promise<KnowledgeBaseInfo[]> {
 export async function createKnowledgeBase(input: {
   knowledge_base_name: string;
   description?: string;
+  parent_knowledge_base_id?: string | null;
 }): Promise<KnowledgeBaseInfo> {
   return requestJson<KnowledgeBaseInfo>("/api/knowledge/base/create", {
     method: "POST",
@@ -106,6 +107,30 @@ export async function createKnowledgeBase(input: {
       ...input,
     }),
   });
+}
+
+export async function fetchKnowledgeBaseChildren(
+  parentKnowledgeBaseId?: string | null
+): Promise<KnowledgeBaseInfo[]> {
+  const suffix = parentKnowledgeBaseId
+    ? `?parent_knowledge_base_id=${encodeURIComponent(parentKnowledgeBaseId)}`
+    : "";
+  const data = await requestJson<KnowledgeBaseListResponse>(
+    `/api/knowledge/base/children${suffix}`,
+    {
+      method: "GET",
+    }
+  );
+  return data.knowledge_bases ?? [];
+}
+
+export async function deleteKnowledgeBase(knowledgeBaseId: string): Promise<void> {
+  await requestJson<void>(
+    `/api/knowledge/base/${encodeURIComponent(knowledgeBaseId)}`,
+    {
+      method: "DELETE",
+    }
+  );
 }
 
 export async function fetchFolders(
@@ -130,6 +155,25 @@ export async function createFolder(input: {
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export async function deleteFolder(folderId: string): Promise<void> {
+  await requestJson<void>(`/api/knowledge/folder/${encodeURIComponent(folderId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function moveFolder(
+  folderId: string,
+  input: { target_parent_folder_id?: string | null }
+): Promise<FolderInfo> {
+  return requestJson<FolderInfo>(
+    `/api/knowledge/folder/${encodeURIComponent(folderId)}/move`,
+    {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }
+  );
 }
 
 export async function fetchFolderFiles(folderId: string): Promise<KnowledgeFile[]> {
@@ -229,6 +273,20 @@ export async function restoreTrashItem(item: TrashItem): Promise<void> {
       ? `/api/knowledge/trash/restore/folder/${encodeURIComponent(item.item_id)}`
       : `/api/knowledge/trash/restore/file/${encodeURIComponent(item.item_id)}`;
   await requestJson<void>(path, { method: "POST" });
+}
+
+export async function permanentlyDeleteTrashItem(item: TrashItem): Promise<void> {
+  const path =
+    item.item_type === "folder"
+      ? `/api/knowledge/trash/folder/${encodeURIComponent(item.item_id)}`
+      : `/api/knowledge/trash/file/${encodeURIComponent(item.item_id)}`;
+  await requestJson<void>(path, { method: "DELETE" });
+}
+
+export async function emptyTrash(): Promise<void> {
+  await requestJson<void>("/api/knowledge/trash/empty", {
+    method: "DELETE",
+  });
 }
 
 export async function softDeleteFile(fileId: string): Promise<void> {
