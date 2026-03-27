@@ -13,6 +13,8 @@ interface KnowledgeChatPanelProps {
   starterPrompts: string[];
   placeholder?: string;
   emptyHint?: string;
+  disabled?: boolean;
+  disabledReason?: string;
   className?: string;
 }
 
@@ -23,6 +25,8 @@ export const KnowledgeChatPanel = ({
   starterPrompts,
   placeholder = "输入你的问题...",
   emptyHint,
+  disabled = false,
+  disabledReason,
   className,
 }: KnowledgeChatPanelProps) => {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -46,6 +50,8 @@ export const KnowledgeChatPanel = ({
   }, [messages]);
 
   const handleSend = (preset?: string) => {
+    if (disabled) return;
+
     const content = (preset ?? input).trim();
     if (!content) return;
 
@@ -99,7 +105,8 @@ export const KnowledgeChatPanel = ({
               key={prompt}
               type="button"
               onClick={() => handleSend(prompt)}
-              className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-foreground transition-colors hover:border-primary"
+              disabled={disabled}
+              className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-foreground transition-colors hover:border-primary disabled:cursor-not-allowed disabled:border-white/5 disabled:text-muted"
             >
               {prompt}
             </button>
@@ -152,24 +159,31 @@ export const KnowledgeChatPanel = ({
       </div>
 
       <div className="border-t border-white/5 p-5">
+        {disabledReason ? (
+          <div className="mb-3 rounded-[20px] border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs leading-6 text-amber-100">
+            {disabledReason}
+          </div>
+        ) : null}
         <div className="flex items-end gap-3 rounded-[28px] border border-white/10 bg-dark-card p-3 focus-within:border-primary">
           <textarea
             value={input}
+            disabled={disabled}
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={(event) => {
+              if (disabled) return;
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 handleSend();
               }
             }}
             rows={3}
-            placeholder={placeholder}
-            className="min-h-[72px] flex-1 resize-none bg-transparent px-2 text-sm text-foreground outline-none placeholder:text-muted"
+            placeholder={disabled ? "当前上下文处理中，暂不可提问" : placeholder}
+            className="min-h-[72px] flex-1 resize-none bg-transparent px-2 text-sm text-foreground outline-none placeholder:text-muted disabled:cursor-not-allowed disabled:text-muted"
           />
           <button
             type="button"
             onClick={() => handleSend()}
-            disabled={!input.trim()}
+            disabled={disabled || !input.trim()}
             className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-black transition-colors hover:bg-primary-light disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-muted"
           >
             <Send className="h-4 w-4" />

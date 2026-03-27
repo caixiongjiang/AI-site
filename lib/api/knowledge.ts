@@ -1,10 +1,15 @@
 import { API_CONFIG, getCommonHeaders } from "@/lib/config";
 import {
   ApiResponse,
+  FileDeleteResponse,
+  FilePreviewResponse,
   FileProgress,
+  FolderDeleteResponse,
   FolderInfo,
   KnowledgeBaseInfo,
   KnowledgeFile,
+  TrashFolderChildItem,
+  TrashFolderFileItem,
   TrashItem,
 } from "@/lib/knowledge-types";
 
@@ -69,6 +74,72 @@ function buildHeaders(init?: RequestInit): HeadersInit {
     ...nextHeaders,
     ...(init?.headers ?? {}),
   };
+}
+
+async function requestJsonWithUploadProgress<T>(
+  path: string,
+  init: {
+    method: string;
+    body: FormData;
+    headers?: HeadersInit;
+    onUploadProgress?: (progress: number) => void;
+  }
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(init.method, buildKnowledgeUrl(path));
+
+    const headers = buildHeaders({
+      method: init.method,
+      body: init.body,
+      headers: init.headers,
+    });
+
+    Object.entries(headers).forEach(([key, value]) => {
+      if (typeof value === "string") {
+        xhr.setRequestHeader(key, value);
+      }
+    });
+
+    xhr.upload.onprogress = (event) => {
+      if (!init.onUploadProgress || !event.lengthComputable) return;
+      init.onUploadProgress(event.total > 0 ? event.loaded / event.total : 0);
+    };
+
+    xhr.onerror = () => {
+      reject(new Error("知识库上传失败"));
+    };
+
+    xhr.onload = () => {
+      try {
+        const payload = xhr.responseText
+          ? (JSON.parse(xhr.responseText) as ApiResponse<T>)
+          : null;
+
+        if (xhr.status < 200 || xhr.status >= 300) {
+          const error = payload as
+            | {
+                detail?: string;
+                message?: string;
+              }
+            | null;
+          reject(
+            new Error(error?.detail || error?.message || `HTTP ${xhr.status}`)
+          );
+          return;
+        }
+
+        init.onUploadProgress?.(1);
+        resolve(payload?.data as T);
+      } catch (error) {
+        reject(
+          error instanceof Error ? error : new Error("解析上传响应失败")
+        );
+      }
+    };
+
+    xhr.send(init.body);
+  });
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -157,10 +228,15 @@ export async function createFolder(input: {
   });
 }
 
-export async function deleteFolder(folderId: string): Promise<void> {
-  await requestJson<void>(`/api/knowledge/folder/${encodeURIComponent(folderId)}`, {
-    method: "DELETE",
-  });
+export async function deleteFolder(
+  folderId: string
+): Promise<FolderDeleteResponse> {
+  return requestJson<FolderDeleteResponse>(
+    `/api/knowledge/folder/${encodeURIComponent(folderId)}`,
+    {
+      method: "DELETE",
+    }
+  );
 }
 
 export async function moveFolder(
@@ -194,6 +270,7 @@ export async function uploadKnowledgeFiles(input: {
   files: File[];
   knowledge_base_id: string;
   folder_id?: string | null;
+  onUploadProgress?: (progress: number) => void;
 }): Promise<FileUploadResponse[]> {
   if (input.files.length === 1) {
     const formData = new FormData();
@@ -203,11 +280,14 @@ export async function uploadKnowledgeFiles(input: {
       formData.append("folder_id", input.folder_id);
     }
 
-    const file = await requestJson<FileUploadResponse>("/api/knowledge/index/upload", {
-      method: "POST",
-      body: formData,
-      headers: buildHeaders({ body: formData }),
-    });
+    const file = await requestJsonWithUploadProgress<FileUploadResponse>(
+      "/api/knowledge/index/upload",
+      {
+        method: "POST",
+        body: formData,
+        onUploadProgress: input.onUploadProgress,
+      }
+    );
 
     return [file];
   }
@@ -219,12 +299,12 @@ export async function uploadKnowledgeFiles(input: {
     formData.append("folder_id", input.folder_id);
   }
 
-  const data = await requestJson<BatchFileUploadResponse>(
+  const data = await requestJsonWithUploadProgress<BatchFileUploadResponse>(
     "/api/knowledge/index/upload/batch",
     {
       method: "POST",
       body: formData,
-      headers: buildHeaders({ body: formData }),
+      onUploadProgress: input.onUploadProgress,
     }
   );
 
@@ -289,8 +369,80 @@ export async function emptyTrash(): Promise<void> {
   });
 }
 
-export async function softDeleteFile(fileId: string): Promise<void> {
-  await requestJson<void>(`/api/knowledge/folder/file/${encodeURIComponent(fileId)}`, {
-    method: "DELETE",
-  });
+export async function softDeleteFile(fileId: string): Promise<FileDeleteResponse> {
+  return requestJson<FileDeleteResponse>(
+    `/api/knowledge/file/${encodeURIComponent(fileId)}`,
+    {
+      method: "DELETE",
+    }
+  );
+}
+
+export async function fetchFilePreview(
+  fileId: string,
+  expires?: number
+): Promise<FilePreviewResponse> {
+  const suffix = expires ? `?expires=${expires}` : "";
+  return requestJson<FilePreviewResponse>(
+    `/api/knowledge/file/${encodeURIComponent(fileId)}/preview${suffix}`,
+    { method: "GET" }
+  );
+}
+
+export async function moveFile(
+  fileId: string,
+  targetFolderId: string | null
+): Promise<void> {
+  await requestJson<void>(
+    `/api/knowledge/file/${encodeURIComponent(fileId)}/move`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ target_folder_id: targetFolderId }),
+    }
+  );
+}
+
+export async function renameFolder(
+  folderId: string,
+  folderName: string
+): Promise<FolderInfo> {
+  return requestJson<FolderInfo>(
+    `/api/knowledge/folder/${encodeURIComponent(folderId)}/rename`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ folder_name: folderName }),
+    }
+  );
+}
+
+interface TrashFolderChildrenResponse {
+  folder_id: string;
+  children: TrashFolderChildItem[];
+  total: number;
+}
+
+interface TrashFolderFilesResponse {
+  folder_id: string;
+  files: TrashFolderFileItem[];
+  total: number;
+}
+
+export async function fetchTrashFolderChildren(
+  folderId: string
+): Promise<TrashFolderChildItem[]> {
+  const data = await requestJson<TrashFolderChildrenResponse>(
+    `/api/knowledge/trash/folder/${encodeURIComponent(folderId)}/children`,
+    { method: "GET" }
+  );
+  return data.children ?? [];
+}
+
+export async function fetchTrashFolderFiles(
+  folderId: string
+): Promise<TrashFolderFileItem[]> {
+  const data = await requestJson<TrashFolderFilesResponse>(
+    `/api/knowledge/trash/folder/${encodeURIComponent(folderId)}/files`,
+    { method: "GET" }
+  );
+  return data.files ?? [];
 }

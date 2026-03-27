@@ -15,6 +15,7 @@ interface DocumentViewProps {
   file: KnowledgeFile;
   kbName: string;
   previewUrl: string;
+  isLoadingPreview?: boolean;
 }
 
 const statusLabelMap: Record<string, string> = {
@@ -24,7 +25,7 @@ const statusLabelMap: Record<string, string> = {
   failed: "处理失败",
 };
 
-export const DocumentView = ({ file, kbName, previewUrl }: DocumentViewProps) => {
+export const DocumentView = ({ file, kbName, previewUrl, isLoadingPreview }: DocumentViewProps) => {
   const progress = Math.round((file.progress ?? 0) * 100);
   const statusLabel = statusLabelMap[file.index_status || "pending"];
   const isPdf =
@@ -103,7 +104,11 @@ export const DocumentView = ({ file, kbName, previewUrl }: DocumentViewProps) =>
       </div>
 
       <div className="flex-1 p-5">
-        {isPdf ? (
+        {isLoadingPreview ? (
+          <div className="flex h-full min-h-[720px] items-center justify-center rounded-[28px] border border-white/5 bg-dark-card/80">
+            <div className="text-sm text-muted">正在获取文件预览地址...</div>
+          </div>
+        ) : isPdf && previewUrl ? (
           <iframe
             title={file.file_name}
             src={previewUrl}
@@ -122,15 +127,17 @@ export const DocumentView = ({ file, kbName, previewUrl }: DocumentViewProps) =>
               </p>
             </div>
 
-            <a
-              href={previewUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex w-fit items-center gap-2 rounded-full bg-white px-4 py-2.5 text-sm text-black transition-transform hover:-translate-y-0.5"
-            >
-              <ExternalLink className="h-4 w-4" />
-              尝试打开原文件
-            </a>
+            {previewUrl ? (
+              <a
+                href={previewUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex w-fit items-center gap-2 rounded-full bg-white px-4 py-2.5 text-sm text-black transition-transform hover:-translate-y-0.5"
+              >
+                <ExternalLink className="h-4 w-4" />
+                尝试打开原文件
+              </a>
+            ) : null}
           </div>
         )}
       </div>

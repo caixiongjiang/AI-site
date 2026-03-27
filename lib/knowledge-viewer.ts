@@ -1,4 +1,3 @@
-import { API_CONFIG } from "@/lib/config";
 import { KnowledgeFile } from "@/lib/knowledge-types";
 
 const KNOWLEDGE_FILE_CACHE_KEY = "knowledge_file_view_cache";
@@ -31,14 +30,4 @@ export function getCachedKnowledgeFileView(
   } catch {
     return null;
   }
-}
-
-export function buildKnowledgePreviewUrl(fileId: string): string {
-  const customTemplate = process.env.NEXT_PUBLIC_KNOWLEDGE_FILE_PREVIEW_URL_TEMPLATE;
-
-  if (customTemplate) {
-    return customTemplate.replace("{file_id}", encodeURIComponent(fileId));
-  }
-
-  return `${API_CONFIG.BASE_URL}/api/knowledge/file/${encodeURIComponent(fileId)}/preview`;
 }
