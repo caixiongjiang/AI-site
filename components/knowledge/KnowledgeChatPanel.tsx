@@ -81,19 +81,19 @@ export const KnowledgeChatPanel = ({
   return (
     <section
       className={cn(
-        "flex min-h-[620px] flex-col rounded-[32px] border border-white/5 bg-[linear-gradient(180deg,rgba(18,21,22,0.98),rgba(12,14,15,0.98))] shadow-[0_24px_80px_rgba(0,0,0,0.24)]",
+        "flex min-h-[620px] flex-col rounded-2xl border border-gray-200 bg-white shadow-sm",
         className
       )}
     >
-      <div className="border-b border-white/5 px-6 py-5">
+      <div className="border-b border-gray-100 px-6 py-5">
         <div className="flex items-start gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/12 text-primary-light">
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/10 text-primary">
             <Bot className="h-5 w-5" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 text-lg text-foreground">
+            <div className="flex items-center gap-2 text-lg font-medium text-foreground">
               <span>{title}</span>
-              <Sparkles className="h-4 w-4 text-primary-light" />
+              <Sparkles className="h-4 w-4 text-primary" />
             </div>
             <p className="mt-1 text-sm leading-6 text-muted">{subtitle}</p>
           </div>
@@ -106,7 +106,7 @@ export const KnowledgeChatPanel = ({
               type="button"
               onClick={() => handleSend(prompt)}
               disabled={disabled}
-              className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-foreground transition-colors hover:border-primary disabled:cursor-not-allowed disabled:border-white/5 disabled:text-muted"
+              className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-foreground transition-colors hover:border-primary hover:bg-primary/5 disabled:cursor-not-allowed disabled:text-muted"
             >
               {prompt}
             </button>
@@ -116,7 +116,7 @@ export const KnowledgeChatPanel = ({
 
       <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
         {messages.length === 0 && emptyHint ? (
-          <div className="rounded-[24px] border border-dashed border-white/10 bg-white/[0.03] p-6 text-sm text-muted">
+          <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-6 text-sm text-muted">
             {emptyHint}
           </div>
         ) : null}
@@ -127,8 +127,8 @@ export const KnowledgeChatPanel = ({
               className={cn(
                 "flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl text-sm",
                 message.role === "assistant"
-                  ? "bg-primary/15 text-primary-light"
-                  : "bg-white/10 text-foreground"
+                  ? "bg-primary/10 text-primary"
+                  : "bg-gray-100 text-foreground"
               )}
             >
               {message.role === "assistant" ? <Sparkles className="h-4 w-4" /> : "你"}
@@ -137,16 +137,16 @@ export const KnowledgeChatPanel = ({
             <div className="min-w-0 flex-1">
               <div
                 className={cn(
-                  "rounded-[24px] p-4 text-sm leading-7 whitespace-pre-line",
+                  "rounded-2xl p-4 text-sm leading-7 whitespace-pre-line",
                   message.role === "assistant"
-                    ? "bg-dark-card text-foreground"
-                    : "bg-primary/10 text-foreground"
+                    ? "bg-gray-50 text-foreground"
+                    : "bg-primary/5 text-foreground"
                 )}
               >
                 {message.content}
               </div>
               {message.reference ? (
-                <div className="mt-2 rounded-2xl border border-primary/20 bg-primary/10 px-3 py-2 text-xs text-primary-light">
+                <div className="mt-2 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary">
                   {message.reference}
                 </div>
               ) : null}
@@ -158,13 +158,13 @@ export const KnowledgeChatPanel = ({
         ))}
       </div>
 
-      <div className="border-t border-white/5 p-5">
+      <div className="border-t border-gray-100 p-5">
         {disabledReason ? (
-          <div className="mb-3 rounded-[20px] border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs leading-6 text-amber-100">
+          <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-6 text-amber-700">
             {disabledReason}
           </div>
         ) : null}
-        <div className="flex items-end gap-3 rounded-[28px] border border-white/10 bg-dark-card p-3 focus-within:border-primary">
+        <div className="flex items-end gap-3 rounded-2xl border border-gray-200 bg-gray-50 p-3 focus-within:border-primary">
           <textarea
             value={input}
             disabled={disabled}
@@ -184,7 +184,7 @@ export const KnowledgeChatPanel = ({
             type="button"
             onClick={() => handleSend()}
             disabled={disabled || !input.trim()}
-            className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-black transition-colors hover:bg-primary-light disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-muted"
+            className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-white transition-colors hover:bg-primary-light disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-muted"
           >
             <Send className="h-4 w-4" />
           </button>

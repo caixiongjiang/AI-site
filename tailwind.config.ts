@@ -15,12 +15,12 @@ const config: Config = {
           light: "#00D980",
         },
         dark: {
-          DEFAULT: "#1A1A1A",
-          card: "#252526",
-          border: "#333",
+          DEFAULT: "#FFFFFF",
+          card: "#F5F5F5",
+          border: "#E5E7EB",
         },
-        foreground: "#E0E0E0",
-        muted: "#888",
+        foreground: "#1A1A1A",
+        muted: "#6B7280",
       },
       fontFamily: {
         sans: [

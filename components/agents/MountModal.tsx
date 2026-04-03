@@ -8,6 +8,7 @@ import {
   fetchFolderFiles,
   fetchFolders,
   fetchKnowledgeBases,
+  fetchRootFiles,
 } from "@/lib/api/knowledge";
 import { KnowledgeBaseInfo, KnowledgeFile } from "@/lib/knowledge-types";
 
@@ -39,12 +40,17 @@ export const MountModal = ({ isOpen, onClose, onConfirm }: MountModalProps) => {
           nextKnowledgeBases.map((kb) => fetchFolders(kb.knowledge_base_id))
         );
         const allFolders = foldersByKb.flat();
-        const filesByFolder = await Promise.all(
-          allFolders.map((folder) => fetchFolderFiles(folder.folder_id))
-        );
+        const [rootFilesByKb, filesByFolder] = await Promise.all([
+          Promise.all(
+            nextKnowledgeBases.map((kb) => fetchRootFiles(kb.knowledge_base_id))
+          ),
+          Promise.all(
+            allFolders.map((folder) => fetchFolderFiles(folder.folder_id))
+          ),
+        ]);
 
         setFiles(
-          filesByFolder.flat().map((file) => ({
+          [...rootFilesByKb.flat(), ...filesByFolder.flat()].map((file) => ({
             ...file,
             index_status: file.index_status ?? "pending",
             progress: file.progress ?? 0,

@@ -11,6 +11,7 @@ import {
   fetchFolderFiles,
   fetchFolders,
   fetchIndexProgress,
+  fetchRootFiles,
   fetchKnowledgeBaseChildren,
   fetchKnowledgeBases,
   fetchTrashFolderChildren,
@@ -25,6 +26,7 @@ import {
 import { KnowledgeList } from "@/components/knowledge/KnowledgeList";
 import { KnowledgeChatPanel } from "@/components/knowledge/KnowledgeChatPanel";
 import { FolderTree } from "@/components/knowledge/FolderTree";
+import { FileIcon } from "@/components/knowledge/FileIcon";
 import {
   FolderInfo,
   KnowledgeBaseInfo,
@@ -36,16 +38,16 @@ import {
 import { cacheKnowledgeFileView } from "@/lib/knowledge-viewer";
 import {
   AlertTriangle,
+  CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
-  FileText,
-  FileUp,
   Folder,
+  Loader2,
   LockKeyhole,
   LogIn,
-  RefreshCw,
-  Sparkles,
   Trash2,
+  Undo2,
   X,
 } from "lucide-react";
 import { cn, formatBytes, formatDate } from "@/lib/utils";
@@ -184,11 +186,11 @@ function ConfirmModal({
     : true;
 
   return (
-    <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm">
-      <div className="w-full max-w-xl rounded-[28px] border border-white/10 bg-[#131617] p-6 shadow-[0_30px_120px_rgba(0,0,0,0.45)]">
+    <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/30 px-4 backdrop-blur-sm">
+      <div className="w-full max-w-xl rounded-2xl border border-gray-200 bg-white p-6 shadow-xl">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-red-500/10 text-red-300">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-red-50 text-red-500">
               <AlertTriangle className="h-5 w-5" />
             </div>
             <div>
@@ -199,14 +201,14 @@ function ConfirmModal({
           <button
             type="button"
             onClick={onCancel}
-            className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 text-muted transition-colors hover:text-foreground"
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-gray-200 text-muted transition-colors hover:text-foreground"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
         {action.dangerNote ? (
-          <div className="mt-5 rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+          <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
             {action.dangerNote}
           </div>
         ) : null}
@@ -221,7 +223,7 @@ function ConfirmModal({
               value={input}
               onChange={(event) => setInput(event.target.value)}
               placeholder={action.confirmText}
-              className="mt-3 w-full rounded-2xl border border-white/10 bg-dark-card px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary"
+              className="mt-3 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary"
             />
           </div>
         ) : null}
@@ -230,7 +232,7 @@ function ConfirmModal({
           <button
             type="button"
             onClick={onCancel}
-            className="rounded-full border border-white/10 px-4 py-2 text-sm text-foreground transition-colors hover:border-primary"
+            className="rounded-full border border-gray-200 px-4 py-2 text-sm text-foreground transition-colors hover:border-primary"
           >
             取消
           </button>
@@ -248,14 +250,89 @@ function ConfirmModal({
   );
 }
 
+interface InputPromptAction {
+  title: string;
+  placeholder: string;
+  confirmLabel: string;
+  onConfirm: (value: string) => Promise<void>;
+}
+
+function InputModal({
+  action,
+  busy,
+  onCancel,
+}: {
+  action: InputPromptAction | null;
+  busy: boolean;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState("");
+
+  useEffect(() => {
+    setValue("");
+  }, [action]);
+
+  if (!action) return null;
+
+  const canConfirm = value.trim().length > 0;
+
+  return (
+    <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/30 px-4 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-6 shadow-xl">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-medium text-foreground">{action.title}</h2>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 text-muted transition-colors hover:text-foreground"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        <input
+          autoFocus
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={action.placeholder}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && canConfirm && !busy) {
+              void action.onConfirm(value.trim());
+            }
+          }}
+          className="mt-4 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted/50 focus:border-primary focus:bg-white"
+        />
+
+        <div className="mt-5 flex items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-full border border-gray-200 px-4 py-2 text-sm text-foreground transition-colors hover:border-primary"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            disabled={!canConfirm || busy}
+            onClick={() => void action.onConfirm(value.trim())}
+            className="rounded-full bg-primary px-4 py-2 text-sm text-white transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-primary/40"
+          >
+            {busy ? "处理中..." : action.confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function KnowledgeGuestView() {
   const { openAuthModal } = useAuthModal();
 
   return (
     <div className="min-h-screen p-8 md:p-12">
       <div className="mx-auto max-w-6xl">
-        <div className="rounded-[32px] border border-white/10 bg-[radial-gradient(circle_at_top,rgba(0,179,107,0.14),transparent_35%),#111415] p-8 shadow-[0_30px_120px_rgba(0,0,0,0.35)]">
-          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-gray-200">
+        <div className="rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
+          <div className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs text-muted">
             <LockKeyhole className="h-3.5 w-3.5 text-primary-light" />
             登录后可创建私有知识库
           </div>
@@ -281,7 +358,7 @@ function KnowledgeGuestView() {
                   featureLabel: "创建我的知识库",
                 })
               }
-              className="flex items-center gap-2 rounded-2xl bg-white px-5 py-3 text-sm font-medium text-black transition hover:-translate-y-0.5"
+              className="flex items-center gap-2 rounded-2xl bg-primary px-5 py-3 text-sm font-medium text-white transition hover:-translate-y-0.5"
             >
               <LogIn className="h-4 w-4" />
               创建我的知识库
@@ -298,7 +375,7 @@ function KnowledgeGuestView() {
                   featureLabel: "上传文档",
                 })
               }
-              className="rounded-2xl border border-white/10 px-5 py-3 text-sm text-foreground transition hover:bg-white/5"
+              className="rounded-2xl border border-gray-200 px-5 py-3 text-sm text-foreground transition hover:bg-gray-50"
             >
               上传文档并开始问答
             </button>
@@ -329,90 +406,91 @@ function TrashItemRow({
   const isFolder = item.item_type === "folder";
 
   return (
-    <div className="rounded-[24px] border border-white/5 bg-dark-card">
-      <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          {isFolder ? (
-            <button
-              type="button"
-              onClick={() => onToggleExpand(item.item_id)}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-white/10 hover:text-foreground"
-            >
-              {isExpanded ? (
-                <ChevronDown className="h-4 w-4" />
-              ) : (
-                <ChevronRight className="h-4 w-4" />
-              )}
-            </button>
-          ) : null}
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/5">
-            {isFolder ? (
-              <Folder className="h-4 w-4 text-foreground" />
-            ) : (
-              <FileText className="h-4 w-4 text-foreground" />
-            )}
-          </div>
-          <div className="min-w-0">
-            <div className="truncate text-sm text-foreground">{item.item_name}</div>
-            <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted">
-              <span>{isFolder ? "文件夹" : "文件"}</span>
-              {item.full_path ? <span>{item.full_path}</span> : null}
-              {item.file_size ? <span>{formatBytes(item.file_size)}</span> : null}
-              {item.mime_type ? <span>{item.mime_type}</span> : null}
-              {item.deleted_at ? (
-                <span>删除于 {formatDate(item.deleted_at)}</span>
-              ) : null}
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
+    <div>
+      <div
+        className="group flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted transition-colors hover:bg-gray-100 hover:text-foreground"
+        style={{ paddingLeft: 10 }}
+      >
+        {isFolder ? (
           <button
-            onClick={onRestore}
-            className="rounded-full border border-white/10 px-4 py-2 text-xs text-foreground transition-colors hover:border-primary"
+            type="button"
+            onClick={() => onToggleExpand(item.item_id)}
+            className="flex shrink-0 items-center"
           >
-            恢复
+            {isExpanded ? (
+              <ChevronDown className="h-3.5 w-3.5 text-muted" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5 text-muted" />
+            )}
+          </button>
+        ) : null}
+        {isFolder ? (
+          <Folder className="h-4 w-4 shrink-0 text-muted/60" />
+        ) : (
+          <FileIcon fileName={item.item_name} className="h-5 w-5 shrink-0" />
+        )}
+        <span className="min-w-0 flex-1 truncate">{item.item_name}</span>
+
+        <span className="shrink-0 text-[11px] text-muted/40 group-hover:hidden">
+          {item.file_size ? formatBytes(item.file_size) : ""}
+        </span>
+        <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
+          <button
+            type="button"
+            onClick={onRestore}
+            className="flex h-6 w-6 items-center justify-center rounded text-muted hover:text-primary"
+            title="恢复"
+          >
+            <Undo2 className="h-3.5 w-3.5" />
           </button>
           <button
+            type="button"
             onClick={onDelete}
-            className="rounded-full border border-red-500/20 px-4 py-2 text-xs text-red-200 transition-colors hover:border-red-500/40"
+            className="flex h-6 w-6 items-center justify-center rounded text-muted hover:text-red-500"
+            title="永久删除"
           >
-            永久删除
+            <Trash2 className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>
 
       {isFolder && isExpanded ? (
-        <div className="border-t border-white/5 px-5 py-3">
+        <div>
           {!childFolders && !childFiles ? (
-            <div className="py-2 text-xs text-muted">加载中...</div>
+            <div className="px-3 py-2 text-xs text-muted/50" style={{ paddingLeft: 30 }}>
+              加载中...
+            </div>
           ) : (
-            <div className="space-y-1">
+            <>
               {childFolders?.map((folder) => (
                 <div
                   key={folder.folder_id}
-                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted"
+                  className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted"
+                  style={{ paddingLeft: 30 }}
                 >
-                  <Folder className="h-3.5 w-3.5 shrink-0" />
+                  <Folder className="h-4 w-4 shrink-0 text-muted/60" />
                   <span className="truncate">{folder.folder_name}</span>
-                  <span className="ml-auto text-[11px]">{folder.full_path}</span>
                 </div>
               ))}
               {childFiles?.map((file) => (
                 <div
                   key={file.file_id}
-                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted"
+                  className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted"
+                  style={{ paddingLeft: 30 }}
                 >
-                  <FileText className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{file.file_name}</span>
+                  <FileIcon fileName={file.file_name} className="h-5 w-5 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate">{file.file_name}</span>
                   {file.file_size ? (
-                    <span className="ml-auto text-[11px]">{formatBytes(file.file_size)}</span>
+                    <span className="shrink-0 text-[11px] text-muted/40">{formatBytes(file.file_size)}</span>
                   ) : null}
                 </div>
               ))}
               {childFolders?.length === 0 && childFiles?.length === 0 ? (
-                <div className="py-2 text-xs text-muted">该文件夹内没有内容</div>
+                <div className="px-3 py-2 text-xs text-muted/50" style={{ paddingLeft: 30 }}>
+                  该文件夹内没有内容
+                </div>
               ) : null}
-            </div>
+            </>
           )}
         </div>
       ) : null}
@@ -422,9 +500,11 @@ function TrashItemRow({
 
 function KnowledgeWorkspace() {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadTargetFolderRef = useRef<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [inputPrompt, setInputPrompt] = useState<InputPromptAction | null>(null);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseInfo[]>([]);
   const [knowledgeMetrics, setKnowledgeMetrics] = useState<Record<string, KnowledgeMetric>>({});
   const [selectedKbId, setSelectedKbId] = useState("");
@@ -602,10 +682,11 @@ function KnowledgeWorkspace() {
       setTrashFolderFiles({});
 
       const nextFolders = await fetchFolders(knowledgeBaseId);
-      const filesByFolder = await Promise.all(
-        nextFolders.map((folder) => fetchFolderFiles(folder.folder_id))
-      );
-      const flatFiles = filesByFolder.flat().map((file) => ({
+      const [rootFiles, ...filesByFolder] = await Promise.all([
+        fetchRootFiles(knowledgeBaseId),
+        ...nextFolders.map((folder) => fetchFolderFiles(folder.folder_id)),
+      ]);
+      const flatFiles = [...rootFiles, ...filesByFolder.flat()].map((file) => ({
         ...file,
         knowledge_base_id: file.knowledge_base_id || knowledgeBaseId,
       }));
@@ -646,6 +727,12 @@ function KnowledgeWorkspace() {
   useEffect(() => {
     void loadKnowledgeBasesData();
   }, []);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 4000);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   useEffect(() => {
     if (!selectedKbId) {
@@ -694,8 +781,9 @@ function KnowledgeWorkspace() {
     setUploadState(null);
   }, [files, uploadState]);
 
-  const handleUploadClick = () => {
+  const handleUploadClick = (targetFolderId: string | null = null) => {
     if (!selectedKbId) return;
+    uploadTargetFolderRef.current = targetFolderId;
     fileInputRef.current?.click();
   };
 
@@ -704,6 +792,9 @@ function KnowledgeWorkspace() {
   ) => {
     const fileList = Array.from(event.target.files || []);
     if (fileList.length === 0 || !selectedKbId) return;
+
+    const targetFolderId = uploadTargetFolderRef.current;
+    uploadTargetFolderRef.current = null;
 
     try {
       setIsBusy("upload");
@@ -716,7 +807,7 @@ function KnowledgeWorkspace() {
       const uploaded = await uploadKnowledgeFiles({
         files: fileList,
         knowledge_base_id: selectedKbId,
-        folder_id: selectedFolderId,
+        folder_id: targetFolderId,
         onUploadProgress: (progress) => {
           setUploadState((current) =>
             current
@@ -758,53 +849,61 @@ function KnowledgeWorkspace() {
     }
   };
 
-  const handleCreateKnowledgeBase = async (parentKnowledgeBaseId?: string | null) => {
-    const name = window.prompt(
-      parentKnowledgeBaseId ? "输入子知识库名称" : "输入新知识库名称"
-    );
-    if (!name?.trim()) return;
-
-    try {
-      setIsBusy("kb");
-      const item = await createKnowledgeBase({
-        knowledge_base_name: name.trim(),
-        parent_knowledge_base_id: parentKnowledgeBaseId ?? null,
-      });
-      await loadKnowledgeBasesData();
-      setSelectedKbId(item.knowledge_base_id);
-      setActiveView("files");
-      setNotice(parentKnowledgeBaseId ? "子知识库已创建。" : "知识库已创建。");
-    } catch (error) {
-      setNotice(
-        error instanceof Error ? `创建知识库失败：${error.message}` : "创建知识库失败"
-      );
-    } finally {
-      setIsBusy(null);
-    }
+  const handleCreateKnowledgeBase = (parentKnowledgeBaseId?: string | null) => {
+    setInputPrompt({
+      title: parentKnowledgeBaseId ? "新建子知识库" : "新建知识库",
+      placeholder: "请输入知识库名称",
+      confirmLabel: "创建",
+      onConfirm: async (name) => {
+        try {
+          setIsBusy("kb");
+          const item = await createKnowledgeBase({
+            knowledge_base_name: name,
+            parent_knowledge_base_id: parentKnowledgeBaseId ?? null,
+          });
+          await loadKnowledgeBasesData();
+          setSelectedKbId(item.knowledge_base_id);
+          setActiveView("files");
+          setNotice(parentKnowledgeBaseId ? "子知识库已创建。" : "知识库已创建。");
+        } catch (error) {
+          setNotice(
+            error instanceof Error ? `创建知识库失败：${error.message}` : "创建知识库失败"
+          );
+        } finally {
+          setIsBusy(null);
+          setInputPrompt(null);
+        }
+      },
+    });
   };
 
-  const handleCreateFolder = async () => {
+  const handleCreateFolder = (parentFolderId: string | null = null) => {
     if (!selectedKbId) return;
 
-    const name = window.prompt("输入文件夹名称");
-    if (!name?.trim()) return;
-
-    try {
-      setIsBusy("folder");
-      await createFolder({
-        knowledge_base_id: selectedKbId,
-        folder_name: name.trim(),
-        parent_folder_id: selectedFolderId,
-      });
-      await loadKnowledgeBaseWorkspace(selectedKbId);
-      setNotice("文件夹已创建。");
-    } catch (error) {
-      setNotice(
-        error instanceof Error ? `创建文件夹失败：${error.message}` : "创建文件夹失败"
-      );
-    } finally {
-      setIsBusy(null);
-    }
+    setInputPrompt({
+      title: "新建文件夹",
+      placeholder: "请输入文件夹名称",
+      confirmLabel: "创建",
+      onConfirm: async (name) => {
+        try {
+          setIsBusy("folder");
+          await createFolder({
+            knowledge_base_id: selectedKbId,
+            folder_name: name,
+            parent_folder_id: parentFolderId,
+          });
+          await loadKnowledgeBaseWorkspace(selectedKbId);
+          setNotice("文件夹已创建。");
+        } catch (error) {
+          setNotice(
+            error instanceof Error ? `创建文件夹失败：${error.message}` : "创建文件夹失败"
+          );
+        } finally {
+          setIsBusy(null);
+          setInputPrompt(null);
+        }
+      },
+    });
   };
 
   const handleOpenFile = (file: KnowledgeFile) => {
@@ -819,8 +918,56 @@ function KnowledgeWorkspace() {
     );
   };
 
-  const handleDeleteFile = (file: KnowledgeFile) => {
+  const handleRetryFile = async (file: KnowledgeFile) => {
     if (!selectedKbId) return;
+    try {
+      setIsBusy("retry");
+      await buildKnowledgeIndex({
+        knowledge_base_id: selectedKbId,
+        file_ids: [file.file_id],
+      });
+      setFiles((current) =>
+        current.map((f) =>
+          f.file_id === file.file_id
+            ? { ...f, index_status: "pending" as const, progress: 0 }
+            : f
+        )
+      );
+      setNotice(`文件「${file.file_name}」已重新提交处理。`);
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? `重试失败：${error.message}` : "重试失败"
+      );
+    } finally {
+      setIsBusy(null);
+    }
+  };
+
+  const handleDeleteFile = async (file: KnowledgeFile) => {
+    if (!selectedKbId) return;
+
+    const isFailed = file.index_status === "failed";
+
+    if (isFailed) {
+      try {
+        setIsBusy("delete-file");
+        await softDeleteFile(file.file_id);
+        await permanentlyDeleteTrashItem({
+          item_type: "file",
+          item_id: file.file_id,
+          item_name: file.file_name,
+          knowledge_base_id: file.knowledge_base_id ?? selectedKbId,
+        });
+        await loadKnowledgeBaseWorkspace(selectedKbId);
+      } catch (error) {
+        setNotice(
+          error instanceof Error ? `删除失败：${error.message}` : "删除失败"
+        );
+      } finally {
+        setIsBusy(null);
+      }
+      return;
+    }
 
     setConfirmAction({
       kind: "danger",
@@ -833,27 +980,49 @@ function KnowledgeWorkspace() {
           await softDeleteFile(file.file_id);
           await loadKnowledgeBaseWorkspace(selectedKbId);
           setNotice("文件已移入回收站，可在回收站恢复。");
-          setConfirmAction(null);
         } catch (error) {
           setNotice(
             error instanceof Error ? `删除失败：${error.message}` : "删除失败"
           );
         } finally {
           setIsBusy(null);
+          setConfirmAction(null);
         }
       },
     });
   };
 
-  const handleDeleteFolder = (folder: FolderInfo) => {
+  const handleDeleteFolder = async (folder: FolderInfo) => {
     if (!selectedKbId) return;
+
+    const childFolders = folders.filter((f) => f.parent_folder_id === folder.folder_id);
+    const childFiles = files.filter((f) => f.folder_id === folder.folder_id);
+    const isEmpty = childFolders.length === 0 && childFiles.length === 0;
+
+    if (isEmpty) {
+      try {
+        setIsBusy("delete-folder");
+        await deleteFolder(folder.folder_id);
+        await loadKnowledgeBaseWorkspace(selectedKbId);
+        if (selectedFolderId === folder.folder_id) {
+          setSelectedFolderId(null);
+        }
+      } catch (error) {
+        setNotice(
+          error instanceof Error ? `删除文件夹失败：${error.message}` : "删除文件夹失败"
+        );
+      } finally {
+        setIsBusy(null);
+      }
+      return;
+    }
 
     setConfirmAction({
       kind: "danger",
       title: `删除文件夹「${folder.folder_name}」`,
       description:
-        "该文件夹及其子文件夹中的文件会一起处理。有文件时会移入回收站；空文件夹会被直接删除。",
-      confirmLabel: "删除文件夹",
+        "该文件夹及其子文件夹中的文件会一起移入回收站。",
+      confirmLabel: "移入回收站",
       onConfirm: async () => {
         try {
           setIsBusy("delete-folder");
@@ -863,28 +1032,42 @@ function KnowledgeWorkspace() {
             setSelectedFolderId(null);
           }
           setNotice(
-            result.deleted_file_count > 0
-              ? `文件夹已移入回收站，共处理 ${result.deleted_folder_count} 个文件夹、${result.deleted_file_count} 个文件。`
-              : "空文件夹已直接删除，不会进入回收站。"
+            `文件夹已移入回收站，共处理 ${result.deleted_folder_count} 个文件夹、${result.deleted_file_count} 个文件。`
           );
-          setConfirmAction(null);
         } catch (error) {
           setNotice(
             error instanceof Error ? `删除文件夹失败：${error.message}` : "删除文件夹失败"
           );
         } finally {
           setIsBusy(null);
+          setConfirmAction(null);
         }
       },
     });
   };
 
   const handleDeleteKnowledgeBase = (kb: KnowledgeBaseInfo) => {
+    const collectDescendantIds = (parentId: string): string[] => {
+      const children = knowledgeBases.filter(
+        (item) => item.parent_knowledge_base_id === parentId
+      );
+      return children.flatMap((child) => [
+        child.knowledge_base_id,
+        ...collectDescendantIds(child.knowledge_base_id),
+      ]);
+    };
+    const descendantIds = collectDescendantIds(kb.knowledge_base_id);
+    const allAffectedIds = new Set([kb.knowledge_base_id, ...descendantIds]);
+
+    const description =
+      descendantIds.length > 0
+        ? `此操作不可撤销，将同时删除 ${descendantIds.length} 个子知识库。请确保所有知识库及回收站内已无文件，否则无法删除。`
+        : "此操作不可撤销。请确保知识库及回收站内已无文件，否则无法删除。";
+
     setConfirmAction({
       kind: "knowledge-base",
       title: `删除知识库「${kb.knowledge_base_name}」`,
-      description:
-        "此操作不可撤销。请确保知识库和回收站内已经没有文件，否则后端会拒绝删除。",
+      description,
       confirmLabel: "删除知识库",
       confirmText: kb.knowledge_base_name,
       dangerNote:
@@ -894,9 +1077,13 @@ function KnowledgeWorkspace() {
           setIsBusy("delete-kb");
           await deleteKnowledgeBase(kb.knowledge_base_id);
           await loadKnowledgeBasesData();
+          if (allAffectedIds.has(selectedKbId)) {
+            setSelectedKbId("");
+            setFolders([]);
+            setFiles([]);
+          }
           setActiveView("files");
           setNotice("知识库已删除。");
-          setConfirmAction(null);
         } catch (error) {
           setNotice(
             error instanceof Error
@@ -905,6 +1092,7 @@ function KnowledgeWorkspace() {
           );
         } finally {
           setIsBusy(null);
+          setConfirmAction(null);
         }
       },
     });
@@ -942,13 +1130,13 @@ function KnowledgeWorkspace() {
           await permanentlyDeleteTrashItem(item);
           await loadKnowledgeBaseWorkspace(selectedKbId);
           setNotice(`已永久删除「${item.item_name}」。`);
-          setConfirmAction(null);
         } catch (error) {
           setNotice(
             error instanceof Error ? `永久删除失败：${error.message}` : "永久删除失败"
           );
         } finally {
           setIsBusy(null);
+          setConfirmAction(null);
         }
       },
     });
@@ -969,13 +1157,13 @@ function KnowledgeWorkspace() {
           await emptyTrash();
           await loadKnowledgeBaseWorkspace(selectedKbId);
           setNotice("回收站已清空。");
-          setConfirmAction(null);
         } catch (error) {
           setNotice(
             error instanceof Error ? `清空回收站失败：${error.message}` : "清空回收站失败"
           );
         } finally {
           setIsBusy(null);
+          setConfirmAction(null);
         }
       },
     });
@@ -1021,255 +1209,148 @@ function KnowledgeWorkspace() {
 
   return (
     <>
-      <div className="flex h-screen bg-[radial-gradient(circle_at_top,rgba(0,179,107,0.12),transparent_28%),linear-gradient(180deg,#121516_0%,#0f1112_100%)]">
-        <KnowledgeList
-          knowledgeBases={knowledgeBasesView}
-          selectedId={selectedKbId}
-          activeView={activeView}
-          onSelect={(id) => {
-            setSelectedKbId(id);
-            setSelectedFolderId(null);
-            setSearchTerm("");
-            setActiveView("files");
-          }}
-          onSelectTrash={() => setActiveView("trash")}
-          onCreate={() => void handleCreateKnowledgeBase(null)}
-          onCreateChild={(kb) => void handleCreateKnowledgeBase(kb.knowledge_base_id)}
-          onDelete={(kb) => handleDeleteKnowledgeBase(kb)}
-        />
+      <div className="grid h-screen grid-cols-1 bg-white xl:grid-cols-[35fr_65fr]">
+        <div className="flex min-w-0 overflow-hidden">
+          <KnowledgeList
+            knowledgeBases={knowledgeBasesView}
+            selectedId={selectedKbId}
+            onSelect={(id) => {
+              setSelectedKbId(id);
+              setSelectedFolderId(null);
+              setSearchTerm("");
+              setActiveView("files");
+            }}
+            onCreate={() => void handleCreateKnowledgeBase(null)}
+            onCreateChild={(kb) => void handleCreateKnowledgeBase(kb.knowledge_base_id)}
+            onDelete={(kb) => handleDeleteKnowledgeBase(kb)}
+          />
 
-        <main className="mr-auto grid w-full max-w-[1520px] flex-1 grid-cols-1 gap-4 overflow-hidden p-4 xl:grid-cols-[minmax(320px,1.12fr)_minmax(360px,0.82fr)] 2xl:grid-cols-[minmax(340px,1.18fr)_minmax(380px,0.86fr)]">
-          <div className="flex min-h-0 flex-col gap-4">
-            <div className="rounded-[28px] border border-white/5 bg-[#141718] px-5 py-4 shadow-[0_24px_80px_rgba(0,0,0,0.24)]">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.28em] text-muted">
-                    <Sparkles className="h-3.5 w-3.5 text-primary-light" />
-                    Knowledge Workspace
-                  </div>
-                  <h1 className="text-2xl text-foreground">
-                    {activeView === "trash"
-                      ? "回收站"
-                      : selectedKb?.knowledge_base_name || "暂无知识库"}
-                  </h1>
-                  <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted">
-                    <span>{visibleFiles.length} 个相关文件</span>
-                    <span>{fileStats.indexedCount} 个可提问</span>
-                    <span>{formatBytes(fileStats.totalSize)}</span>
-                    {selectedFolder ? <span>目录：{selectedFolder.folder_name}</span> : null}
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    onClick={() => void loadKnowledgeBaseWorkspace(selectedKbId)}
-                    disabled={!selectedKbId}
-                    className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs text-foreground transition-colors hover:border-primary disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <RefreshCw className={cn("h-4 w-4", isBusy === "sync" && "animate-spin")} />
-                    同步
-                  </button>
-                  <button
-                    onClick={handleUploadClick}
-                    disabled={!selectedKbId || activeView === "trash"}
-                    className="flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs text-black transition-colors hover:bg-primary-light disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <FileUp className="h-4 w-4" />
-                    上传文件
-                  </button>
-                  {activeView === "trash" ? (
-                    <button
-                      onClick={handleEmptyTrash}
-                      disabled={!selectedKbId || trashItems.length === 0}
-                      className="flex items-center gap-2 rounded-full border border-red-500/20 bg-red-500/10 px-4 py-2 text-xs text-red-200 transition-colors hover:border-red-500/40 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      清空回收站
-                    </button>
-                  ) : null}
-                </div>
+          <div className="min-w-0 flex-1 overflow-hidden">
+            {!selectedKbId ? (
+              <div className="flex h-full items-center justify-center bg-white text-sm text-muted">
+                选择一个知识库
               </div>
-
-              {notice ? (
-                <div className="mt-4 rounded-2xl border border-primary/20 bg-primary/10 px-4 py-3 text-sm text-foreground">
-                  {notice}
-                </div>
-              ) : null}
-
-              {activeView === "files" &&
-              selectedKbId &&
-              ((uploadState?.phase === "uploading" ||
-                (uploadState?.phase === "indexing" && indexingSummary.total === 0)) ||
-                indexingSummary.total > 0) ? (
-                <div className="mt-4 rounded-[24px] border border-white/10 bg-dark-card/80 px-4 py-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm text-foreground">
-                        {uploadState?.phase === "uploading"
-                          ? `正在上传 ${uploadState.totalFiles} 个文件`
-                          : uploadState?.phase === "indexing" && indexingSummary.total === 0
-                            ? `正在初始化 ${uploadState.totalFiles} 个文件的索引`
-                            : `正在处理 ${indexingSummary.total || uploadState?.totalFiles || 0} 个文件`}
+            ) : (
+              <FolderTree
+                knowledgeBase={selectedKb}
+                folders={folders}
+                files={files}
+                selectedFolderId={selectedFolderId}
+                searchTerm={searchTerm}
+                canMoveFiles={canMoveFiles}
+                activeView={activeView}
+                onSelectFolder={(id) => {
+                  setSelectedFolderId(id);
+                }}
+                onOpenFile={handleOpenFile}
+                onCreateFolder={handleCreateFolder}
+                onUploadFile={handleUploadClick}
+                onDeleteFolder={handleDeleteFolder}
+                onDeleteFile={handleDeleteFile}
+                onRetryFile={handleRetryFile}
+                onSearchChange={setSearchTerm}
+                onMoveFileToFolder={async (file, targetFolderId) => {
+                  try {
+                    setIsBusy("move");
+                    await moveFile(file.file_id, targetFolderId);
+                    await loadKnowledgeBaseWorkspace(selectedKbId);
+                    setNotice(`文件「${file.file_name}」已移动。`);
+                  } catch (error) {
+                    setNotice(
+                      error instanceof Error ? `移动失败：${error.message}` : "移动失败"
+                    );
+                  } finally {
+                    setIsBusy(null);
+                  }
+                }}
+                onSelectTrash={() => setActiveView("trash")}
+                trashContent={
+                  <>
+                    <div className="flex items-center justify-between border-b border-gray-200 px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setActiveView("files")}
+                          className="flex items-center gap-1 text-xs text-muted transition-colors hover:text-foreground"
+                        >
+                          <ChevronLeft className="h-3.5 w-3.5" />
+                          返回
+                        </button>
+                        <span className="text-xs font-medium text-foreground/70">回收站</span>
                       </div>
-                      <div className="mt-1 text-xs leading-5 text-muted">
-                        {uploadState?.phase === "uploading"
-                          ? `${Math.round(uploadState.progress * 100)}% · 上传完成后会继续构建索引，索引结束后才能问答。`
-                          : uploadState?.phase === "indexing" && indexingSummary.total === 0
-                            ? "文件已上传成功，正在提交索引任务。"
-                            : `待处理 ${indexingSummary.pendingCount} 个，处理中 ${indexingSummary.processingCount} 个。`}
+                      <button
+                        onClick={handleEmptyTrash}
+                        disabled={trashItems.length === 0}
+                        className="text-xs text-red-500 transition-colors hover:text-red-600 disabled:opacity-40"
+                      >
+                        清空
+                      </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto py-1">
+                      <div>
+                        {trashItems.length === 0 ? (
+                          <div className="px-3 py-4 text-center text-xs text-muted/50">暂无内容</div>
+                        ) : (
+                          trashItems.map((item) => (
+                            <TrashItemRow
+                              key={item.item_id}
+                              item={item}
+                              isExpanded={expandedTrashFolders[item.item_id] ?? false}
+                              childFolders={trashFolderChildren[item.item_id]}
+                              childFiles={trashFolderFiles[item.item_id]}
+                              onToggleExpand={async (folderId) => {
+                                const wasExpanded = expandedTrashFolders[folderId];
+                                setExpandedTrashFolders((prev) => ({
+                                  ...prev,
+                                  [folderId]: !wasExpanded,
+                                }));
+                                if (!wasExpanded && !trashFolderChildren[folderId]) {
+                                  try {
+                                    const [children, filesData] = await Promise.all([
+                                      fetchTrashFolderChildren(folderId),
+                                      fetchTrashFolderFiles(folderId),
+                                    ]);
+                                    setTrashFolderChildren((prev) => ({ ...prev, [folderId]: children }));
+                                    setTrashFolderFiles((prev) => ({ ...prev, [folderId]: filesData }));
+                                  } catch {
+                                    setNotice("加载回收站文件夹内容失败。");
+                                  }
+                                }
+                              }}
+                              onRestore={() => void handleRestoreTrash(item)}
+                              onDelete={() => handleDeleteTrashItem(item)}
+                            />
+                          ))
+                        )}
                       </div>
                     </div>
-                    <div className="rounded-full border border-white/10 px-3 py-1 text-[11px] text-muted">
-                      {uploadState?.phase === "uploading"
-                        ? "上传中"
-                        : "索引处理中"}
-                    </div>
-                  </div>
-                  <div className="mt-3 h-2 rounded-full bg-black/20">
-                    <div
-                      className="h-2 rounded-full bg-primary transition-all"
-                      style={{
-                        width: `${Math.round(
-                          (uploadState?.phase === "uploading"
-                            ? uploadState.progress
-                            : uploadState?.phase === "indexing" && indexingSummary.total === 0
-                              ? 0.08
-                            : indexingSummary.progress) * 100
-                        )}%`,
-                      }}
-                    />
-                  </div>
-                  {uploadState?.fileNames?.length ? (
-                    <div className="mt-3 text-xs text-muted">
-                      最近操作：{uploadState.fileNames.slice(0, 2).join("、")}
-                      {uploadState.fileNames.length > 2
-                        ? ` 等 ${uploadState.fileNames.length} 个文件`
-                        : ""}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {activeView === "files" ? (
-                <div className="mt-4 flex flex-wrap items-center gap-3">
-                  <input
-                    value={searchTerm}
-                    onChange={(event) => setSearchTerm(event.target.value)}
-                    placeholder="搜索文件夹、文件名、描述或类型..."
-                    className="min-w-[260px] flex-1 rounded-2xl border border-white/10 bg-dark-card px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary"
-                  />
-                  <div className="rounded-full border border-white/10 px-3 py-1.5 text-[11px] text-muted">
-                    点击文件会打开独立的文件工作区
-                  </div>
-                </div>
-              ) : null}
-            </div>
-
-            <div className="min-h-0 flex-1">
-              {!selectedKbId ? (
-                <div className="flex h-full items-center justify-center rounded-[32px] border border-dashed border-white/10 bg-dark-card/70 p-10 text-center text-sm text-muted">
-                  当前没有知识库数据，你可以先创建一个知识库。
-                </div>
-              ) : activeView === "trash" ? (
-                <section className="flex min-h-[calc(100vh-220px)] flex-col rounded-[32px] border border-white/5 bg-[#141718] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.24)]">
-                  <div className="mb-4 text-sm text-muted">
-                    回收站仅显示直接删除的顶层条目。文件夹可以展开预览内部结构，但恢复和永久删除只能对顶层条目操作。
-                  </div>
-                  <div className="space-y-3 overflow-y-auto">
-                    {trashItems.length === 0 ? (
-                      <div className="rounded-[24px] border border-dashed border-white/10 bg-dark-card p-10 text-center text-sm text-muted">
-                        回收站暂无内容
-                      </div>
-                    ) : (
-                      trashItems.map((item) => (
-                        <TrashItemRow
-                          key={item.item_id}
-                          item={item}
-                          isExpanded={expandedTrashFolders[item.item_id] ?? false}
-                          childFolders={trashFolderChildren[item.item_id]}
-                          childFiles={trashFolderFiles[item.item_id]}
-                          onToggleExpand={async (folderId) => {
-                            const wasExpanded = expandedTrashFolders[folderId];
-                            setExpandedTrashFolders((prev) => ({
-                              ...prev,
-                              [folderId]: !wasExpanded,
-                            }));
-                            if (!wasExpanded && !trashFolderChildren[folderId]) {
-                              try {
-                                const [children, files] = await Promise.all([
-                                  fetchTrashFolderChildren(folderId),
-                                  fetchTrashFolderFiles(folderId),
-                                ]);
-                                setTrashFolderChildren((prev) => ({ ...prev, [folderId]: children }));
-                                setTrashFolderFiles((prev) => ({ ...prev, [folderId]: files }));
-                              } catch {
-                                setNotice("加载回收站文件夹内容失败。");
-                              }
-                            }
-                          }}
-                          onRestore={() => void handleRestoreTrash(item)}
-                          onDelete={() => handleDeleteTrashItem(item)}
-                        />
-                      ))
-                    )}
-                  </div>
-                </section>
-              ) : (
-                <FolderTree
-                  knowledgeBase={selectedKb}
-                  folders={folders}
-                  files={files}
-                  selectedFolderId={selectedFolderId}
-                  searchTerm={searchTerm}
-                  canMoveFiles={canMoveFiles}
-                  onSelectFolder={(id) => {
-                    setSelectedFolderId(id);
-                  }}
-                  onOpenFile={handleOpenFile}
-                  onCreateFolder={handleCreateFolder}
-                  onUploadFile={handleUploadClick}
-                  onDeleteFolder={handleDeleteFolder}
-                  onDeleteFile={handleDeleteFile}
-                  onMoveFileToFolder={async (file, targetFolderId) => {
-                    try {
-                      setIsBusy("move");
-                      await moveFile(file.file_id, targetFolderId);
-                      await loadKnowledgeBaseWorkspace(selectedKbId);
-                      setNotice(`文件「${file.file_name}」已移动。`);
-                    } catch (error) {
-                      setNotice(
-                        error instanceof Error ? `移动失败：${error.message}` : "移动失败"
-                      );
-                    } finally {
-                      setIsBusy(null);
-                    }
-                  }}
-                />
-              )}
-            </div>
+                  </>
+                }
+              />
+            )}
           </div>
 
-          <div className="min-h-0 overflow-hidden">
-            <KnowledgeChatPanel
-              title={chatContext.title}
-              subtitle={chatContext.subtitle}
-              contextName={chatContext.contextName}
-              starterPrompts={chatContext.prompts}
-              placeholder={chatContext.placeholder}
-              disabled={Boolean(chatDisabledReason)}
-              disabledReason={chatDisabledReason ?? undefined}
-              className="min-h-[calc(100vh-32px)]"
-            />
-          </div>
-        </main>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={handleFileSelect}
+          />
+        </div>
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={handleFileSelect}
-        />
+        <div className="min-w-0 overflow-hidden p-4">
+          <KnowledgeChatPanel
+            title={chatContext.title}
+            subtitle={chatContext.subtitle}
+            contextName={chatContext.contextName}
+            starterPrompts={chatContext.prompts}
+            placeholder={chatContext.placeholder}
+            disabled={Boolean(chatDisabledReason)}
+            disabledReason={chatDisabledReason ?? undefined}
+            className="min-h-[calc(100vh-32px)]"
+          />
+        </div>
       </div>
 
       <ConfirmModal
@@ -1280,6 +1361,57 @@ function KnowledgeWorkspace() {
           setConfirmAction(null);
         }}
       />
+      <InputModal
+        action={inputPrompt}
+        busy={Boolean(isBusy)}
+        onCancel={() => {
+          if (isBusy) return;
+          setInputPrompt(null);
+        }}
+      />
+
+      {isBusy ? (
+        <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/10 backdrop-blur-[2px]">
+          <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-5 py-3.5 shadow-xl">
+            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            <span className="text-sm text-foreground">
+              {isBusy === "delete-file" && "正在删除文件…"}
+              {isBusy === "delete-folder" && "正在删除文件夹…"}
+              {isBusy === "delete-kb" && "正在删除知识库…"}
+              {isBusy === "delete-trash-item" && "正在永久删除，清理关联数据…"}
+              {isBusy === "empty-trash" && "正在清空回收站，清理关联数据…"}
+              {!["delete-file", "delete-folder", "delete-kb", "delete-trash-item", "empty-trash"].includes(isBusy) && "处理中…"}
+            </span>
+          </div>
+        </div>
+      ) : null}
+
+      {notice ? (
+        <div className="fixed bottom-6 left-1/2 z-[100] -translate-x-1/2 animate-in fade-in slide-in-from-bottom-4 duration-300">
+          <div
+            className={cn(
+              "flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm shadow-lg backdrop-blur-sm",
+              notice.includes("失败") || notice.includes("错误")
+                ? "border-red-200 bg-red-50 text-red-700"
+                : "border-green-200 bg-green-50 text-green-700"
+            )}
+          >
+            {notice.includes("失败") || notice.includes("错误") ? (
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+            )}
+            <span>{notice}</span>
+            <button
+              type="button"
+              onClick={() => setNotice(null)}
+              className="ml-2 rounded p-0.5 opacity-60 transition-opacity hover:opacity-100"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }

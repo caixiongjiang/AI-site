@@ -2,6 +2,7 @@ import { API_CONFIG, getCommonHeaders } from "@/lib/config";
 import {
   ApiResponse,
   FileDeleteResponse,
+  FileIndexStatus,
   FilePreviewResponse,
   FileProgress,
   FolderDeleteResponse,
@@ -252,6 +253,32 @@ export async function moveFolder(
   );
 }
 
+function mapFileStatus(status?: number | null): { index_status: FileIndexStatus; progress: number } {
+  switch (status) {
+    case 2:
+      return { index_status: "success", progress: 1 };
+    case 3:
+      return { index_status: "failed", progress: 0 };
+    case 1:
+      return { index_status: "processing", progress: 0 };
+    default:
+      return { index_status: "pending", progress: 0 };
+  }
+}
+
+export async function fetchRootFiles(knowledgeBaseId: string): Promise<KnowledgeFile[]> {
+  const data = await requestJson<FileListResponse>(
+    `/api/knowledge/folder/root-files?knowledge_base_id=${encodeURIComponent(knowledgeBaseId)}`,
+    {
+      method: "GET",
+    }
+  );
+  return (data.files ?? []).map((file) => ({
+    ...file,
+    ...mapFileStatus(file.status),
+  }));
+}
+
 export async function fetchFolderFiles(folderId: string): Promise<KnowledgeFile[]> {
   const data = await requestJson<FileListResponse>(
     `/api/knowledge/folder/${encodeURIComponent(folderId)}/files`,
@@ -261,8 +288,7 @@ export async function fetchFolderFiles(folderId: string): Promise<KnowledgeFile[
   );
   return (data.files ?? []).map((file) => ({
     ...file,
-    index_status: "pending",
-    progress: 0,
+    ...mapFileStatus(file.status),
   }));
 }
 

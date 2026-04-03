@@ -11,21 +11,20 @@
     @apply bg-dark text-foreground font-sans antialiased;
   }
 
-  /* Custom scrollbar */
   ::-webkit-scrollbar {
     width: 8px;
     height: 8px;
   }
 
   ::-webkit-scrollbar-track {
-    @apply bg-dark;
+    @apply bg-gray-100;
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-dark-border rounded;
+    @apply bg-gray-300 rounded;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-muted;
+    @apply bg-gray-400;
   }
 }
