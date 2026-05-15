@@ -498,9 +498,19 @@ function TrashItemRow({
   );
 }
 
+// ---- 左侧栏可拖拽分割条 ----
+// 写入 localStorage 并在双击时回到 DEFAULT；min/max 是为了避免拖到无法操作。
+const SPLIT_STORAGE_KEY = "knowledge-workspace-left-width";
+/** 默认更宽，便于文件名与列表可读（仍可拖拽 / 双击分割条恢复此默认） */
+const SPLIT_DEFAULT = 460;
+const SPLIT_MIN = 260;
+const SPLIT_MAX = 800;
+
 function KnowledgeWorkspace() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetFolderRef = useRef<string | null>(null);
+  const [leftWidth, setLeftWidth] = useState<number>(SPLIT_DEFAULT);
+  const [dragging, setDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -727,6 +737,56 @@ function KnowledgeWorkspace() {
   useEffect(() => {
     void loadKnowledgeBasesData();
   }, []);
+
+  // 启动时从 localStorage 还原左侧栏宽度（SSR 阶段保留默认值，避免 hydration warning）
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(SPLIT_STORAGE_KEY);
+      if (!raw) return;
+      const value = Number(raw);
+      if (Number.isFinite(value)) {
+        setLeftWidth(Math.max(SPLIT_MIN, Math.min(SPLIT_MAX, value)));
+      }
+    } catch {
+      // localStorage 不可用（隐私模式 / 配额满）→ 用默认值即可
+    }
+  }, []);
+
+  // 拖拽期间监听全局 mousemove / mouseup；同步给 body 加 col-resize 光标 + 禁选中。
+  useEffect(() => {
+    if (!dragging) return;
+    const onMove = (event: MouseEvent) => {
+      const next = Math.max(
+        SPLIT_MIN,
+        Math.min(SPLIT_MAX, event.clientX),
+      );
+      setLeftWidth(next);
+    };
+    const onUp = () => setDragging(false);
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    const previousCursor = document.body.style.cursor;
+    const previousSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousSelect;
+    };
+  }, [dragging]);
+
+  // 宽度变化即时持久化（debounce 没必要，写入很快）
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(SPLIT_STORAGE_KEY, String(leftWidth));
+    } catch {
+      // ignore quota / private-mode 错误
+    }
+  }, [leftWidth]);
 
   useEffect(() => {
     if (!notice) return;
@@ -1169,36 +1229,6 @@ function KnowledgeWorkspace() {
     });
   };
 
-  const chatContext = useMemo(() => {
-    if (selectedFolder) {
-      return {
-        title: "文件夹问答",
-        subtitle: `当前围绕文件夹「${selectedFolder.folder_name}」及其下属文件展开问答。`,
-        contextName: selectedFolder.folder_name,
-        prompts: [
-          "总结这个文件夹下的资料重点",
-          "梳理这个文件夹里的主题结构",
-          "指出这个文件夹资料里的风险和缺口",
-        ],
-        placeholder: "直接针对当前文件夹提问...",
-      };
-    }
-
-    return {
-      title: "知识库问答",
-      subtitle: selectedKb
-        ? `当前围绕「${selectedKb.knowledge_base_name}」下的所有文件展开问答。`
-        : "选择一个知识库后，这里会自动切换到对应的问答上下文。",
-      contextName: selectedKb?.knowledge_base_name || "知识库工作台",
-      prompts: [
-        "总结当前知识库里最值得先看的内容",
-        "帮我梳理这个知识库适合怎么提问",
-        "从当前资料中提炼重点和风险",
-      ],
-      placeholder: "直接向当前知识库提问...",
-    };
-  }, [selectedFolder, selectedKb]);
-
   if (isLoading) {
     return (
       <div className="flex h-screen items-center justify-center bg-[radial-gradient(circle_at_top,rgba(0,179,107,0.15),transparent_35%),#111314] text-sm text-muted">
@@ -1209,7 +1239,14 @@ function KnowledgeWorkspace() {
 
   return (
     <>
-      <div className="grid h-screen grid-cols-1 bg-white xl:grid-cols-[35fr_65fr]">
+      <div
+        className="grid h-screen grid-cols-1 bg-white xl:grid-cols-[var(--knowledge-left-width)_6px_minmax(0,1fr)]"
+        style={
+          {
+            "--knowledge-left-width": `${leftWidth}px`,
+          } as React.CSSProperties
+        }
+      >
         <div className="flex min-w-0 overflow-hidden">
           <KnowledgeList
             knowledgeBases={knowledgeBasesView}
@@ -1339,16 +1376,45 @@ function KnowledgeWorkspace() {
           />
         </div>
 
-        <div className="min-w-0 overflow-hidden p-4">
+        {/* 可拖拽分割条：仅在 xl 及以上展示。
+            - 单击拖拽即可调整左右宽度（min 240 / max 720 / default 360）
+            - 双击可一键回到默认值
+            - 宽度记到 localStorage，下次进入保持。
+            div 本身留 6px 宽度给鼠标更容易抓到，里面再画一根 1.5px 视觉细线。 */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="拖动调整左侧宽度"
+          onMouseDown={(event) => {
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDoubleClick={() => setLeftWidth(SPLIT_DEFAULT)}
+          className={cn(
+            "group hidden h-full w-full cursor-col-resize items-center justify-center xl:flex",
+            dragging && "bg-primary/10"
+          )}
+          title="拖动调整宽度（双击恢复默认）"
+        >
+          <div
+            className={cn(
+              "h-full w-px transition-colors",
+              dragging
+                ? "bg-primary/60"
+                : "bg-gray-200 group-hover:bg-primary/40"
+            )}
+          />
+        </div>
+
+        <div className="flex min-h-0 min-w-0 overflow-hidden p-4">
           <KnowledgeChatPanel
-            title={chatContext.title}
-            subtitle={chatContext.subtitle}
-            contextName={chatContext.contextName}
-            starterPrompts={chatContext.prompts}
-            placeholder={chatContext.placeholder}
+            knowledgeBaseId={selectedKbId || null}
+            knowledgeBaseName={selectedKb?.knowledge_base_name}
+            selectedFolderName={selectedFolder?.folder_name ?? null}
             disabled={Boolean(chatDisabledReason)}
             disabledReason={chatDisabledReason ?? undefined}
-            className="min-h-[calc(100vh-32px)]"
+            enabled
+            className="h-full w-full"
           />
         </div>
       </div>

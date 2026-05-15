@@ -12,12 +12,6 @@ import {
 } from "@/lib/knowledge-viewer";
 import { fetchFilePreview } from "@/lib/api/knowledge";
 
-const filePrompts = [
-  "总结这份文件的核心结论",
-  "列出这份文件里最值得追问的 5 个点",
-  "从风险和遗漏角度帮我检查这份文件",
-];
-
 export default function KnowledgeFilePage() {
   const params = useParams<{ fileId: string }>();
   const fileId = Array.isArray(params?.fileId) ? params.fileId[0] : params?.fileId;
@@ -132,17 +126,17 @@ export default function KnowledgeFilePage() {
           </div>
           <div className="min-h-0 flex-1">
             <KnowledgeChatPanel
-              title="单文件问答"
-              subtitle={`围绕「${cachedFile.file.file_name}」提问`}
-              contextName={cachedFile.file.file_name}
-              starterPrompts={filePrompts}
-              placeholder="针对当前文件提问..."
+              knowledgeBaseId={cachedFile.file.knowledge_base_id ?? null}
+              knowledgeBaseName={cachedFile.knowledgeBaseName}
+              selectedFolderName={cachedFile.file.file_name}
               disabled={chatDisabled}
               disabledReason={
                 chatDisabled
                   ? "文件还在处理中，处理完成后可开始问答。"
                   : undefined
               }
+              enabled
+              compact
               className="h-full rounded-none border-0 shadow-none"
             />
           </div>

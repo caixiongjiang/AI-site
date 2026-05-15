@@ -1,3 +1,7 @@
+/* LaTeX 公式渲染（chat 中通过 remark-math + rehype-katex 注入 .katex 类）。
+   注意：CSS 规范要求 @import 必须排在所有规则之前，包括 @tailwind。 */
+@import "katex/dist/katex.min.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

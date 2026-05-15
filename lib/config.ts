@@ -57,6 +57,46 @@ export function getCurrentUserId(): string {
 }
 
 /**
+ * 推导知识库对话 WebSocket 的连接 URL。
+ *
+ * 规则：
+ * - 优先用 NEXT_PUBLIC_CHAT_WS_URL（允许部署时显式覆盖完整 URL，含协议）
+ * - 其次基于 API_CONFIG.BASE_URL 推导：http(s) -> ws(s)
+ * - 兜底：基于 window.location.origin（同源部署）
+ * - 自动追加 ?token=<user_id> 用于鉴权（与后端 §4.1 query token 通道一致）
+ */
+export function getChatWsUrl(path: string = "/api/chat/ws"): string {
+  const userId = getCurrentUserId();
+  const explicit = process.env.NEXT_PUBLIC_CHAT_WS_URL;
+
+  let baseUrl: string;
+  if (explicit && explicit.trim().length > 0) {
+    baseUrl = explicit;
+  } else if (API_CONFIG.BASE_URL) {
+    baseUrl = API_CONFIG.BASE_URL;
+  } else if (typeof window !== "undefined") {
+    baseUrl = window.location.origin;
+  } else {
+    baseUrl = "http://localhost:8000";
+  }
+
+  let wsUrl = baseUrl;
+  if (wsUrl.startsWith("https://")) {
+    wsUrl = "wss://" + wsUrl.slice("https://".length);
+  } else if (wsUrl.startsWith("http://")) {
+    wsUrl = "ws://" + wsUrl.slice("http://".length);
+  } else if (!wsUrl.startsWith("ws://") && !wsUrl.startsWith("wss://")) {
+    wsUrl = `ws://${wsUrl}`;
+  }
+
+  wsUrl = wsUrl.replace(/\/+$/, "");
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+
+  const separator = normalizedPath.includes("?") ? "&" : "?";
+  return `${wsUrl}${normalizedPath}${separator}token=${encodeURIComponent(userId)}`;
+}
+
+/**
  * 获取 API 请求的通用请求头
  */
 export function getCommonHeaders(): Record<string, string> {
