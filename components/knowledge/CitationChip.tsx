@@ -14,7 +14,6 @@ import {
   AlignJustify,
   FileText,
   Image as ImageIcon,
-  Sigma,
   Table as TableIcon,
 } from "lucide-react";
 import {
@@ -32,7 +31,6 @@ import type { Citation } from "@/lib/chat-types";
 import { CitationPreviewMarkdown } from "@/components/knowledge/CitationPreviewMarkdown";
 import { cn } from "@/lib/utils";
 import {
-  CITATION_PREVIEW_SCROLL_LEN,
   parseImagePreviewPreview,
   parseTablePreviewPreview,
   sanitizeCitationHtml,
@@ -51,14 +49,12 @@ const CHUNK_TYPE_ICON: Record<
 > = {
   table: TableIcon,
   image: ImageIcon,
-  equation: Sigma,
   text: AlignJustify,
 };
 
 const CHUNK_TYPE_LABEL: Record<string, string> = {
   table: "表格",
   image: "图片",
-  equation: "公式",
   text: "文本",
 };
 
@@ -118,7 +114,7 @@ function usePopoverPosition(
   }, [open, positionKey, anchorRef, popRef]);
 }
 
-function CitationPreviewBody({
+export function CitationPreviewBody({
   preview,
   chunkType,
 }: {
@@ -127,10 +123,6 @@ function CitationPreviewBody({
 }) {
   const table = useMemo(() => parseTablePreviewPreview(preview), [preview]);
   const imageParts = useMemo(() => parseImagePreviewPreview(preview), [preview]);
-  const longTextScroll = preview.length >= CITATION_PREVIEW_SCROLL_LEN;
-  const textScrollClass = longTextScroll
-    ? "max-h-[min(70vh,22rem)] overflow-y-auto overscroll-contain pr-0.5"
-    : "";
 
   const useImageLayout =
     imageParts &&
@@ -140,7 +132,7 @@ function CitationPreviewBody({
 
   if (table) {
     return (
-      <div className="mt-2 flex min-h-0 max-h-[min(72vh,24rem)] flex-col gap-2 text-left">
+      <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 text-left">
         {table.caption ? (
           <div className="shrink-0 rounded-md bg-gray-50 px-2 py-1.5 text-[11px] font-medium text-gray-900">
             {table.caption}
@@ -172,7 +164,7 @@ function CitationPreviewBody({
       ? sanitizeCitationImageSrc(imageParts.imageUrl)
       : null;
     return (
-      <div className="mt-2 flex min-h-0 max-h-[min(72vh,24rem)] flex-col gap-2 text-left">
+      <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 text-left">
         {imageParts.caption ? (
           <div className="shrink-0 rounded-md bg-gray-50 px-2 py-1.5 text-[11px] font-medium text-gray-900">
             {imageParts.caption}
@@ -203,7 +195,7 @@ function CitationPreviewBody({
   }
 
   return (
-    <div className={cn("mt-2 text-left", textScrollClass)}>
+    <div className="mt-2 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5 text-left">
       <CitationPreviewMarkdown content={preview} />
     </div>
   );
@@ -269,8 +261,8 @@ export function CitationChip({
             onMouseEnter={cancelScheduledClose}
             onMouseLeave={scheduleClose}
             className={cn(
-              "fixed z-[100] rounded-xl border border-gray-200 bg-white p-3 text-left shadow-xl",
-              "max-w-[min(288px,calc(100vw-16px))]"
+              "fixed z-[100] flex flex-col rounded-xl border border-gray-200 bg-white p-3 text-left shadow-xl",
+              "max-h-[min(80vh,28rem)] max-w-[min(288px,calc(100vw-16px))]"
             )}
             style={{
               pointerEvents: "auto",
@@ -295,10 +287,12 @@ export function CitationChip({
               </div>
             ) : null}
             {preview ? (
-              <CitationPreviewBody
-                preview={preview}
-                chunkType={citation?.chunk_type}
-              />
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                <CitationPreviewBody
+                  preview={preview}
+                  chunkType={citation?.chunk_type}
+                />
+              </div>
             ) : (
               <div className="mt-2 text-[11px] text-muted">（暂无预览）</div>
             )}

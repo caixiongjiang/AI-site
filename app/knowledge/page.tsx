@@ -296,7 +296,12 @@ function InputModal({
           onChange={(e) => setValue(e.target.value)}
           placeholder={action.placeholder}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && canConfirm && !busy) {
+            if (
+              e.key === "Enter" &&
+              canConfirm &&
+              !busy &&
+              !e.nativeEvent.isComposing
+            ) {
               void action.onConfirm(value.trim());
             }
           }}

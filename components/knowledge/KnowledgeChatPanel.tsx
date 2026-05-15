@@ -1,23 +1,31 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ComponentType, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlignJustify,
   AlertTriangle,
   Bot,
   Brain,
   ChevronDown,
   ChevronUp,
   CircleStop,
+  Copy,
   Cpu,
   Database,
+  FileText,
   Folder,
+  Image as ImageIcon,
   Loader2,
   MessageSquare,
   MessageSquarePlus,
   Pencil,
   Plus,
   Send,
+  Share2,
   Sparkles,
+  Table as TableIcon,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
   Wand2,
   Wrench,
@@ -30,6 +38,7 @@ import type {
   ChatPhase,
   ChatSessionInfo,
   Citation,
+  RetrievalChunkPreview,
   ToolCallRecord,
   UiChatMessage,
 } from "@/lib/chat-types";
@@ -249,7 +258,16 @@ function docGroupKey(c: { file_id?: string | null; file_name?: string | null; do
   return c.file_id ?? c.file_name ?? c.document_id ?? c.chunk_id;
 }
 
-/** 底部引用区：按文档聚合，文件名 + 该文档首次命中片段纯文本前 20 字（替代 chunk id 网格） */
+const CHUNK_TYPE_ICON: Record<
+  string,
+  ComponentType<{ className?: string }>
+> = {
+  table: TableIcon,
+  image: ImageIcon,
+  text: AlignJustify,
+};
+
+/** 底部引用区：仅显示"全部来源"按钮，点击打开右侧面板按文档分组查看 */
 function ReferencedDocumentsBlock({
   citations,
   onOpenAllSources,
@@ -259,94 +277,51 @@ function ReferencedDocumentsBlock({
 }) {
   if (!citations || citations.length === 0) return null;
 
-  const order: string[] = [];
-  const rows = new Map<
-    string,
-    { title: string; snippet: string; fileId: string | null | undefined }
-  >();
-
-  for (const c of citations) {
-    const key = docGroupKey(c);
-    if (rows.has(key)) continue;
-    order.push(key);
-    const title = (c.file_name as string | undefined) || c.file_id || "未知文档";
-    const plain = stripHtmlToPlain((c.preview ?? "").trim());
-    const snippet =
-      plain.length > 0
-        ? `${plain.slice(0, 20)}${plain.length > 20 ? "…" : ""}`
-        : "";
-    rows.set(key, { title, snippet, fileId: c.file_id });
-  }
+  const docCount = new Set(citations.map(docGroupKey)).size;
 
   return (
     <div className="mt-3 border-t border-gray-100 pt-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="text-[11px] font-medium text-gray-500">
-          参考文档 · {order.length}
-        </div>
-        {onOpenAllSources ? (
-          <button
-            type="button"
-            onClick={() => onOpenAllSources(citations)}
-            className="shrink-0 rounded-full border border-primary/25 bg-primary/5 px-2.5 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/10"
-          >
-            全部来源 {citations.length}
-          </button>
-        ) : null}
-      </div>
-      <ol className="list-none space-y-2 p-0 m-0">
-        {order.map((key) => {
-          const r = rows.get(key)!;
-          const openFile = () => {
-            if (!r.fileId) return;
-            window.open(
-              `/knowledge/file/${encodeURIComponent(r.fileId)}`,
-              "_blank",
-              "noopener,noreferrer"
-            );
-          };
-          return (
-            <li
-              key={key}
-              className={cn(
-                "rounded-lg border border-gray-100 bg-white px-3 py-2.5 shadow-sm",
-                r.fileId && "cursor-pointer hover:border-primary/30 hover:bg-primary/[0.02]"
-              )}
-              onClick={r.fileId ? openFile : undefined}
-              onKeyDown={
-                r.fileId
-                  ? (e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        openFile();
-                      }
-                    }
-                  : undefined
-              }
-              role={r.fileId ? "link" : undefined}
-              tabIndex={r.fileId ? 0 : undefined}
-            >
-              <div className="text-[13px] font-medium leading-snug text-foreground">
-                {r.title}
-              </div>
-              {r.snippet ? (
-                <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                  {r.snippet}
-                </div>
-              ) : (
-                <div className="mt-1 text-[11px] text-muted-foreground/80">
-                  （无预览文本）
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ol>
+      {onOpenAllSources ? (
+        <button
+          type="button"
+          onClick={() => onOpenAllSources(citations)}
+          className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/5 px-3 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/10"
+        >
+          <Database className="h-3 w-3" />
+          全部来源 · {docCount} 篇文档 · {citations.length} 段引用
+        </button>
+      ) : null}
     </div>
   );
 }
 
-function RetrievalChip({ retrieval }: { retrieval: UiChatMessage["retrieval"] }) {
+/** 将 retrieval chunks 转为 Citation 格式（字段几乎一致，补 score 默认值） */
+function retrievalChunksToCitations(
+  chunks: RetrievalChunkPreview[] | undefined
+): Citation[] {
+  if (!chunks || chunks.length === 0) return [];
+  return chunks.map((c) => ({
+    chunk_id: c.chunk_id,
+    document_id: c.document_id ?? null,
+    knowledge_base_id: c.knowledge_base_id ?? null,
+    score: c.score ?? 0,
+    chunk_type: c.chunk_type ?? null,
+    page_index: c.page_index ?? null,
+    section_title: c.section_title ?? null,
+    file_id: c.file_id ?? null,
+    file_name: c.file_name ?? null,
+    preview: c.preview ?? null,
+    alias: c.alias ?? null,
+  }));
+}
+
+function RetrievalChip({
+  retrieval,
+  onViewChunks,
+}: {
+  retrieval: UiChatMessage["retrieval"];
+  onViewChunks?: (citations: Citation[]) => void;
+}) {
   if (!retrieval) return null;
   const base =
     "mt-2 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px]";
@@ -366,11 +341,34 @@ function RetrievalChip({ retrieval }: { retrieval: UiChatMessage["retrieval"] })
       </span>
     );
   }
+
+  const hasChunks =
+    retrieval.chunks && retrieval.chunks.length > 0 && onViewChunks;
+
   return (
-    <span className={cn(base, "bg-emerald-50 text-emerald-700")}>
+    <button
+      type="button"
+      disabled={!hasChunks}
+      onClick={() => {
+        if (hasChunks) {
+          onViewChunks(retrievalChunksToCitations(retrieval.chunks));
+        }
+      }}
+      className={cn(
+        base,
+        "bg-emerald-50 text-emerald-700 transition-colors",
+        hasChunks
+          ? "cursor-pointer hover:bg-emerald-100"
+          : "cursor-default"
+      )}
+      title={hasChunks ? "点击查看检索结果" : undefined}
+    >
       <Database className="h-3 w-3" />
       命中 {retrieval.hit_count ?? 0} 段 · {retrieval.time_ms ?? 0}ms
-    </span>
+      {hasChunks ? (
+        <span className="ml-0.5 text-emerald-600">· 查看</span>
+      ) : null}
+    </button>
   );
 }
 
@@ -381,171 +379,545 @@ function ReferencesSidePanel({
   citations: Citation[];
   onClose: () => void;
 }) {
+  // 按文档分组
+  const docGroups = useMemo(() => {
+    const order: string[] = [];
+    const groups = new Map<
+      string,
+      {
+        fileName: string;
+        fileId: string | null | undefined;
+        citations: Array<Citation & { globalIndex: number }>;
+      }
+    >();
+
+    citations.forEach((c, i) => {
+      const key = docGroupKey(c);
+      if (!groups.has(key)) {
+        order.push(key);
+        groups.set(key, {
+          fileName: c.file_name || c.file_id || "未知文档",
+          fileId: c.file_id,
+          citations: [],
+        });
+      }
+      groups.get(key)!.citations.push({ ...c, globalIndex: i + 1 });
+    });
+
+    return order.map((key) => ({ key, ...groups.get(key)! }));
+  }, [citations]);
+
   return (
     <aside
       className="flex min-h-0 w-[min(380px,42vw)] max-w-[100vw] shrink-0 flex-col border-l border-gray-200 bg-white"
-      aria-label="参考来源"
+      aria-label="全部来源"
     >
       <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-4 py-3">
         <span className="text-sm font-semibold text-foreground">
-          参考来源 · {citations.length}
+          全部来源 · {docGroups.length} 篇文档
         </span>
         <button
           type="button"
           onClick={onClose}
           className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-gray-100 hover:text-foreground"
-          aria-label="关闭参考来源"
+          aria-label="关闭"
         >
           <X className="h-4 w-4" />
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        {citations.map((c, i) => {
-          const pageText =
-            typeof c.page_index === "number" ? `p.${c.page_index + 1}` : null;
-          const title =
-            (c.section_title && c.section_title.trim()) ||
-            c.file_name ||
-            "引用片段";
-          const rawPlain = stripHtmlToPlain((c.preview ?? "").trim());
-          const snippet =
-            rawPlain.length > 120
-              ? `${rawPlain.slice(0, 120)}…`
-              : rawPlain;
-
-          const openFile = () => {
-            if (!c.file_id) return;
-            window.open(
-              `/knowledge/file/${encodeURIComponent(c.file_id)}`,
-              "_blank",
-              "noopener,noreferrer"
-            );
-          };
-
-          return (
-            <div
-              key={`${c.chunk_id}-${i}`}
-              className="border-b border-gray-100 px-4 py-3 last:border-b-0"
-            >
-              <div className="flex gap-2">
-                <span className="shrink-0 text-sm font-semibold text-primary">
-                  {i + 1}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="text-[13px] font-medium leading-snug text-foreground">
-                    {title}
-                  </div>
-                  <div className="mt-1 text-[11px] text-muted-foreground">
-                    {(c.file_name || "未知文件") +
-                      (pageText ? ` · ${pageText}` : "")}
-                  </div>
-                  {snippet ? (
-                    <div className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
-                      {snippet}
-                    </div>
-                  ) : null}
-                  {c.file_id ? (
-                    <button
-                      type="button"
-                      onClick={openFile}
-                      className="mt-2 text-[11px] text-primary hover:underline"
-                    >
-                      打开原文档
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-          );
-        })}
+      <div
+        tabIndex={-1}
+        onMouseEnter={(e) => e.currentTarget.focus({ preventScroll: true })}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain outline-none"
+      >
+        {docGroups.map((doc) => (
+          <DocGroup key={doc.key} doc={doc} />
+        ))}
       </div>
     </aside>
   );
 }
 
-function MessageBubble({
+/** 将 preview 原文转为纯文本摘要（约 2 行，~80 字） */
+function previewSnippet(preview: string | null | undefined): string {
+  if (!preview) return "";
+  const plain = stripHtmlToPlain(preview.trim());
+  if (plain.length <= 80) return plain;
+  return `${plain.slice(0, 80)}…`;
+}
+
+/**
+ * 图片型引用的预览占位（后续替换为缩略图 / 图片预览）
+ * TODO: 接入图片预览逻辑
+ */
+function ImageChunkPreview({ preview }: { preview?: string | null }) {
+  const caption = preview
+    ? (() => {
+        const m = preview.match(/image_caption\s*:\s*(.+?)(?:\n|image_|$)/i);
+        return m ? m[1].trim() : null;
+      })()
+    : null;
+
+  return (
+    <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+      <ImageIcon className="h-3 w-3 shrink-0 text-blue-600" />
+      <span className="line-clamp-2">{caption || "（图片引用）"}</span>
+    </div>
+  );
+}
+
+/** 单个文档分组（默认折叠） */
+function DocGroup({
+  doc,
+}: {
+  doc: {
+    key: string;
+    fileName: string;
+    fileId: string | null | undefined;
+    citations: Array<Citation & { globalIndex: number }>;
+  };
+}) {
+  const [open, setOpen] = useState(false);
+
+  const openFile = () => {
+    if (!doc.fileId) return;
+    window.open(
+      `/knowledge/file/${encodeURIComponent(doc.fileId)}`,
+      "_blank",
+      "noopener,noreferrer"
+    );
+  };
+
+  return (
+    <div className="border-b border-gray-100 last:border-b-0">
+      {/* 文档标题行（可折叠） */}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 bg-gray-50/70 px-4 py-2.5 text-left transition-colors hover:bg-gray-100/70"
+      >
+        <FileText className="h-3.5 w-3.5 shrink-0 text-primary" />
+        <div className="min-w-0 flex-1">
+          <span className="text-[13px] font-medium leading-snug text-foreground">
+            {doc.fileName}
+          </span>
+          <span className="ml-1.5 text-[11px] text-muted-foreground">
+            · {doc.citations.length} 段引用
+          </span>
+        </div>
+        {doc.fileId ? (
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.stopPropagation();
+              openFile();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.stopPropagation();
+                openFile();
+              }
+            }}
+            className="shrink-0 rounded-md px-2 py-0.5 text-[11px] text-primary transition-colors hover:bg-primary/10"
+          >
+            打开文档
+          </span>
+        ) : null}
+        {open ? (
+          <ChevronUp className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        )}
+      </button>
+
+      {/* 引用片段列表（折叠内容） */}
+      {open ? (
+        <div className="divide-y divide-gray-50">
+          {doc.citations.map((c) => {
+            const Icon =
+              (c.chunk_type && CHUNK_TYPE_ICON[c.chunk_type]) || FileText;
+            const pageText =
+              typeof c.page_index === "number"
+                ? `p.${c.page_index + 1}`
+                : null;
+            const isImage = c.chunk_type === "image";
+
+            return (
+              <div
+                key={`${c.chunk_id}-${c.globalIndex}`}
+                className="px-4 py-2.5"
+              >
+                {/* 头部：序号 + 图标 + 章节 + 页码 */}
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary">
+                    {c.globalIndex}
+                  </span>
+                  <Icon className="h-3 w-3 shrink-0 text-blue-700" />
+                  {c.section_title ? (
+                    <span className="truncate font-medium text-foreground">
+                      {c.section_title}
+                    </span>
+                  ) : null}
+                  {pageText ? <span>{pageText}</span> : null}
+                </div>
+
+                {/* 预览：图片走单独入口，其余显示 2 行纯文本 */}
+                {isImage ? (
+                  <ImageChunkPreview preview={c.preview} />
+                ) : (
+                  (() => {
+                    const snippet = previewSnippet(c.preview);
+                    return snippet ? (
+                      <div className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
+                        {snippet}
+                      </div>
+                    ) : (
+                      <div className="mt-1 text-[11px] text-muted-foreground/60">
+                        （无预览文本）
+                      </div>
+                    );
+                  })()
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ============================================================
+// 消息分组：连续 assistant 消息合并为一个视觉块
+// ============================================================
+
+interface MessageGroup {
+  type: "user" | "assistant-group";
+  messages: UiChatMessage[];
+}
+
+/** 把 messages 切分为 user 单条 + assistant 连续组 */
+function groupMessages(messages: UiChatMessage[]): MessageGroup[] {
+  const groups: MessageGroup[] = [];
+  let currentAssistantGroup: UiChatMessage[] = [];
+
+  const flushAssistant = () => {
+    if (currentAssistantGroup.length > 0) {
+      groups.push({ type: "assistant-group", messages: [...currentAssistantGroup] });
+      currentAssistantGroup = [];
+    }
+  };
+
+  for (const m of messages) {
+    if (m.role === "user") {
+      flushAssistant();
+      groups.push({ type: "user", messages: [m] });
+    } else if (m.role === "assistant") {
+      currentAssistantGroup.push(m);
+    }
+    // tool / system 已在 hook 层被过滤，不会出现
+  }
+  flushAssistant();
+  return groups;
+}
+
+// ============================================================
+// 操作按钮栏（复制、点赞、反对、分享）
+// ============================================================
+
+function AssistantActionBar({ messages }: { messages: UiChatMessage[] }) {
+  const [copied, setCopied] = useState(false);
+  const [liked, setLiked] = useState<"up" | "down" | null>(null);
+
+  const handleCopy = useCallback(() => {
+    const text = messages
+      .map((m) => m.content)
+      .filter(Boolean)
+      .join("\n\n");
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [messages]);
+
+  const handleShare = useCallback(() => {
+    const text = messages
+      .map((m) => m.content)
+      .filter(Boolean)
+      .join("\n\n");
+    if (navigator.share) {
+      void navigator.share({ text });
+    } else {
+      void navigator.clipboard.writeText(text);
+    }
+  }, [messages]);
+
+  return (
+    <div className="mt-2 flex items-center gap-1">
+      <button
+        type="button"
+        onClick={handleCopy}
+        className={cn(
+          "flex h-7 items-center gap-1 rounded-lg px-2 text-[11px] transition-colors",
+          copied
+            ? "bg-emerald-50 text-emerald-600"
+            : "text-muted-foreground hover:bg-gray-100 hover:text-foreground"
+        )}
+        title="复制回答"
+      >
+        <Copy className="h-3 w-3" />
+        {copied ? "已复制" : "复制"}
+      </button>
+      <button
+        type="button"
+        onClick={() => setLiked((v) => (v === "up" ? null : "up"))}
+        className={cn(
+          "flex h-7 w-7 items-center justify-center rounded-lg transition-colors",
+          liked === "up"
+            ? "bg-emerald-50 text-emerald-600"
+            : "text-muted-foreground hover:bg-gray-100 hover:text-foreground"
+        )}
+        title="赞"
+      >
+        <ThumbsUp className="h-3 w-3" />
+      </button>
+      <button
+        type="button"
+        onClick={() => setLiked((v) => (v === "down" ? null : "down"))}
+        className={cn(
+          "flex h-7 w-7 items-center justify-center rounded-lg transition-colors",
+          liked === "down"
+            ? "bg-red-50 text-red-500"
+            : "text-muted-foreground hover:bg-gray-100 hover:text-foreground"
+        )}
+        title="踩"
+      >
+        <ThumbsDown className="h-3 w-3" />
+      </button>
+      <button
+        type="button"
+        onClick={handleShare}
+        className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-gray-100 hover:text-foreground"
+        title="分享"
+      >
+        <Share2 className="h-3 w-3" />
+      </button>
+    </div>
+  );
+}
+
+// ============================================================
+// 单条用户消息
+// ============================================================
+
+function UserMessageBubble({
   message,
-  onOpenSourcesPanel,
+  onViewRetrievalChunks,
 }: {
   message: UiChatMessage;
-  onOpenSourcesPanel?: (citations: Citation[]) => void;
+  onViewRetrievalChunks?: (citations: Citation[]) => void;
 }) {
-  const isUser = message.role === "user";
   return (
     <div className="flex gap-3 animate-fadeIn">
-      <div
-        className={cn(
-          "flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl text-sm",
-          isUser ? "bg-gray-100 text-foreground" : "bg-primary/10 text-primary"
-        )}
-      >
-        {isUser ? "你" : <Sparkles className="h-4 w-4" />}
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gray-100 text-sm text-foreground">
+        你
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="rounded-2xl bg-primary/5 px-4 py-3 text-sm leading-7 text-foreground">
+          <div className="whitespace-pre-wrap break-words">{message.content}</div>
+        </div>
+        <RetrievalChip
+          retrieval={message.retrieval}
+          onViewChunks={onViewRetrievalChunks}
+        />
+        {message.created_at ? (
+          <div className="mt-1 text-[10px] text-muted">
+            {formatDate(message.created_at)}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// 连续 assistant 消息组（合并为一个视觉块）
+// ============================================================
+
+/** 单个 assistant round 的可折叠内容块（中间轮默认折叠，最后一轮 / 正在流式展开） */
+function AssistantRoundBlock({
+  message,
+  isLast,
+  isIntermediate,
+}: {
+  message: UiChatMessage;
+  /** 是否是组内最后一条（最终总结） */
+  isLast: boolean;
+  /** 是否是中间轮（非最后一条且组内有多条） */
+  isIntermediate: boolean;
+}) {
+  // 中间轮默认折叠；正在流式时保持展开；最后一轮始终展开
+  const [collapsed, setCollapsed] = useState(isIntermediate && !message.inflight);
+
+  // 当新的 round 出现后（当前 round 不再 inflight），自动折叠中间轮
+  useEffect(() => {
+    if (isIntermediate && !message.inflight) {
+      setCollapsed(true);
+    }
+  }, [isIntermediate, message.inflight]);
+
+  const m = message;
+  const hasContent = Boolean(m.content);
+
+  return (
+    <div>
+      {/* 思考块 */}
+      {m.thinking ? (
+        <ThinkingBlock
+          thinking={m.thinking}
+          inflight={Boolean(m.inflight)}
+        />
+      ) : null}
+
+      {/* 中间轮折叠控制 */}
+      {isIntermediate && hasContent ? (
+        <button
+          type="button"
+          onClick={() => setCollapsed((v) => !v)}
+          className="mb-1 flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+        >
+          {collapsed ? (
+            <ChevronDown className="h-3 w-3" />
+          ) : (
+            <ChevronUp className="h-3 w-3" />
+          )}
+          <span>{collapsed ? "展开中间过程" : "折叠中间过程"}</span>
+        </button>
+      ) : null}
+
+      {/* 正文（中间轮可折叠） */}
+      {hasContent && !collapsed ? (
+        <div
+          className={cn(
+            "rounded-2xl bg-gray-50 px-4 py-3 text-sm leading-7 text-foreground",
+            // 中间轮样式区分：加一条左边框标识
+            isIntermediate && "border-l-2 border-primary/20 rounded-l-lg"
+          )}
+        >
+          <div className="markdown-body prose prose-sm max-w-none text-foreground prose-pre:bg-gray-900 prose-pre:text-gray-100">
+            <MarkdownAnswer
+              content={m.content}
+              citations={m.citations}
+            />
+          </div>
+        </div>
+      ) : hasContent && collapsed ? (
+        /* 折叠态：显示简短摘要 */
+        <div
+          className="cursor-pointer rounded-lg border-l-2 border-gray-200 bg-gray-50/50 px-3 py-2 text-[11px] text-muted-foreground transition-colors hover:bg-gray-100"
+          onClick={() => setCollapsed(false)}
+        >
+          <span className="line-clamp-1">{m.content.slice(0, 100)}{m.content.length > 100 ? "…" : ""}</span>
+        </div>
+      ) : m.inflight ? (
+        <div className="rounded-2xl bg-gray-50 px-4 py-3">
+          <div className="flex items-center gap-2 text-xs text-muted">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            正在生成回复…
+          </div>
+        </div>
+      ) : null}
+
+      {/* 工具调用时间线（在每个 round 内紧跟正文，不随正文折叠） */}
+      <ToolCallTimeline toolCalls={m.tool_calls} />
+
+      {/* 已停止 */}
+      {m.cancelled ? (
+        <div className="mt-2 inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-muted">
+          <CircleStop className="h-3 w-3" />
+          已停止生成
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AssistantMessageGroup({
+  messages,
+  onOpenSourcesPanel,
+}: {
+  messages: UiChatMessage[];
+  onOpenSourcesPanel?: (citations: Citation[]) => void;
+}) {
+  // 合并所有 round 的 citations（去重 by chunk_id，后来者覆盖）
+  const mergedCitations = useMemo(() => {
+    const map = new Map<string, Citation>();
+    for (const m of messages) {
+      for (const c of m.citations ?? []) {
+        map.set(c.chunk_id, c);
+      }
+    }
+    return Array.from(map.values());
+  }, [messages]);
+
+  const isGroupInflight = messages.some((m) => m.inflight);
+  const lastMsg = messages[messages.length - 1];
+  const hasMultipleRounds = messages.length > 1;
+
+  return (
+    <div className="flex gap-3 animate-fadeIn">
+      {/* 头像 */}
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary text-sm">
+        <Sparkles className="h-4 w-4" />
       </div>
 
       <div className="min-w-0 flex-1">
-        {!isUser ? (
-          <ThinkingBlock
-            thinking={message.thinking ?? ""}
-            inflight={Boolean(message.inflight)}
-          />
-        ) : null}
-
-        <div
-          className={cn(
-            "rounded-2xl px-4 py-3 text-sm leading-7",
-            isUser ? "bg-primary/5 text-foreground" : "bg-gray-50 text-foreground"
-          )}
-        >
-          {isUser ? (
-            <div className="whitespace-pre-wrap break-words">{message.content}</div>
-          ) : message.content ? (
-            <div className="markdown-body prose prose-sm max-w-none text-foreground prose-pre:bg-gray-900 prose-pre:text-gray-100">
-              <MarkdownAnswer
-                content={message.content}
-                citations={message.citations}
+        {/* 每条 assistant 消息的内容连续渲染 */}
+        {messages.map((m, idx) => {
+          const isLast = idx === messages.length - 1;
+          const isIntermediate = hasMultipleRounds && !isLast;
+          return (
+            <div key={m.id} className={idx > 0 ? "mt-3" : ""}>
+              <AssistantRoundBlock
+                message={m}
+                isLast={isLast}
+                isIntermediate={isIntermediate}
               />
             </div>
-          ) : message.inflight ? (
-            <div className="flex items-center gap-2 text-xs text-muted">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              正在生成回复…
-            </div>
-          ) : (
-            <div className="text-xs text-muted">（无内容）</div>
-          )}
-        </div>
+          );
+        })}
 
-        {!isUser ? <ToolCallTimeline toolCalls={message.tool_calls} /> : null}
-        {!isUser ? (
+        {/* ---- 以下内容仅在整组末尾显示一次 ---- */}
+
+        {/* 操作按钮（复制、赞、踩、分享） */}
+        {!isGroupInflight && messages.some((m) => m.content) ? (
+          <AssistantActionBar messages={messages} />
+        ) : null}
+
+        {/* 全部来源：合并后的 citations 统一显示 */}
+        {!isGroupInflight ? (
           <ReferencedDocumentsBlock
-            citations={message.citations}
+            citations={mergedCitations}
             onOpenAllSources={onOpenSourcesPanel}
           />
         ) : null}
 
-        {isUser ? <RetrievalChip retrieval={message.retrieval} /> : null}
-
-        {message.cancelled ? (
-          <div className="mt-2 inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-muted">
-            <CircleStop className="h-3 w-3" />
-            已停止生成
-          </div>
-        ) : null}
-
-        {!isUser && message.usage ? (
+        {/* token 统计（取最后一条的 usage，或汇总） */}
+        {!isGroupInflight && lastMsg?.usage ? (
           <div className="mt-1.5 text-[10px] text-muted/70">
-            tokens · prompt {message.usage.prompt_tokens} · completion{" "}
-            {message.usage.completion_tokens}
-            {typeof message.usage.thinking_tokens === "number"
-              ? ` · thinking ${message.usage.thinking_tokens}`
+            tokens · prompt {lastMsg.usage.prompt_tokens} · completion{" "}
+            {lastMsg.usage.completion_tokens}
+            {typeof lastMsg.usage.thinking_tokens === "number"
+              ? ` · thinking ${lastMsg.usage.thinking_tokens}`
               : ""}{" "}
-            · total {message.usage.total_tokens}
+            · total {lastMsg.usage.total_tokens}
           </div>
         ) : null}
 
-        {message.created_at ? (
+        {lastMsg?.created_at ? (
           <div className="mt-1 text-[10px] text-muted">
-            {formatDate(message.created_at)}
+            {formatDate(lastMsg.created_at)}
           </div>
         ) : null}
       </div>
@@ -1265,10 +1637,12 @@ export const KnowledgeChatPanel = ({
           </div>
         ) : null}
 
-        {/* 消息列表（唯一的滚动容器） */}
+        {/* 消息列表 */}
         <div
           ref={scrollRef}
-          className="flex-1 min-h-0 space-y-4 overflow-y-auto px-5 py-4"
+          tabIndex={-1}
+          onMouseEnter={(e) => e.currentTarget.focus({ preventScroll: true })}
+          className="flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain px-5 py-4 outline-none"
         >
           {isLoading && messages.length === 0 ? (
             <div className="flex items-center justify-center py-10 text-xs text-muted">
@@ -1295,17 +1669,39 @@ export const KnowledgeChatPanel = ({
             </div>
           ) : null}
 
-          {messages.map((m) => (
-            <MessageBubble
-              key={m.id}
-              message={m}
-              onOpenSourcesPanel={
-                m.role === "assistant" && m.citations?.length
-                  ? setSourcesSideCitations
-                  : undefined
+          {groupMessages(messages).map((group, gi) => {
+            if (group.type === "user") {
+              const m = group.messages[0];
+              return (
+                <UserMessageBubble
+                  key={m.id}
+                  message={m}
+                  onViewRetrievalChunks={setSourcesSideCitations}
+                />
+              );
+            }
+            // assistant-group
+            const groupKey = group.messages.map((m) => m.id).join("|");
+            // 合并所有 round 的 citations 用于打开侧面板
+            const allCitations = (() => {
+              const map = new Map<string, Citation>();
+              for (const m of group.messages) {
+                for (const c of m.citations ?? []) map.set(c.chunk_id, c);
               }
-            />
-          ))}
+              return Array.from(map.values());
+            })();
+            return (
+              <AssistantMessageGroup
+                key={groupKey}
+                messages={group.messages}
+                onOpenSourcesPanel={
+                  allCitations.length > 0
+                    ? setSourcesSideCitations
+                    : undefined
+                }
+              />
+            );
+          })}
         </div>
 
         {/* 输入区：参数扁平化 toolbar + textarea + 发送/停止 */}
@@ -1329,7 +1725,11 @@ export const KnowledgeChatPanel = ({
                 disabled={effectiveDisabled || isStreaming}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
+                  if (
+                    e.key === "Enter" &&
+                    !e.shiftKey &&
+                    !e.nativeEvent.isComposing
+                  ) {
                     e.preventDefault();
                     void handleSend();
                   }
