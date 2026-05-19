@@ -262,7 +262,7 @@ export function CitationChip({
             onMouseLeave={scheduleClose}
             className={cn(
               "fixed z-[100] flex flex-col rounded-xl border border-gray-200 bg-white p-3 text-left shadow-xl",
-              "max-h-[min(80vh,28rem)] max-w-[min(288px,calc(100vw-16px))]"
+              "max-h-[min(80vh,28rem)] max-w-[min(288px,calc(100vw-16px))] overflow-hidden"
             )}
             style={{
               pointerEvents: "auto",

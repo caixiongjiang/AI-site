@@ -142,7 +142,13 @@ export function MarkdownAnswer({ content, citations }: MarkdownAnswerProps) {
     const byAlias = new Map<string, { index: number; citation: Citation }>();
     const byChunkId = new Map<string, { index: number; citation: Citation }>();
     (citations ?? []).forEach((c, i) => {
-      const entry = { index: i + 1, citation: c };
+      // 优先使用 alias 编号（如 "c7" → 7），与 ReferencesSidePanel 保持一致
+      let idx = i + 1;
+      if (c?.alias) {
+        const m = /^c(\d+)$/i.exec(c.alias);
+        if (m) idx = Number(m[1]);
+      }
+      const entry = { index: idx, citation: c };
       if (c?.alias) byAlias.set(c.alias.toLowerCase(), entry);
       if (c?.chunk_id) byChunkId.set(normalizeChunkId(c.chunk_id), entry);
     });

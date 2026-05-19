@@ -85,6 +85,17 @@ export interface UseKnowledgeChatResult {
 }
 
 function fromBackendMessage(message: ChatMessage): UiChatMessage {
+  const meta = message.metadata as Record<string, unknown> | undefined;
+  const retrievalMeta = meta?.retrieval as
+    | {
+        hit_count?: number;
+        time_ms?: number;
+        chunks?: RetrievalChunkPreview[];
+        error?: string;
+        params?: Record<string, unknown>;
+      }
+    | undefined;
+
   return {
     id: message.message_id,
     role: message.role,
@@ -95,6 +106,20 @@ function fromBackendMessage(message: ChatMessage): UiChatMessage {
     usage: message.usage ?? undefined,
     finish_reason: message.finish_reason ?? null,
     created_at: message.create_time,
+    ...(retrievalMeta
+      ? {
+          retrieval: {
+            state: retrievalMeta.error
+              ? ("failed" as const)
+              : ("done" as const),
+            hit_count: retrievalMeta.hit_count,
+            time_ms: retrievalMeta.time_ms,
+            chunks: retrievalMeta.chunks,
+            error: retrievalMeta.error,
+            params: retrievalMeta.params,
+          },
+        }
+      : {}),
   };
 }
 
@@ -314,9 +339,45 @@ export function useKnowledgeChat(
           break;
         }
 
+        case "retrieval.progress": {
+          // 检索工具进度：关联到 tool_call（通过 tool_call_id）
+          const toolCallId = frame.data.tool_call_id;
+          if (toolCallId) {
+            // 更新对应 tool_call 的 retrieval_progress
+            const targetId = inflightAssistantIdRef.current ?? lastAssistantIdRef.current;
+            if (targetId) {
+              setMessages((prev) =>
+                prev.map((m) => {
+                  if (m.id !== targetId) return m;
+                  return {
+                    ...m,
+                    tool_calls: m.tool_calls.map((t) =>
+                      t.id === toolCallId
+                        ? { ...t, retrieval_progress: frame.data.stage }
+                        : t
+                    ),
+                  };
+                })
+              );
+            }
+          } else {
+            // 兼容旧路径：关联到 user 消息的 retrieval 状态
+            const userId = inflightUserIdRef.current;
+            if (!userId) break;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === userId
+                  ? { ...m, retrieval: { state: "started", stage: frame.data.stage } }
+                  : m
+              )
+            );
+          }
+          break;
+        }
+
         case "retrieval.done": {
           const userId = inflightUserIdRef.current;
-          const { hit_count, time_ms, chunks } = frame.data;
+          const { hit_count, time_ms, chunks, params } = frame.data;
           const previewChunks = chunks as RetrievalChunkPreview[];
 
           // 方案 B：把种子 chunks 提前进入 turn 级 citations 缓存。
@@ -352,6 +413,7 @@ export function useKnowledgeChat(
                         hit_count,
                         time_ms,
                         chunks: previewChunks,
+                        params: params as Record<string, unknown> | undefined,
                       },
                     }
                   : m
@@ -521,6 +583,16 @@ export function useKnowledgeChat(
             result_brief: frame.data.result_brief ?? null,
             items_added: frame.data.items_added,
             inflight: false,
+            retrieval_progress: null,
+            ...(frame.data.retrieval_chunks
+              ? { retrieval_chunks: frame.data.retrieval_chunks }
+              : {}),
+            ...(frame.data.retrieval_params
+              ? { retrieval_params: frame.data.retrieval_params }
+              : {}),
+            ...(frame.data.time_ms != null
+              ? { time_ms: frame.data.time_ms }
+              : {}),
           };
           setMessages((prev) =>
             prev.map((m) => {

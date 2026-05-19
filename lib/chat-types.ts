@@ -61,6 +61,14 @@ export interface ToolCallRecord {
   inflight?: boolean;
   argsText?: string;
   index?: number;
+  /** 检索工具专用：当前检索进度阶段 */
+  retrieval_progress?: "planning" | "searching" | "reranking" | null;
+  /** 检索工具专用：保存检索结果 chunks，支持点击查看 */
+  retrieval_chunks?: RetrievalChunkPreview[];
+  /** 检索工具专用：查询参数 */
+  retrieval_params?: Record<string, unknown>;
+  /** 工具调用耗时（毫秒） */
+  time_ms?: number;
 }
 
 export interface TokenUsageRecord {
@@ -197,11 +205,16 @@ export type ServerFrame =
       data: { query: string; top_k: number };
     }
   | {
+      type: "retrieval.progress";
+      data: { stage: "planning" | "searching" | "reranking"; tool_call_id?: string };
+    }
+  | {
       type: "retrieval.done";
       data: {
         hit_count: number;
         time_ms: number;
         chunks: RetrievalChunkPreview[];
+        params?: Record<string, unknown>;
       };
     }
   | { type: "thinking.delta"; data: { text: string } }
@@ -223,6 +236,10 @@ export type ServerFrame =
         result_brief?: string | null;
         items_added: number;
         time_ms?: number;
+        /** 检索工具专用：检索结果 chunks */
+        retrieval_chunks?: RetrievalChunkPreview[];
+        /** 检索工具专用：查询参数 */
+        retrieval_params?: Record<string, unknown>;
       };
     }
   | {
@@ -294,10 +311,14 @@ export interface UiChatMessage {
   /** 关联的检索状态（仅 user 消息触发的那一轮挂在 user 上） */
   retrieval?: {
     state: "started" | "done" | "failed";
+    /** 检索进度阶段（仅 state=started 时有值） */
+    stage?: "planning" | "searching" | "reranking";
     hit_count?: number;
     time_ms?: number;
     chunks?: RetrievalChunkPreview[];
     error?: string;
+    /** 查询参数（query_text, filters, route_plan 等），用于审计展示 */
+    params?: Record<string, unknown>;
   };
   /** 仅本地展示用的时间戳 */
   created_at?: string;

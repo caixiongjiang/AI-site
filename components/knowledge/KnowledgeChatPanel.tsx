@@ -7,6 +7,7 @@ import {
   Bot,
   Brain,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   CircleStop,
   Copy,
@@ -157,20 +158,31 @@ function ThinkingBlock({
   );
 }
 
-function ToolCallTimeline({ toolCalls }: { toolCalls: ToolCallRecord[] }) {
+function ToolCallTimeline({ toolCalls, onViewSearchResults }: { toolCalls: ToolCallRecord[]; onViewSearchResults?: (citations: Citation[], params?: Record<string, unknown>) => void }) {
   if (!toolCalls || toolCalls.length === 0) return null;
   return (
     <div className="mt-2 space-y-1.5">
       {toolCalls.map((tc) => (
-        <ToolCallRow key={tc.id} tc={tc} />
+        <ToolCallRow key={tc.id} tc={tc} onViewSearchResults={onViewSearchResults} />
       ))}
     </div>
   );
 }
 
-function ToolCallRow({ tc }: { tc: ToolCallRecord }) {
+const SEARCH_TOOL_NAMES = new Set(["search_knowledge_base"]);
+
+const RETRIEVAL_STAGE_LABEL: Record<string, string> = {
+  planning: "大模型规划检索路线…",
+  searching: "多路召回中…",
+  reranking: "精排结果中…",
+};
+
+function ToolCallRow({ tc, onViewSearchResults }: { tc: ToolCallRecord; onViewSearchResults?: (citations: Citation[], params?: Record<string, unknown>) => void }) {
   const [open, setOpen] = useState(false);
   const inflight = Boolean(tc.inflight);
+  const isSearchTool = SEARCH_TOOL_NAMES.has(tc.name);
+  const hasRetrievalProgress = isSearchTool && tc.retrieval_progress;
+
   const hasArgs =
     tc.arguments && Object.keys(tc.arguments).length > 0;
 
@@ -186,6 +198,85 @@ function ToolCallRow({ tc }: { tc: ToolCallRecord }) {
     return "（暂无参数）";
   }, [tc.arguments, tc.argsText, hasArgs]);
 
+  // 检索工具：绿色主题卡片
+  if (isSearchTool) {
+    const stageLabel = hasRetrievalProgress
+      ? RETRIEVAL_STAGE_LABEL[tc.retrieval_progress ?? ""] ?? "正在检索…"
+      : null;
+
+    // 完成态：显示命中数量 + 查看按钮
+    if (!inflight && tc.result_brief) {
+      const hasChunks = tc.retrieval_chunks && tc.retrieval_chunks.length > 0;
+      return (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 px-3 py-2 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="flex min-w-0 items-center gap-1.5 text-emerald-900">
+              <Database className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+              <span className="truncate font-medium">search_knowledge_base</span>
+              <span className="shrink-0 text-emerald-700/80">
+                · 新增 {tc.items_added} 段
+                {tc.time_ms != null
+                  ? ` · ${((tc.time_ms ?? 0) / 1000).toFixed(1)}s`
+                  : ""}
+              </span>
+            </span>
+            <div className="flex items-center gap-1">
+              {hasChunks && onViewSearchResults ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onViewSearchResults(
+                      retrievalChunksToCitations(tc.retrieval_chunks),
+                      tc.retrieval_params,
+                    );
+                  }}
+                  className="rounded-md px-1.5 py-0.5 text-[11px] text-emerald-600 transition-colors hover:bg-emerald-100"
+                >
+                  查看
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setOpen((v) => !v)}
+                className="rounded-md p-0.5 text-emerald-600 transition-colors hover:bg-emerald-100"
+              >
+                {open ? (
+                  <ChevronUp className="h-3 w-3" />
+                ) : (
+                  <ChevronDown className="h-3 w-3" />
+                )}
+              </button>
+            </div>
+          </div>
+          {open ? (
+            <div className="mt-2 space-y-2">
+              <div>
+                <div className="mb-1 text-[11px] text-emerald-800/70">查询</div>
+                <pre className="whitespace-pre-wrap break-all rounded-lg bg-white/70 p-2 text-[11px] leading-5 text-emerald-900">
+                  {argsPreview}
+                </pre>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      );
+    }
+
+    // 进行中：显示检索进度
+    return (
+      <div className="rounded-xl border border-emerald-300 bg-emerald-50/70 px-3 py-2 text-xs ring-1 ring-emerald-200/70">
+        <div className="flex items-center gap-1.5 text-emerald-900">
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-emerald-600" />
+          <span className="truncate font-medium">search_knowledge_base</span>
+          <span className="shrink-0 text-emerald-700/80">
+            · {stageLabel ?? "调用中…"}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  // 普通工具：蓝色主题卡片
   return (
     <div
       className={cn(
@@ -326,10 +417,16 @@ function RetrievalChip({
   const base =
     "mt-2 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px]";
   if (retrieval.state === "started") {
+    const stageLabel: Record<string, string> = {
+      planning: "大模型规划检索路线…",
+      searching: "多路召回中…",
+      reranking: "精排结果中…",
+    };
+    const label = stageLabel[retrieval.stage ?? ""] ?? "正在检索知识库…";
     return (
       <span className={cn(base, "bg-primary/10 text-primary")}>
         <Loader2 className="h-3 w-3 animate-spin" />
-        正在检索知识库…
+        {label}
       </span>
     );
   }
@@ -364,7 +461,7 @@ function RetrievalChip({
       title={hasChunks ? "点击查看检索结果" : undefined}
     >
       <Database className="h-3 w-3" />
-      命中 {retrieval.hit_count ?? 0} 段 · {retrieval.time_ms ?? 0}ms
+      命中 {retrieval.hit_count ?? 0} 段 · {((retrieval.time_ms ?? 0) / 1000).toFixed(1)}s
       {hasChunks ? (
         <span className="ml-0.5 text-emerald-600">· 查看</span>
       ) : null}
@@ -372,15 +469,37 @@ function RetrievalChip({
   );
 }
 
+/** 从 citation alias（如 "c7"）提取序号，用于与 MarkdownAnswer 中的内联引用序号保持一致 */
+function getAliasIndex(c: Citation): number {
+  if (c.alias) {
+    const m = /^c(\d+)$/i.exec(c.alias);
+    if (m) return Number(m[1]);
+  }
+  return 0;
+}
+
 function ReferencesSidePanel({
   citations,
+  showScore,
+  params,
   onClose,
 }: {
   citations: Citation[];
+  /** true=检索结果（按 score 降序，显示分数）；false=全部来源（按页码，不显示分数） */
+  showScore: boolean;
+  /** 查询参数 JSON（仅检索结果视图有） */
+  params?: Record<string, unknown>;
   onClose: () => void;
 }) {
-  // 按文档分组
+  const [paramsOpen, setParamsOpen] = useState(false);
+
+  // 按 score 或页码排列，再按文档分组
   const docGroups = useMemo(() => {
+    const sorted = [...citations].sort(
+      showScore
+        ? (a, b) => (b.score ?? 0) - (a.score ?? 0)
+        : (a, b) => (a.page_index ?? Infinity) - (b.page_index ?? Infinity)
+    );
     const order: string[] = [];
     const groups = new Map<
       string,
@@ -391,7 +510,7 @@ function ReferencesSidePanel({
       }
     >();
 
-    citations.forEach((c, i) => {
+    sorted.forEach((c, i) => {
       const key = docGroupKey(c);
       if (!groups.has(key)) {
         order.push(key);
@@ -401,7 +520,9 @@ function ReferencesSidePanel({
           citations: [],
         });
       }
-      groups.get(key)!.citations.push({ ...c, globalIndex: i + 1 });
+      // 搜索结果：按排序后的顺序编号（1,2,3…）；全部来源：使用 alias 编号与文本引用一致
+      const globalIndex = showScore ? i + 1 : getAliasIndex(c);
+      groups.get(key)!.citations.push({ ...c, globalIndex });
     });
 
     return order.map((key) => ({ key, ...groups.get(key)! }));
@@ -409,7 +530,7 @@ function ReferencesSidePanel({
 
   return (
     <aside
-      className="flex min-h-0 w-[min(380px,42vw)] max-w-[100vw] shrink-0 flex-col border-l border-gray-200 bg-white"
+      className="flex min-h-0 w-[min(320px,35vw)] max-w-[100vw] shrink-0 flex-col border-l border-gray-200 bg-white"
       aria-label="全部来源"
     >
       <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-4 py-3">
@@ -430,8 +551,32 @@ function ReferencesSidePanel({
         onMouseEnter={(e) => e.currentTarget.focus({ preventScroll: true })}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain outline-none"
       >
+        {showScore && params && Object.keys(params).length > 0 ? (
+          <div className="border-b border-gray-100">
+            <button
+              type="button"
+              onClick={() => setParamsOpen((v) => !v)}
+              className="flex w-full items-center gap-2 bg-gray-50/70 px-3 py-2.5 text-left transition-colors hover:bg-gray-100/70"
+            >
+              {paramsOpen ? (
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              )}
+              <Database className="h-3.5 w-3.5 shrink-0 text-primary" />
+              <span className="text-[13px] font-medium text-foreground">查询参数</span>
+            </button>
+            {paramsOpen ? (
+              <div className="max-h-[300px] overflow-auto px-3 pb-3">
+                <pre className="whitespace-pre-wrap break-all rounded-md bg-gray-50 p-3 text-[11px] leading-relaxed text-gray-600">
+                  {JSON.stringify(params, null, 2)}
+                </pre>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {docGroups.map((doc) => (
-          <DocGroup key={doc.key} doc={doc} />
+          <DocGroup key={doc.key} doc={doc} showScore={showScore} />
         ))}
       </div>
     </aside>
@@ -469,6 +614,7 @@ function ImageChunkPreview({ preview }: { preview?: string | null }) {
 /** 单个文档分组（默认折叠） */
 function DocGroup({
   doc,
+  showScore,
 }: {
   doc: {
     key: string;
@@ -476,8 +622,9 @@ function DocGroup({
     fileId: string | null | undefined;
     citations: Array<Citation & { globalIndex: number }>;
   };
+  showScore: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
 
   const openFile = () => {
     if (!doc.fileId) return;
@@ -494,8 +641,13 @@ function DocGroup({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 bg-gray-50/70 px-4 py-2.5 text-left transition-colors hover:bg-gray-100/70"
+        className="flex w-full items-center gap-2 bg-gray-50/70 px-3 py-2.5 text-left transition-colors hover:bg-gray-100/70"
       >
+        {open ? (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        )}
         <FileText className="h-3.5 w-3.5 shrink-0 text-primary" />
         <div className="min-w-0 flex-1">
           <span className="text-[13px] font-medium leading-snug text-foreground">
@@ -524,11 +676,6 @@ function DocGroup({
             打开文档
           </span>
         ) : null}
-        {open ? (
-          <ChevronUp className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        )}
       </button>
 
       {/* 引用片段列表（折叠内容） */}
@@ -560,6 +707,11 @@ function DocGroup({
                     </span>
                   ) : null}
                   {pageText ? <span>{pageText}</span> : null}
+                  {showScore && typeof c.score === "number" ? (
+                    <span className="ml-auto rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
+                      {(c.score * 100).toFixed(1)}%
+                    </span>
+                  ) : null}
                 </div>
 
                 {/* 预览：图片走单独入口，其余显示 2 行纯文本 */}
@@ -667,7 +819,6 @@ function AssistantActionBar({ messages }: { messages: UiChatMessage[] }) {
         title="复制回答"
       >
         <Copy className="h-3 w-3" />
-        {copied ? "已复制" : "复制"}
       </button>
       <button
         type="button"
@@ -719,24 +870,24 @@ function UserMessageBubble({
   onViewRetrievalChunks?: (citations: Citation[]) => void;
 }) {
   return (
-    <div className="flex gap-3 animate-fadeIn">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gray-100 text-sm text-foreground">
-        你
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="rounded-2xl bg-primary/5 px-4 py-3 text-sm leading-7 text-foreground">
-          <div className="whitespace-pre-wrap break-words">{message.content}</div>
+    <div className="animate-fadeIn">
+      <div className="mb-1.5">
+        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gray-100 text-sm text-foreground">
+          你
         </div>
-        <RetrievalChip
-          retrieval={message.retrieval}
-          onViewChunks={onViewRetrievalChunks}
-        />
-        {message.created_at ? (
-          <div className="mt-1 text-[10px] text-muted">
-            {formatDate(message.created_at)}
-          </div>
-        ) : null}
       </div>
+      <div className="rounded-2xl bg-primary/5 px-4 py-3 text-sm leading-7 text-foreground">
+        <div className="whitespace-pre-wrap break-words">{message.content}</div>
+      </div>
+      <RetrievalChip
+        retrieval={message.retrieval}
+        onViewChunks={onViewRetrievalChunks}
+      />
+      {message.created_at ? (
+        <div className="mt-1 text-[10px] text-muted">
+          {formatDate(message.created_at)}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -750,12 +901,17 @@ function AssistantRoundBlock({
   message,
   isLast,
   isIntermediate,
+  allCitations,
+  onViewSearchResults,
 }: {
   message: UiChatMessage;
   /** 是否是组内最后一条（最终总结） */
   isLast: boolean;
   /** 是否是中间轮（非最后一条且组内有多条） */
   isIntermediate: boolean;
+  /** 整组合并后的 citations（跨 round 去重），供 MarkdownAnswer 渲染引用 */
+  allCitations: Citation[];
+  onViewSearchResults?: (citations: Citation[], params?: Record<string, unknown>) => void;
 }) {
   // 中间轮默认折叠；正在流式时保持展开；最后一轮始终展开
   const [collapsed, setCollapsed] = useState(isIntermediate && !message.inflight);
@@ -808,7 +964,7 @@ function AssistantRoundBlock({
           <div className="markdown-body prose prose-sm max-w-none text-foreground prose-pre:bg-gray-900 prose-pre:text-gray-100">
             <MarkdownAnswer
               content={m.content}
-              citations={m.citations}
+              citations={allCitations}
             />
           </div>
         </div>
@@ -830,7 +986,7 @@ function AssistantRoundBlock({
       ) : null}
 
       {/* 工具调用时间线（在每个 round 内紧跟正文，不随正文折叠） */}
-      <ToolCallTimeline toolCalls={m.tool_calls} />
+      <ToolCallTimeline toolCalls={m.tool_calls} onViewSearchResults={onViewSearchResults} />
 
       {/* 已停止 */}
       {m.cancelled ? (
@@ -845,13 +1001,18 @@ function AssistantRoundBlock({
 
 function AssistantMessageGroup({
   messages,
+  priorCitations,
   onOpenSourcesPanel,
+  onViewSearchResults,
 }: {
   messages: UiChatMessage[];
+  /** 前面所有 group 累积的 citations（跨 turn 引用） */
+  priorCitations?: Citation[];
   onOpenSourcesPanel?: (citations: Citation[]) => void;
+  onViewSearchResults?: (citations: Citation[], params?: Record<string, unknown>) => void;
 }) {
-  // 合并所有 round 的 citations（去重 by chunk_id，后来者覆盖）
-  const mergedCitations = useMemo(() => {
+  // 本 group 自身的 citations（全量，供跨 turn 合并用）
+  const ownCitations = useMemo(() => {
     const map = new Map<string, Citation>();
     for (const m of messages) {
       for (const c of m.citations ?? []) {
@@ -861,18 +1022,47 @@ function AssistantMessageGroup({
     return Array.from(map.values());
   }, [messages]);
 
+  // 本轮 LLM 实际引用的 citations（用于"引用来源"展示）
+  const citedCitations = useMemo(() => {
+    const cited = new Set<string>();
+    const re = /\[c(\d+)\]/g;
+    for (const m of messages) {
+      if (!m.content) continue;
+      let match;
+      while ((match = re.exec(m.content)) !== null) {
+        cited.add(`c${match[1]}`);
+      }
+    }
+    if (cited.size === 0) return [];
+    return ownCitations.filter((c) => c.alias && cited.has(c.alias));
+  }, [messages, ownCitations]);
+
+  // 跨 turn 合并 citations（用于 MarkdownAnswer 渲染 [cN] 引用）
+  const allCitationsForRender = useMemo(() => {
+    const map = new Map<string, Citation>();
+    for (const c of priorCitations ?? []) {
+      if (c.chunk_id) map.set(c.chunk_id, c);
+    }
+    for (const c of ownCitations) {
+      map.set(c.chunk_id, c);
+    }
+    return Array.from(map.values());
+  }, [ownCitations, priorCitations]);
+
   const isGroupInflight = messages.some((m) => m.inflight);
   const lastMsg = messages[messages.length - 1];
   const hasMultipleRounds = messages.length > 1;
 
   return (
-    <div className="flex gap-3 animate-fadeIn">
+    <div className="animate-fadeIn">
       {/* 头像 */}
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary text-sm">
-        <Sparkles className="h-4 w-4" />
+      <div className="mb-1.5">
+        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary text-sm">
+          <Sparkles className="h-4 w-4" />
+        </div>
       </div>
 
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0">
         {/* 每条 assistant 消息的内容连续渲染 */}
         {messages.map((m, idx) => {
           const isLast = idx === messages.length - 1;
@@ -883,6 +1073,8 @@ function AssistantMessageGroup({
                 message={m}
                 isLast={isLast}
                 isIntermediate={isIntermediate}
+                allCitations={allCitationsForRender}
+                onViewSearchResults={onViewSearchResults}
               />
             </div>
           );
@@ -898,7 +1090,7 @@ function AssistantMessageGroup({
         {/* 全部来源：合并后的 citations 统一显示 */}
         {!isGroupInflight ? (
           <ReferencedDocumentsBlock
-            citations={mergedCitations}
+            citations={citedCitations}
             onOpenAllSources={onOpenSourcesPanel}
           />
         ) : null}
@@ -1172,7 +1364,7 @@ function ModeToggle({
         disabled={disabled}
         onClick={() => onChange(false)}
         className={cn(
-          "flex h-6 items-center gap-1 rounded-full px-2.5 transition-colors",
+          "flex h-5 items-center gap-1 rounded-full px-2.5 transition-colors",
           !agentMode
             ? "bg-primary/10 text-primary"
             : "text-muted hover:text-foreground",
@@ -1188,7 +1380,7 @@ function ModeToggle({
         disabled={disabled}
         onClick={() => onChange(true)}
         className={cn(
-          "flex h-6 items-center gap-1 rounded-full px-2.5 transition-colors",
+          "flex h-5 items-center gap-1 rounded-full px-2.5 transition-colors",
           agentMode
             ? "bg-primary/10 text-primary"
             : "text-muted hover:text-foreground",
@@ -1353,17 +1545,20 @@ function ChatToolbar({
   onChange,
   isStreaming,
   compact,
+  modeLocked,
 }: {
   settings: ChatSettings;
   onChange: (next: ChatSettings) => void;
   isStreaming: boolean;
   compact?: boolean;
+  /** 会话已有消息时锁定模式，不允许切换 */
+  modeLocked?: boolean;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <ModeToggle
         agentMode={settings.agentMode}
-        disabled={isStreaming}
+        disabled={isStreaming || modeLocked}
         onChange={(v) => onChange({ ...settings, agentMode: v })}
       />
       <ThinkingChip
@@ -1434,9 +1629,12 @@ export const KnowledgeChatPanel = ({
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [sourcesSideCitations, setSourcesSideCitations] = useState<
-    Citation[] | null
-  >(null);
+  const isAtBottomRef = useRef(true);
+  const [sourcesSidePanel, setSourcesSidePanel] = useState<{
+    citations: Citation[];
+    showScore: boolean;
+    params?: Record<string, unknown>;
+  } | null>(null);
 
   // 切换 session 时同步 settings 到 session 默认值
   useEffect(() => {
@@ -1449,11 +1647,22 @@ export const KnowledgeChatPanel = ({
     });
   }, [activeSession?.session_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 自动滚动到底
+  // 检测用户是否在底部（阈值 50px）
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const threshold = 50;
+    isAtBottomRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+  }, []);
+
+  // 自动滚动到底（仅当用户在底部时）
   useEffect(() => {
     const container = scrollRef.current;
     if (!container) return;
-    container.scrollTop = container.scrollHeight;
+    if (isAtBottomRef.current) {
+      container.scrollTop = container.scrollHeight;
+    }
   }, [messages, isStreaming]);
 
   const effectiveDisabled = disabled || !knowledgeBaseId || !enabled;
@@ -1463,6 +1672,7 @@ export const KnowledgeChatPanel = ({
     const content = (preset ?? input).trim();
     if (!content) return;
     setInput("");
+    isAtBottomRef.current = true;
     await send(content, {
       agentMode: settings.agentMode,
       enableThinking: settings.enableThinking,
@@ -1517,6 +1727,22 @@ export const KnowledgeChatPanel = ({
   const placeholder = effectiveDisabled
     ? "当前上下文不可问答"
     : `直接向「${activeSession?.title || knowledgeBaseName || "知识库"}」提问...`;
+
+  // 跨 turn 累积 citations：每个 assistant group 可引用前面所有 group 的 chunk
+  const groupsWithAccumulatedCitations = useMemo(() => {
+    const groups = groupMessages(messages);
+    const accumulated = new Map<string, Citation>();
+    return groups.map((group) => {
+      if (group.type === "assistant") {
+        for (const m of group.messages) {
+          for (const c of m.citations ?? []) {
+            if (c.chunk_id) accumulated.set(c.chunk_id, c);
+          }
+        }
+      }
+      return { group, accumulatedCitations: Array.from(accumulated.values()) };
+    });
+  }, [messages]);
 
   return (
     <section
@@ -1641,8 +1867,9 @@ export const KnowledgeChatPanel = ({
         <div
           ref={scrollRef}
           tabIndex={-1}
+          onScroll={handleScroll}
           onMouseEnter={(e) => e.currentTarget.focus({ preventScroll: true })}
-          className="flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain px-5 py-4 outline-none"
+          className="flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 outline-none"
         >
           {isLoading && messages.length === 0 ? (
             <div className="flex items-center justify-center py-10 text-xs text-muted">
@@ -1669,35 +1896,35 @@ export const KnowledgeChatPanel = ({
             </div>
           ) : null}
 
-          {groupMessages(messages).map((group, gi) => {
+          {groupsWithAccumulatedCitations.map(({ group, accumulatedCitations }, gi) => {
             if (group.type === "user") {
               const m = group.messages[0];
               return (
                 <UserMessageBubble
                   key={m.id}
                   message={m}
-                  onViewRetrievalChunks={setSourcesSideCitations}
+                  onViewRetrievalChunks={(c) =>
+                    setSourcesSidePanel({
+                      citations: c,
+                      showScore: true,
+                      params: m.retrieval?.params,
+                    })
+                  }
                 />
               );
             }
             // assistant-group
             const groupKey = group.messages.map((m) => m.id).join("|");
-            // 合并所有 round 的 citations 用于打开侧面板
-            const allCitations = (() => {
-              const map = new Map<string, Citation>();
-              for (const m of group.messages) {
-                for (const c of m.citations ?? []) map.set(c.chunk_id, c);
-              }
-              return Array.from(map.values());
-            })();
             return (
               <AssistantMessageGroup
                 key={groupKey}
                 messages={group.messages}
-                onOpenSourcesPanel={
-                  allCitations.length > 0
-                    ? setSourcesSideCitations
-                    : undefined
+                priorCitations={accumulatedCitations}
+                onOpenSourcesPanel={(c) =>
+                  setSourcesSidePanel({ citations: c, showScore: false })
+                }
+                onViewSearchResults={(c, params) =>
+                  setSourcesSidePanel({ citations: c, showScore: true, params })
                 }
               />
             );
@@ -1718,6 +1945,7 @@ export const KnowledgeChatPanel = ({
               onChange={setSettings}
               isStreaming={isStreaming}
               compact={compact}
+              modeLocked={messages.length > 0}
             />
             <div className="mt-2 flex items-end gap-2">
               <textarea
@@ -1769,10 +1997,12 @@ export const KnowledgeChatPanel = ({
           </div>
         </div>
         </div>
-        {sourcesSideCitations && sourcesSideCitations.length > 0 ? (
+        {sourcesSidePanel && sourcesSidePanel.citations.length > 0 ? (
           <ReferencesSidePanel
-            citations={sourcesSideCitations}
-            onClose={() => setSourcesSideCitations(null)}
+            citations={sourcesSidePanel.citations}
+            showScore={sourcesSidePanel.showScore}
+            params={sourcesSidePanel.params}
+            onClose={() => setSourcesSidePanel(null)}
           />
         ) : null}
       </div>
