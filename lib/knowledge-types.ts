@@ -100,3 +100,30 @@ export interface FilePreviewResponse {
   preview_url: string;
   expires_in: number;
 }
+
+export interface ChunkImagePreviewResponse {
+  chunk_id: string;
+  preview_url: string;
+  expires_in: number;
+  file_name?: string | null;
+}
+
+export interface ElementPosition {
+  element_id: string;
+  element_type: string;
+  page_position?: number[] | null;
+}
+
+/** MinerU pipeline bbox 坐标空间：各轴 0~coord_range，左上角原点 */
+export type ChunkCoordSpace = "mineru-normalized-1000";
+
+export interface ChunkPositionResponse {
+  chunk_id: string;
+  chunk_type?: string | null;
+  page_index?: number | null;
+  /** page_position 使用的坐标空间，默认 mineru-normalized-1000 */
+  coord_space?: ChunkCoordSpace | string | null;
+  /** 归一化坐标轴最大值，默认 1000 */
+  coord_range?: number | null;
+  elements: ElementPosition[];
+}

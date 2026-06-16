@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
-import { ArrowLeft, MessageSquareText, X } from "lucide-react";
+import { useParams, useSearchParams } from "next/navigation";
+import { ArrowLeft, MessageSquareText, Loader2, X } from "lucide-react";
 import { DocumentView } from "@/components/knowledge/DocumentView";
 import { KnowledgeChatPanel } from "@/components/knowledge/KnowledgeChatPanel";
 import {
@@ -11,22 +11,51 @@ import {
   getCachedKnowledgeFileView,
 } from "@/lib/knowledge-viewer";
 import { fetchFilePreview } from "@/lib/api/knowledge";
+import type { KnowledgeFile } from "@/lib/knowledge-types";
 
 export default function KnowledgeFilePage() {
   const params = useParams<{ fileId: string }>();
+  const searchParams = useSearchParams();
   const fileId = Array.isArray(params?.fileId) ? params.fileId[0] : params?.fileId;
+  const highlightChunkId = searchParams?.get("chunkId") || null;
   const [cachedFile, setCachedFile] = useState<CachedKnowledgeFileView | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
+  const [loadingFromApi, setLoadingFromApi] = useState(false);
 
   useEffect(() => {
     if (!fileId) return;
-    setCachedFile(getCachedKnowledgeFileView(fileId));
+    const cached = getCachedKnowledgeFileView(fileId);
+    if (cached) {
+      setCachedFile(cached);
+    } else {
+      // 缓存未命中（如从 CitationChip 直接打开），从 API 获取文件信息
+      setLoadingFromApi(true);
+      fetchFilePreview(fileId)
+        .then((data) => {
+          const file: KnowledgeFile = {
+            file_id: data.file_id,
+            file_name: data.file_name,
+            mime_type: data.mime_type ?? null,
+            file_size: data.file_size ?? null,
+            knowledge_base_id: undefined,
+          };
+          setCachedFile({ file });
+          setPreviewUrl(data.preview_url);
+        })
+        .catch((err) => {
+          setPreviewError(
+            err instanceof Error ? err.message : "获取文件信息失败"
+          );
+        })
+        .finally(() => setLoadingFromApi(false));
+    }
   }, [fileId]);
 
+  // 有缓存时，单独获取 preview URL
   useEffect(() => {
-    if (!fileId) return;
+    if (!fileId || !cachedFile || previewUrl) return;
     let cancelled = false;
 
     fetchFilePreview(fileId)
@@ -44,13 +73,13 @@ export default function KnowledgeFilePage() {
     return () => {
       cancelled = true;
     };
-  }, [fileId]);
+  }, [fileId, cachedFile, previewUrl]);
 
   if (!fileId) {
     return null;
   }
 
-  if (!cachedFile) {
+  if (!cachedFile && !loadingFromApi) {
     return (
       <div className="flex h-screen items-center justify-center bg-white">
         <div className="max-w-md rounded-2xl border border-gray-200 bg-white p-8 text-center shadow-sm">
@@ -70,7 +99,16 @@ export default function KnowledgeFilePage() {
     );
   }
 
-  const chatDisabled = cachedFile.file.index_status !== "success";
+  if (loadingFromApi) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-white">
+        <Loader2 className="h-5 w-5 animate-spin text-muted" />
+        <span className="ml-2 text-sm text-muted">正在加载文件信息...</span>
+      </div>
+    );
+  }
+
+  const chatDisabled = cachedFile?.file.index_status !== "success";
 
   return (
     <div className="flex h-screen overflow-hidden bg-white">
@@ -104,10 +142,11 @@ export default function KnowledgeFilePage() {
 
         <div className="min-h-0 flex-1">
           <DocumentView
-            file={cachedFile.file}
-            kbName={cachedFile.knowledgeBaseName || "当前知识库"}
+            file={cachedFile!.file}
+            kbName={cachedFile?.knowledgeBaseName || "当前知识库"}
             previewUrl={previewUrl ?? ""}
             isLoadingPreview={!previewUrl && !previewError}
+            highlightChunkId={highlightChunkId}
           />
         </div>
       </div>
@@ -126,9 +165,9 @@ export default function KnowledgeFilePage() {
           </div>
           <div className="min-h-0 flex-1">
             <KnowledgeChatPanel
-              knowledgeBaseId={cachedFile.file.knowledge_base_id ?? null}
-              knowledgeBaseName={cachedFile.knowledgeBaseName}
-              selectedFolderName={cachedFile.file.file_name}
+              knowledgeBaseId={cachedFile?.file.knowledge_base_id ?? null}
+              knowledgeBaseName={cachedFile?.knowledgeBaseName}
+              selectedFolderName={cachedFile?.file.file_name}
               disabled={chatDisabled}
               disabledReason={
                 chatDisabled

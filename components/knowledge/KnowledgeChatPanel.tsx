@@ -1,6 +1,14 @@
 "use client";
 
-import { type ComponentType, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ComponentType,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   AlignJustify,
   AlertTriangle,
@@ -10,9 +18,11 @@ import {
   ChevronRight,
   ChevronUp,
   CircleStop,
+  Clock,
   Copy,
   Cpu,
   Database,
+  Eye,
   FileText,
   Folder,
   Image as ImageIcon,
@@ -33,8 +43,17 @@ import {
   X,
 } from "lucide-react";
 import { useKnowledgeChat } from "@/lib/hooks/useKnowledgeChat";
+import {
+  useChatModels,
+  type ChatModelItem,
+} from "@/lib/api/chat-models";
 import { MarkdownAnswer } from "@/components/knowledge/MarkdownAnswer";
-import { stripHtmlToPlain } from "@/components/knowledge/citationPreviewUtils";
+import { CitationPreviewMarkdown } from "@/components/knowledge/CitationPreviewMarkdown";
+import { ImagePreviewPopover } from "@/components/knowledge/ImagePreviewPopover";
+import {
+  normalizeCitationAnnotation,
+  stripHtmlToPlain,
+} from "@/components/knowledge/citationPreviewUtils";
 import type {
   ChatPhase,
   ChatSessionInfo,
@@ -48,6 +67,15 @@ import { cn, formatDate } from "@/lib/utils";
 interface KnowledgeChatPanelProps {
   knowledgeBaseId: string | null;
   knowledgeBaseName?: string;
+  /**
+   * 用户在 FolderTree 上选中的文件夹 ID（v0.8.0 文件夹问答）。
+   * 传入后：
+   *   - 「新建会话」按钮会自动用此 folder 创建 folder scope session；
+   *   - active session 的 folder_id 会与之比对，决定 banner 文案。
+   * 不传 / null → 走 KB scope（与 v0.7.0 行为一致）。
+   */
+  selectedFolderId?: string | null;
+  /** 文件夹的可读名称，仅用于 banner / 按钮文案 */
   selectedFolderName?: string | null;
   /** 仍然兼容外层禁用 */
   disabled?: boolean;
@@ -68,18 +96,22 @@ const STARTER_PROMPTS = [
   "从当前资料里提炼重点和潜在风险",
 ];
 
-const MODEL_PRESETS: Array<{ value: string; label: string; hint: string }> = [
-  { value: "fast", label: "Fast", hint: "默认 / 性价比" },
-  { value: "smart", label: "Smart", hint: "强推理" },
-  { value: "chat_reasoning", label: "Reasoning", hint: "思考链特化" },
-];
-
 const SESSION_DEFAULT_VISIBLE = 5;
 
 interface ChatSettings {
   agentMode: boolean;
   enableThinking: boolean;
-  modelPreset: string;
+  enableMultimodal: boolean;
+  /**
+   * 用户从 `/api/chat/models` 选定的 LiteLLM 模型字符串（如 `openai/gpt-4o-mini`）。
+   *
+   * - 空字符串 / null：表示用户没有显式选择，让后端走 session 默认（最终落到
+   *   `model_preset`，也就是后台 agent 用的那一档）。
+   * - 非空：每轮 chat WS 请求会带上 `model` 字段，覆盖 session 已存的偏好。
+   *
+   * 注意：模型 preset 不再出现在前端，是后端抽取 / 起标题 / 摘要等场景的事。
+   */
+  model: string;
   maxToolRounds: number;
 }
 
@@ -150,8 +182,8 @@ function ThinkingBlock({
         )}
       </button>
       {open ? (
-        <div className="border-t border-amber-200/70 px-3 py-2 text-xs leading-6 text-amber-900 whitespace-pre-wrap">
-          {thinking}
+        <div className="border-t border-amber-200/70 px-3 py-2 text-xs leading-6 text-amber-900">
+          <CitationPreviewMarkdown content={thinking} />
         </div>
       ) : null}
     </div>
@@ -170,6 +202,7 @@ function ToolCallTimeline({ toolCalls, onViewSearchResults }: { toolCalls: ToolC
 }
 
 const SEARCH_TOOL_NAMES = new Set(["search_knowledge_base"]);
+const IMAGE_TOOL_NAMES = new Set(["read_image_chunks"]);
 
 const RETRIEVAL_STAGE_LABEL: Record<string, string> = {
   planning: "大模型规划检索路线…",
@@ -177,11 +210,112 @@ const RETRIEVAL_STAGE_LABEL: Record<string, string> = {
   reranking: "精排结果中…",
 };
 
+const IMAGE_TOOL_STAGE_LABEL: Record<string, string> = {
+  loading_images: "加载图片中…",
+  calling_vlm: "调用多模态大模型理解图片…",
+};
+
+function formatExecutionModelLabel(model?: string | null): string {
+  if (!model) return "";
+  return model
+    .replace(/^litellm_proxy\//, "")
+    .replace(/^dashscope\//, "");
+}
+
+function toolResultCountLabel(count: number | undefined): string {
+  const n = count ?? 0;
+  return `· ${n} 条结果`;
+}
+
+/**
+ * 从工具结果文本中提取图片 URL 和对应 caption
+ * 匹配模式: `image_url: <url>` + 后续 `caption: <text>`
+ */
+function extractToolResultImages(text: string): Array<{ url: string; caption: string }> {
+  if (!text) return [];
+  const results: Array<{ url: string; caption: string }> = [];
+  // 匹配 image_url: <url>（支持 http(s) 和 presigned URL）
+  const urlRe = /image_url:\s*(https?:\/\/[^\s\n]+)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = urlRe.exec(text)) !== null) {
+    const url = m[1];
+    // 向后找 caption
+    const rest = text.slice(m.index + m[0].length);
+    const captionMatch = rest.match(/^\s*\n?caption:\s*(.+?)(?:\n|$)/);
+    const caption = captionMatch ? captionMatch[1].trim() : "";
+    results.push({ url, caption });
+  }
+  return results;
+}
+
+/** 渲染工具结果中的图片（presigned URL） */
+function ToolResultImageGallery({ text }: { text: string }) {
+  const images = useMemo(() => extractToolResultImages(text), [text]);
+  if (images.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-2">
+      {images.map((img, i) => (
+        <div key={i} className="flex flex-col gap-1">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={img.url}
+            alt={img.caption || `图片 ${i + 1}`}
+            className="max-h-60 w-auto max-w-full rounded-md border border-gray-200 object-contain"
+            loading="lazy"
+          />
+          {img.caption ? (
+            <span className="text-[10px] text-gray-500">{img.caption}</span>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** 工具展开区统一高度；内容超出时在框内纵向滚动，保证完整可读 */
+const TOOL_CALL_DETAIL_BOX_CLASS =
+  "h-40 overflow-y-auto overflow-x-auto rounded-lg bg-white/70 p-2 text-[11px] leading-5 whitespace-pre-wrap break-words";
+
+function ToolCallDetailBlock({
+  label,
+  tone,
+  children,
+}: {
+  label: string;
+  tone: "blue" | "emerald" | "violet";
+  children: ReactNode;
+}) {
+  const labelTone =
+    tone === "emerald"
+      ? "text-emerald-800/70"
+      : tone === "violet"
+        ? "text-violet-800/70"
+        : "text-blue-800/70";
+  const textTone =
+    tone === "emerald"
+      ? "text-emerald-900"
+      : tone === "violet"
+        ? "text-violet-900"
+        : "text-blue-900";
+  return (
+    <div>
+      <div className={cn("mb-1 text-[11px]", labelTone)}>{label}</div>
+      <div className={cn(TOOL_CALL_DETAIL_BOX_CLASS, textTone)}>{children}</div>
+    </div>
+  );
+}
+
 function ToolCallRow({ tc, onViewSearchResults }: { tc: ToolCallRecord; onViewSearchResults?: (citations: Citation[], params?: Record<string, unknown>) => void }) {
   const [open, setOpen] = useState(false);
   const inflight = Boolean(tc.inflight);
   const isSearchTool = SEARCH_TOOL_NAMES.has(tc.name);
+  const isImageTool = IMAGE_TOOL_NAMES.has(tc.name);
   const hasRetrievalProgress = isSearchTool && tc.retrieval_progress;
+  const imageStageLabel =
+    isImageTool && tc.execution_stage
+      ? IMAGE_TOOL_STAGE_LABEL[tc.execution_stage] ?? "处理图片中…"
+      : null;
+  const executionModelLabel = formatExecutionModelLabel(tc.execution_model);
 
   const hasArgs =
     tc.arguments && Object.keys(tc.arguments).length > 0;
@@ -209,22 +343,32 @@ function ToolCallRow({ tc, onViewSearchResults }: { tc: ToolCallRecord; onViewSe
       const hasChunks = tc.retrieval_chunks && tc.retrieval_chunks.length > 0;
       return (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 px-3 py-2 text-xs">
-          <div className="flex items-center justify-between gap-2">
+          {/* 整行可点击展开/折叠（"查看"按钮除外） */}
+          <div
+            className="flex cursor-pointer items-center justify-between gap-2"
+            onClick={() => setOpen((v) => !v)}
+          >
             <span className="flex min-w-0 items-center gap-1.5 text-emerald-900">
               <Database className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
               <span className="truncate font-medium">search_knowledge_base</span>
               <span className="shrink-0 text-emerald-700/80">
-                · 新增 {tc.items_added} 段
+                {toolResultCountLabel(tc.items_added)}
                 {tc.time_ms != null
                   ? ` · ${((tc.time_ms ?? 0) / 1000).toFixed(1)}s`
                   : ""}
               </span>
+              {executionModelLabel ? (
+                <span className="shrink-0 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-700">
+                  {executionModelLabel}
+                </span>
+              ) : null}
             </span>
             <div className="flex items-center gap-1">
               {hasChunks && onViewSearchResults ? (
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     onViewSearchResults(
                       retrievalChunksToCitations(tc.retrieval_chunks),
                       tc.retrieval_params,
@@ -235,27 +379,25 @@ function ToolCallRow({ tc, onViewSearchResults }: { tc: ToolCallRecord; onViewSe
                   查看
                 </button>
               ) : null}
-              <button
-                type="button"
-                onClick={() => setOpen((v) => !v)}
-                className="rounded-md p-0.5 text-emerald-600 transition-colors hover:bg-emerald-100"
-              >
+              <span className="rounded-md p-0.5 text-emerald-600">
                 {open ? (
                   <ChevronUp className="h-3 w-3" />
                 ) : (
                   <ChevronDown className="h-3 w-3" />
                 )}
-              </button>
+              </span>
             </div>
           </div>
           {open ? (
             <div className="mt-2 space-y-2">
-              <div>
-                <div className="mb-1 text-[11px] text-emerald-800/70">查询</div>
-                <pre className="whitespace-pre-wrap break-all rounded-lg bg-white/70 p-2 text-[11px] leading-5 text-emerald-900">
-                  {argsPreview}
-                </pre>
-              </div>
+              <ToolCallDetailBlock label="查询" tone="emerald">
+                {argsPreview}
+              </ToolCallDetailBlock>
+              {tc.result_brief ? (
+                <ToolCallDetailBlock label="结果" tone="emerald">
+                  {tc.result_brief}
+                </ToolCallDetailBlock>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -272,6 +414,86 @@ function ToolCallRow({ tc, onViewSearchResults }: { tc: ToolCallRecord; onViewSe
             · {stageLabel ?? "调用中…"}
           </span>
         </div>
+      </div>
+    );
+  }
+
+  // 图片理解工具：紫色主题卡片
+  if (isImageTool) {
+    const statusText = inflight
+      ? imageStageLabel ?? "调用中…"
+      : toolResultCountLabel(tc.items_added);
+
+    return (
+      <div
+        className={cn(
+          "rounded-xl border px-3 py-2 text-xs transition-colors",
+          inflight
+            ? "border-violet-300 bg-violet-50/70 ring-1 ring-violet-200/70"
+            : "border-violet-200 bg-violet-50/40",
+        )}
+      >
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex w-full items-center justify-between gap-2 text-violet-900"
+        >
+          <span className="flex min-w-0 items-center gap-1.5">
+            {inflight ? (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-violet-600" />
+            ) : (
+              <ImageIcon className="h-3.5 w-3.5 shrink-0 text-violet-600" />
+            )}
+            <span className="truncate font-medium">read_image_chunks</span>
+            <span className="shrink-0 text-violet-700/80">· {statusText}</span>
+            {executionModelLabel ? (
+              <span className="shrink-0 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] text-violet-700">
+                {executionModelLabel}
+              </span>
+            ) : null}
+            {!inflight && tc.time_ms != null ? (
+              <span className="shrink-0 text-violet-700/70">
+                · {((tc.time_ms ?? 0) / 1000).toFixed(1)}s
+              </span>
+            ) : null}
+          </span>
+          {open ? (
+            <ChevronUp className="h-3.5 w-3.5 shrink-0" />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+          )}
+        </button>
+        {open ? (
+          <div className="mt-2 space-y-2">
+            <ToolCallDetailBlock label="参数" tone="violet">
+              {argsPreview}
+            </ToolCallDetailBlock>
+            {inflight ? (
+              <ToolCallDetailBlock label="结果" tone="violet">
+                <span className="inline-flex flex-col gap-1">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    {imageStageLabel ?? "正在处理图片…"}
+                  </span>
+                  {executionModelLabel ? (
+                    <span className="text-[10px] text-violet-600/80">
+                      多模态模型：{executionModelLabel}
+                    </span>
+                  ) : null}
+                </span>
+              </ToolCallDetailBlock>
+            ) : tc.result_brief ? (
+              <ToolCallDetailBlock label="结果" tone="violet">
+                <ToolResultImageGallery text={tc.result_brief} />
+                {tc.result_brief}
+              </ToolCallDetailBlock>
+            ) : (
+              <ToolCallDetailBlock label="结果" tone="violet">
+                <span className="text-violet-700/70">（工具未返回结果）</span>
+              </ToolCallDetailBlock>
+            )}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -301,9 +523,7 @@ function ToolCallRow({ tc, onViewSearchResults }: { tc: ToolCallRecord; onViewSe
             {tc.name || "tool_call"}
           </span>
           <span className="shrink-0 text-blue-700/80">
-            {inflight
-              ? "· 调用中…"
-              : `· 新增 ${tc.items_added} 段`}
+            {inflight ? "· 调用中…" : toolResultCountLabel(tc.items_added)}
           </span>
         </span>
         {open ? (
@@ -314,30 +534,24 @@ function ToolCallRow({ tc, onViewSearchResults }: { tc: ToolCallRecord; onViewSe
       </button>
       {open ? (
         <div className="mt-2 space-y-2">
-          <div>
-            <div className="mb-1 text-[11px] text-blue-800/70">参数</div>
-            <pre className="whitespace-pre-wrap break-all rounded-lg bg-white/70 p-2 text-[11px] leading-5 text-blue-900">
-              {argsPreview}
-            </pre>
-          </div>
+          <ToolCallDetailBlock label="参数" tone="blue">
+            {argsPreview}
+          </ToolCallDetailBlock>
           {inflight ? (
-            <div className="flex items-center gap-1.5 rounded-lg bg-white/70 px-2 py-1.5 text-[11px] text-blue-700">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              正在调用工具，结果稍后返回…
-            </div>
+            <ToolCallDetailBlock label="结果" tone="blue">
+              <span className="inline-flex items-center gap-1.5 text-blue-700">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                正在调用工具，结果稍后返回…
+              </span>
+            </ToolCallDetailBlock>
           ) : tc.result_brief ? (
-            <div>
-              <div className="mb-1 text-[11px] text-blue-800/70">
-                结果摘要
-              </div>
-              <div className="rounded-lg bg-white/70 p-2 text-[11px] leading-5 text-blue-900 whitespace-pre-wrap break-all">
-                {tc.result_brief}
-              </div>
-            </div>
+            <ToolCallDetailBlock label="结果" tone="blue">
+              {tc.result_brief}
+            </ToolCallDetailBlock>
           ) : (
-            <div className="text-[11px] text-blue-700/70">
-              （工具未返回摘要）
-            </div>
+            <ToolCallDetailBlock label="结果" tone="blue">
+              <span className="text-blue-700/70">（工具未返回结果）</span>
+            </ToolCallDetailBlock>
           )}
         </div>
       ) : null}
@@ -403,6 +617,8 @@ function retrievalChunksToCitations(
     file_name: c.file_name ?? null,
     preview: c.preview ?? null,
     alias: c.alias ?? null,
+    image_file_path: c.image_file_path ?? null,
+    bucket_name: c.bucket_name ?? null,
   }));
 }
 
@@ -592,21 +808,78 @@ function previewSnippet(preview: string | null | undefined): string {
 }
 
 /**
- * 图片型引用的预览占位（后续替换为缩略图 / 图片预览）
- * TODO: 接入图片预览逻辑
+ * 从 preview 文本中提取图片标题（支持中英文格式）
  */
-function ImageChunkPreview({ preview }: { preview?: string | null }) {
-  const caption = preview
-    ? (() => {
-        const m = preview.match(/image_caption\s*:\s*(.+?)(?:\n|image_|$)/i);
-        return m ? m[1].trim() : null;
-      })()
-    : null;
+function extractImageCaption(preview: string | null | undefined): string | null {
+  if (!preview) return null;
+  // 英文格式: image_caption: xxx
+  const en = preview.match(/image_caption\s*:\s*(.+?)(?:\n|image_|$)/i);
+  if (en) {
+    const v = normalizeCitationAnnotation(en[1]);
+    if (v) return v;
+  }
+  // 中文格式: 标题：xxx
+  const cn = preview.match(/标题[：:]\s*(.+?)(?:\n|$)/);
+  if (cn) {
+    const v = normalizeCitationAnnotation(cn[1]);
+    if (v) return v;
+  }
+  return null;
+}
+
+/**
+ * 从 preview 文本中提取图片脚注（支持中英文格式）
+ */
+function extractImageFootnote(preview: string | null | undefined): string | null {
+  if (!preview) return null;
+  // 英文格式: image_footnote: xxx
+  const en = preview.match(/image_footnote\s*:\s*(.+?)(?:\n|image_|$)/i);
+  if (en) {
+    const v = normalizeCitationAnnotation(en[1]);
+    if (v) return v;
+  }
+  // 中文格式: 脚注：xxx
+  const cn = preview.match(/脚注[：:]\s*(.+?)(?:\n|$)/);
+  if (cn) {
+    const v = normalizeCitationAnnotation(cn[1]);
+    if (v) return v;
+  }
+  return null;
+}
+
+/**
+ * 图片型引用的预览：显示标题文字 + 预览按钮
+ * 点击预览按钮弹出图片预览弹窗（按需加载图片 URL）
+ */
+function ImageChunkPreview({
+  chunkId,
+  preview,
+  fileName,
+  pageIndex,
+  sectionTitle,
+}: {
+  chunkId: string;
+  preview?: string | null;
+  fileName?: string | null;
+  pageIndex?: number | null;
+  sectionTitle?: string | null;
+}) {
+  const caption = extractImageCaption(preview);
+  const footnote = extractImageFootnote(preview);
 
   return (
     <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
       <ImageIcon className="h-3 w-3 shrink-0 text-blue-600" />
-      <span className="line-clamp-2">{caption || "（图片引用）"}</span>
+      <span className="line-clamp-1 flex-1">{caption || "（图片引用）"}</span>
+      <ImagePreviewPopover
+        chunkId={chunkId}
+        caption={caption}
+        footnote={footnote}
+        fileName={fileName}
+        pageIndex={pageIndex}
+        sectionTitle={sectionTitle}
+        triggerClassName="shrink-0"
+      />
     </div>
   );
 }
@@ -690,47 +963,94 @@ function DocGroup({
                 : null;
             const isImage = c.chunk_type === "image";
 
+            // 全部来源模式（非搜索结果）：点击跳转到文件中的位置
+            const canNavigate = !showScore && c.file_id;
+
+            const handleCitationClick = () => {
+              if (!canNavigate || !c.file_id) return;
+              const params = new URLSearchParams();
+              params.set("chunkId", c.chunk_id);
+              if (c.chunk_type) params.set("type", c.chunk_type);
+              window.open(
+                `/knowledge/file/${encodeURIComponent(c.file_id)}?${params.toString()}`,
+                "_blank",
+                "noopener,noreferrer"
+              );
+            };
+
             return (
               <div
                 key={`${c.chunk_id}-${c.globalIndex}`}
                 className="px-4 py-2.5"
               >
-                {/* 头部：序号 + 图标 + 章节 + 页码 */}
-                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary">
-                    {c.globalIndex}
-                  </span>
-                  <Icon className="h-3 w-3 shrink-0 text-blue-700" />
-                  {c.section_title ? (
-                    <span className="truncate font-medium text-foreground">
-                      {c.section_title}
+                {/* 头部：点击后在原文中定位（预览区不触发跳转） */}
+                {canNavigate ? (
+                  <button
+                    type="button"
+                    onClick={handleCitationClick}
+                    className="flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-[11px] text-muted-foreground transition-colors hover:bg-gray-50"
+                  >
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary">
+                      {c.globalIndex}
                     </span>
-                  ) : null}
-                  {pageText ? <span>{pageText}</span> : null}
-                  {showScore && typeof c.score === "number" ? (
-                    <span className="ml-auto rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
-                      {(c.score * 100).toFixed(1)}%
-                    </span>
-                  ) : null}
-                </div>
-
-                {/* 预览：图片走单独入口，其余显示 2 行纯文本 */}
-                {isImage ? (
-                  <ImageChunkPreview preview={c.preview} />
+                    <Icon className="h-3 w-3 shrink-0 text-blue-700" />
+                    {c.section_title ? (
+                      <span className="truncate font-medium text-foreground">
+                        {c.section_title}
+                      </span>
+                    ) : null}
+                    {pageText ? <span>{pageText}</span> : null}
+                    <span className="ml-auto text-[10px] text-primary/60">定位</span>
+                  </button>
                 ) : (
-                  (() => {
-                    const snippet = previewSnippet(c.preview);
-                    return snippet ? (
-                      <div className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
-                        {snippet}
-                      </div>
-                    ) : (
-                      <div className="mt-1 text-[11px] text-muted-foreground/60">
-                        （无预览文本）
-                      </div>
-                    );
-                  })()
+                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary">
+                      {c.globalIndex}
+                    </span>
+                    <Icon className="h-3 w-3 shrink-0 text-blue-700" />
+                    {c.section_title ? (
+                      <span className="truncate font-medium text-foreground">
+                        {c.section_title}
+                      </span>
+                    ) : null}
+                    {pageText ? <span>{pageText}</span> : null}
+                    {showScore && typeof c.score === "number" ? (
+                      <span className="ml-auto rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
+                        {(c.score * 100).toFixed(1)}%
+                      </span>
+                    ) : null}
+                  </div>
                 )}
+
+                {/* 预览区：仅展示，不触发原文跳转 */}
+                <div
+                  className="mt-1"
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  {isImage ? (
+                    <ImageChunkPreview
+                      chunkId={c.chunk_id}
+                      preview={c.preview}
+                      fileName={c.file_name}
+                      pageIndex={c.page_index}
+                      sectionTitle={c.section_title}
+                    />
+                  ) : (
+                    (() => {
+                      const snippet = previewSnippet(c.preview);
+                      return snippet ? (
+                        <div className="line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
+                          {snippet}
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-muted-foreground/60">
+                          （无预览文本）
+                        </div>
+                      );
+                    })()
+                  )}
+                </div>
               </div>
             );
           })}
@@ -869,6 +1189,16 @@ function UserMessageBubble({
   message: UiChatMessage;
   onViewRetrievalChunks?: (citations: Citation[]) => void;
 }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    if (!message.content) return;
+    void navigator.clipboard.writeText(message.content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [message.content]);
+
   return (
     <div className="animate-fadeIn">
       <div className="mb-1.5">
@@ -879,6 +1209,23 @@ function UserMessageBubble({
       <div className="rounded-2xl bg-primary/5 px-4 py-3 text-sm leading-7 text-foreground">
         <div className="whitespace-pre-wrap break-words">{message.content}</div>
       </div>
+      {message.content ? (
+        <div className="mt-2 flex items-center gap-1">
+          <button
+            type="button"
+            onClick={handleCopy}
+            className={cn(
+              "flex h-7 items-center gap-1 rounded-lg px-2 text-[11px] transition-colors",
+              copied
+                ? "bg-emerald-50 text-emerald-600"
+                : "text-muted-foreground hover:bg-gray-100 hover:text-foreground",
+            )}
+            title="复制问题"
+          >
+            <Copy className="h-3 w-3" />
+          </button>
+        </div>
+      ) : null}
       <RetrievalChip
         retrieval={message.retrieval}
         onViewChunks={onViewRetrievalChunks}
@@ -1156,12 +1503,22 @@ function SessionRow({
       >
         <span
           className={cn(
-            "truncate text-[12.5px] leading-5",
+            "flex items-center gap-1 truncate text-[12.5px] leading-5",
             active ? "text-primary" : "text-foreground"
           )}
-          title={session.title || "新会话"}
+          title={
+            session.folder_id
+              ? `${session.title || "新会话"} · folder scope`
+              : session.title || "新会话"
+          }
         >
-          {session.title || "新会话"}
+          {session.folder_id ? (
+            <Folder
+              className="h-3 w-3 shrink-0 text-emerald-500"
+              aria-label="folder scope"
+            />
+          ) : null}
+          <span className="truncate">{session.title || "新会话"}</span>
         </span>
         <span className="mt-0.5 truncate text-[10.5px] leading-4 text-muted">
           {session.message_count} 条
@@ -1263,11 +1620,14 @@ function SessionPopover(props: SessionListProps & { onNew: () => void }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex h-7 items-center gap-1 rounded-full border border-gray-200 px-2 text-[11px] text-foreground hover:border-primary"
+        className={cn(
+          "flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 text-foreground transition-colors hover:border-primary",
+          open && "border-primary bg-primary/5 text-primary"
+        )}
+        title="历史会话"
+        aria-label="历史会话"
       >
-        <MessageSquare className="h-3 w-3" />
-        历史
-        <ChevronDown className="h-3 w-3" />
+        <Clock className="h-3.5 w-3.5" />
       </button>
       {open ? (
         <>
@@ -1281,10 +1641,11 @@ function SessionPopover(props: SessionListProps & { onNew: () => void }) {
                   props.onNew();
                   setOpen(false);
                 }}
-                className="flex h-6 items-center gap-1 rounded-full border border-gray-200 px-2 text-[11px] text-foreground hover:border-primary"
+                className="flex h-6 w-6 items-center justify-center rounded-full border border-gray-200 text-foreground hover:border-primary"
+                title="新建会话"
+                aria-label="新建会话"
               >
                 <Plus className="h-3 w-3" />
-                新建
               </button>
             </div>
             <div className="max-h-72 overflow-y-auto py-2">
@@ -1307,28 +1668,73 @@ function SessionPopover(props: SessionListProps & { onNew: () => void }) {
 }
 
 // ============================================================
-// 顶部会话栏（侧边栏头部）
+// 会话图标栏 + 可折叠历史面板（默认隐藏）
 // ============================================================
 
-function SessionSidebar({
+function SessionIconRail({
+  historyOpen,
+  onToggleHistory,
+  onNew,
+}: {
+  historyOpen: boolean;
+  onToggleHistory: () => void;
+  onNew: () => void;
+}) {
+  return (
+    <div className="hidden w-11 shrink-0 flex-col items-center gap-2 border-r border-gray-100 bg-gray-50/40 py-3 lg:flex">
+      <button
+        type="button"
+        onClick={onNew}
+        className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-white hover:text-primary"
+        title="新建会话"
+        aria-label="新建会话"
+      >
+        <MessageSquarePlus className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        onClick={onToggleHistory}
+        className={cn(
+          "flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
+          historyOpen
+            ? "bg-primary/10 text-primary"
+            : "text-muted hover:bg-white hover:text-primary"
+        )}
+        title="历史会话"
+        aria-label="历史会话"
+      >
+        <Clock className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+function SessionDrawer({
+  scopeLabel,
   sessions,
   activeSessionId,
+  onClose,
   onSelect,
-  onNew,
   onRename,
   onDelete,
-}: SessionListProps & { onNew: () => void }) {
+}: SessionListProps & {
+  scopeLabel?: string;
+  onClose: () => void;
+}) {
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r border-gray-100 bg-gray-50/40 lg:flex">
       <div className="flex items-center justify-between px-4 py-3">
-        <span className="text-xs font-medium text-foreground">历史会话</span>
+        <span className="text-xs font-medium text-foreground">
+          {scopeLabel ?? "历史会话"}
+        </span>
         <button
           type="button"
-          onClick={onNew}
-          className="flex h-7 items-center gap-1 rounded-full border border-gray-200 bg-white px-2 text-[11px] text-foreground transition-colors hover:border-primary hover:text-primary"
+          onClick={onClose}
+          className="flex h-6 w-6 items-center justify-center rounded-md text-muted hover:bg-gray-100 hover:text-foreground"
+          title="关闭"
+          aria-label="关闭历史会话"
         >
-          <MessageSquarePlus className="h-3 w-3" />
-          新建
+          <X className="h-3.5 w-3.5" />
         </button>
       </div>
       <div className="flex-1 overflow-y-auto pb-3">
@@ -1396,27 +1802,28 @@ function ModeToggle({
 }
 
 function ThinkingChip({
-  enabled,
-  onChange,
-  disabled,
+  supportsThinking,
 }: {
-  enabled: boolean;
-  onChange: (next: boolean) => void;
-  disabled?: boolean;
+  /** 当前模型是否支持思考链；false 时 chip 灰色禁用，true 时绿色自动开启不可关闭 */
+  supportsThinking?: boolean;
 }) {
+  const modelSupports = supportsThinking === true;
+
   return (
     <button
       type="button"
-      onClick={() => onChange(!enabled)}
-      disabled={disabled}
+      disabled
       className={cn(
         "flex h-6 items-center gap-1 rounded-full border px-2.5 text-[11px] transition-colors",
-        enabled
-          ? "border-amber-300 bg-amber-50 text-amber-700"
-          : "border-gray-200 bg-white text-muted hover:text-foreground",
-        disabled && "cursor-not-allowed opacity-60"
+        modelSupports
+          ? "border-emerald-300 bg-emerald-50 text-emerald-700 cursor-default"
+          : "border-gray-200 bg-white text-muted cursor-not-allowed opacity-60"
       )}
-      title={enabled ? "思考链已开启（Reasoning 模型可见思考过程）" : "开启思考链"}
+      title={
+        modelSupports
+          ? "思考链已开启（当前模型支持思考）"
+          : "当前模型不支持思考链"
+      }
     >
       <Brain className="h-3 w-3" />
       思考
@@ -1424,18 +1831,80 @@ function ThinkingChip({
   );
 }
 
+function MultimodalChip({
+  supportsMultimodal,
+}: {
+  /** 当前模型是否支持多模态读图；false 时 chip 灰色禁用，true 时绿色自动开启不可关闭 */
+  supportsMultimodal?: boolean;
+}) {
+  const modelSupports = supportsMultimodal === true;
+
+  return (
+    <button
+      type="button"
+      disabled
+      className={cn(
+        "flex h-6 items-center gap-1 rounded-full border px-2.5 text-[11px] transition-colors",
+        modelSupports
+          ? "border-emerald-300 bg-emerald-50 text-emerald-700 cursor-default"
+          : "border-gray-200 bg-white text-muted cursor-not-allowed opacity-60"
+      )}
+      title={
+        modelSupports
+          ? "多模态已开启（当前模型支持图片理解）"
+          : "当前模型不支持多模态"
+      }
+    >
+      <Eye className="h-3 w-3" />
+      多模态
+    </button>
+  );
+}
+
+/**
+ * 模型选择器 chip
+ *
+ * 交互合约
+ * --------
+ * - 模型清单由调用方通过 props 传入（panel 层 ``useChatModels`` 已拉好），
+ *   chip 只负责渲染下拉 + 触发 onChange，不再自己发请求。
+ * - 扁平列表：按后端给出的顺序逐条列出，不分组、不显示 provider header，
+ *   不展示原始 LiteLLM id，**只显示 ``label``**。
+ * - 默认选哪个由 panel 在 settings 同步效果里决定（已对话 → 走 session
+ *   持久化的 model；新会话 → 列表第一个）。
+ *
+ * Edge case
+ * ---------
+ * - 当 ``value`` 在当前列表里找不到（老会话用了已下线的模型）时，按钮文案
+ *   退化为 raw value 字符串，下拉里没有任何条目高亮——提示用户重新选一个。
+ * - 列表为空（模型清单尚未加载 / proxy 空配置）时下拉里出现一行说明文案，
+ *   而不是渲染零项给用户看。
+ */
 function ModelChip({
   value,
+  models,
   onChange,
   disabled,
+  errored,
 }: {
+  /** 当前已选模型 ID（LiteLLM 字符串） */
   value: string;
+  /** 由父组件 ``useChatModels`` 提供 */
+  models: ChatModelItem[];
   onChange: (next: string) => void;
   disabled?: boolean;
+  /** 模型清单接口拉取失败时显示一行温和提示 */
+  errored?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const current =
-    MODEL_PRESETS.find((p) => p.value === value) ?? MODEL_PRESETS[0];
+
+  const display = useMemo(() => {
+    if (!value) return { label: "选择模型", title: "请选择一个模型" };
+    const hit = models.find((m) => m.id === value);
+    if (hit) return { label: hit.label, title: hit.id };
+    return { label: value, title: value };
+  }, [value, models]);
+
   return (
     <div className="relative">
       <button
@@ -1446,40 +1915,52 @@ function ModelChip({
           "flex h-6 items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 text-[11px] text-foreground transition-colors hover:border-primary",
           disabled && "cursor-not-allowed opacity-60"
         )}
-        title={`模型：${current.label} · ${current.hint}`}
+        title={display.title}
       >
         <Cpu className="h-3 w-3" />
-        {current.label}
+        <span className="max-w-[160px] truncate">{display.label}</span>
         <ChevronDown className="h-3 w-3" />
       </button>
       {open ? (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full left-0 z-40 mb-1 w-44 overflow-hidden rounded-xl border border-gray-200 bg-white p-1 shadow-xl">
-            {MODEL_PRESETS.map((p) => (
-              <button
-                key={p.value}
-                type="button"
-                onClick={() => {
-                  onChange(p.value);
-                  setOpen(false);
-                }}
-                className={cn(
-                  "flex w-full flex-col items-start rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-gray-50",
-                  p.value === value && "bg-primary/5"
-                )}
-              >
-                <span
+          <div className="absolute bottom-full left-0 z-40 mb-1 max-h-80 w-56 overflow-y-auto rounded-xl border border-gray-200 bg-white p-1 shadow-xl">
+            {errored ? (
+              <div className="px-2.5 py-1.5 text-[10px] text-amber-600">
+                模型清单接口不可达，使用离线兜底列表
+              </div>
+            ) : null}
+
+            {models.length === 0 ? (
+              <div className="flex items-center gap-1 px-2.5 py-2 text-[11px] text-muted">
+                <Loader2 className="h-3 w-3 animate-spin" /> 加载模型中…
+              </div>
+            ) : (
+              models.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => {
+                    onChange(m.id);
+                    setOpen(false);
+                  }}
                   className={cn(
-                    "text-xs",
-                    p.value === value ? "text-primary" : "text-foreground"
+                    "flex w-full items-center rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-gray-50",
+                    m.id === value && "bg-primary/5"
                   )}
+                  title={m.id}
                 >
-                  {p.label}
-                </span>
-                <span className="mt-0.5 text-[10px] text-muted">{p.hint}</span>
-              </button>
-            ))}
+                  <span
+                    className={cn(
+                      "truncate text-xs",
+                      m.id === value ? "text-primary" : "text-foreground"
+                    )}
+                  >
+                    {m.label}
+                  </span>
+                </button>
+              ))
+            )}
           </div>
         </>
       ) : null}
@@ -1546,6 +2027,8 @@ function ChatToolbar({
   isStreaming,
   compact,
   modeLocked,
+  models,
+  modelsErrored,
 }: {
   settings: ChatSettings;
   onChange: (next: ChatSettings) => void;
@@ -1553,7 +2036,24 @@ function ChatToolbar({
   compact?: boolean;
   /** 会话已有消息时锁定模式，不允许切换 */
   modeLocked?: boolean;
+  /** 由 panel 通过 ``useChatModels`` 集中拉取后下发，避免每个 chip 各自请求 */
+  models: ChatModelItem[];
+  modelsErrored?: boolean;
 }) {
+  // 当前模型是否支持思考链
+  const currentModelSupportsThinking = useMemo(() => {
+    if (!settings.model) return false;
+    const hit = models.find((m) => m.id === settings.model);
+    return hit?.supports_thinking === true;
+  }, [settings.model, models]);
+
+  // 当前模型是否支持多模态读图
+  const currentModelSupportsMultimodal = useMemo(() => {
+    if (!settings.model) return false;
+    const hit = models.find((m) => m.id === settings.model);
+    return hit?.supports_multimodal === true;
+  }, [settings.model, models]);
+
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <ModeToggle
@@ -1561,15 +2061,16 @@ function ChatToolbar({
         disabled={isStreaming || modeLocked}
         onChange={(v) => onChange({ ...settings, agentMode: v })}
       />
-      <ThinkingChip
-        enabled={settings.enableThinking}
-        disabled={isStreaming}
-        onChange={(v) => onChange({ ...settings, enableThinking: v })}
-      />
+      <ThinkingChip supportsThinking={currentModelSupportsThinking} />
+      <MultimodalChip supportsMultimodal={currentModelSupportsMultimodal} />
       <ModelChip
-        value={settings.modelPreset}
+        value={settings.model}
+        models={models}
+        errored={modelsErrored}
         disabled={isStreaming}
-        onChange={(v) => onChange({ ...settings, modelPreset: v })}
+        onChange={(v) => {
+          onChange({ ...settings, model: v });
+        }}
       />
       {settings.agentMode && !compact ? (
         <ToolRoundsChip
@@ -1589,6 +2090,7 @@ function ChatToolbar({
 export const KnowledgeChatPanel = ({
   knowledgeBaseId,
   knowledgeBaseName,
+  selectedFolderId = null,
   selectedFolderName,
   disabled = false,
   disabledReason,
@@ -1599,6 +2101,8 @@ export const KnowledgeChatPanel = ({
   const chat = useKnowledgeChat({
     knowledgeBaseId,
     enabled: enabled && Boolean(knowledgeBaseId),
+    folderId: selectedFolderId,
+    folderName: selectedFolderName ?? null,
   });
 
   const {
@@ -1623,9 +2127,13 @@ export const KnowledgeChatPanel = ({
   const [settings, setSettings] = useState<ChatSettings>({
     agentMode: true,
     enableThinking: false,
-    modelPreset: "fast",
+    enableMultimodal: false,
+    model: "",
     maxToolRounds: 5,
   });
+
+  // 模型清单（页面级单例，多个 chip 共享，不会重复请求）
+  const { models, errored: modelsErrored } = useChatModels();
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1635,17 +2143,76 @@ export const KnowledgeChatPanel = ({
     showScore: boolean;
     params?: Record<string, unknown>;
   } | null>(null);
+  const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
 
-  // 切换 session 时同步 settings 到 session 默认值
+  // 切换 session / 模型清单到位时，同步 chip 默认值。
+  //
+  // model 字段优先级（仅在模型清单已加载完成后生效）：
+  //   1. ``activeSession.model`` 且**仍在当前清单里** —— 已对话过、后端持久化的
+  //      选择，最高优先；
+  //   2. 列表第一项 —— 新会话 / session.model 在当前清单中已不存在（如模型下线
+  //      或老数据写了 fallback id 进去）；
+  //   3. 空字符串 —— 模型清单本身也是空（极少见，proxy 完全空配置）。
+  //
+  // 这里用 ref 区分两种触发：
+  //   - "切了 session"：完全按上面优先级覆盖 prev.model；
+  //   - "models 引用更新（同 session）"：保留 prev.model 中"在新清单里仍然存在"
+  //     的用户选择；不存在时回落到第一项。
+  const prevSessionIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!activeSession) return;
-    setSettings({
-      agentMode: activeSession.agent_mode,
-      enableThinking: activeSession.enable_thinking,
-      modelPreset: activeSession.model_preset || "fast",
-      maxToolRounds: activeSession.max_tool_rounds || 5,
+    if (models.length === 0) {
+      // 模型清单还没回包，先把其它字段同步好，model 留空待后续 settle，
+      // 避免拿 fallback 的第一项当默认锁死，让 chip 先显示"选择模型"占位。
+      const switchedNow =
+        prevSessionIdRef.current !== activeSession.session_id;
+      prevSessionIdRef.current = activeSession.session_id;
+      setSettings((prev) => ({
+        agentMode: activeSession.agent_mode,
+        enableThinking: activeSession.enable_thinking,
+        enableMultimodal: false,
+        model: switchedNow ? "" : prev.model,
+        maxToolRounds: activeSession.max_tool_rounds || 5,
+      }));
+      return;
+    }
+
+    const inList = (id: string) => models.some((m) => m.id === id);
+    const sessionModel = activeSession.model || "";
+    const firstAvailable = models[0].id;
+    const switchedSession =
+      prevSessionIdRef.current !== activeSession.session_id;
+    prevSessionIdRef.current = activeSession.session_id;
+
+    setSettings((prev) => {
+      let nextModel: string;
+      if (switchedSession) {
+        nextModel = inList(sessionModel) ? sessionModel : firstAvailable;
+      } else {
+        // 同一 session 内：用户已经改过的 prev.model 优先（前提是仍在清单里）；
+        // 否则按 session.model → first 的顺序。
+        if (prev.model && inList(prev.model)) {
+          nextModel = prev.model;
+        } else if (inList(sessionModel)) {
+          nextModel = sessionModel;
+        } else {
+          nextModel = firstAvailable;
+        }
+      }
+      // 思考和多模态自动跟随模型能力开启
+      const resolvedModel = models.find((m) => m.id === nextModel);
+      const modelSupportsThinking = resolvedModel?.supports_thinking === true;
+      const modelSupportsMultimodal = resolvedModel?.supports_multimodal === true;
+      return {
+        agentMode: activeSession.agent_mode,
+        enableThinking: modelSupportsThinking,
+        enableMultimodal: modelSupportsMultimodal,
+        model: nextModel,
+        maxToolRounds: activeSession.max_tool_rounds || 5,
+      };
     });
-  }, [activeSession?.session_id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSession?.session_id, models]);
 
   // 检测用户是否在底部（阈值 50px）
   const handleScroll = useCallback(() => {
@@ -1673,10 +2240,17 @@ export const KnowledgeChatPanel = ({
     if (!content) return;
     setInput("");
     isAtBottomRef.current = true;
+    // 思考和多模态自动跟随模型能力
+    const resolvedModel = models.find((m) => m.id === settings.model);
+    const effectiveThinking = resolvedModel?.supports_thinking === true;
+    const effectiveMultimodal = resolvedModel?.supports_multimodal === true;
     await send(content, {
       agentMode: settings.agentMode,
-      enableThinking: settings.enableThinking,
-      modelPreset: settings.modelPreset,
+      enableThinking: effectiveThinking,
+      enableMultimodal: effectiveMultimodal,
+      // 用户选了具体 model 才透传；空字符串 → 沿用 session 当前偏好。
+      // 注意：这里不再传 modelPreset——preset 是后端事项，前端只表达"我要这个具体模型"。
+      ...(settings.model ? { model: settings.model } : {}),
       maxToolRounds: settings.maxToolRounds,
     });
   };
@@ -1695,6 +2269,41 @@ export const KnowledgeChatPanel = ({
       setRenameValue("");
     }
   };
+
+  // 新建会话时把当前 chip 选择带过去（保留模型 / 思考链 / agent 模式偏好），
+  // 避免新会话回到 fast preset 默认值——这是用户的 mental model：
+  // "我刚选了 gpt-4o-mini，新开对话还应该是 gpt-4o-mini"。
+  //
+  // v0.8.0：scope 选择策略（不接收参数版本）：
+  //   - 若用户当前在 FolderTree 选中了某 folder（selectedFolderId 非空）→
+  //     默认锁在该 folder（folder scope）；用户可点 banner 上的「新建文件夹会话」
+  //     按钮显式触发同样动作；
+  //   - 若没选 folder → 走 KB scope（原 v0.7.0 行为）。
+  // 这样侧边栏的「新建」按钮与 banner 「新建文件夹会话」按钮共享同一行为，
+  // 由"用户当前是否站在某 folder 上"自然区分，不再需要一个隐藏开关。
+  const handleNewSession = useCallback(async () => {
+    // 思考和多模态自动跟随模型能力
+    const resolvedModel = models.find((m) => m.id === settings.model);
+    const effectiveThinking = resolvedModel?.supports_thinking === true;
+    const effectiveMultimodal = resolvedModel?.supports_multimodal === true;
+    await newSession({
+      agentMode: settings.agentMode,
+      enableThinking: effectiveThinking,
+      enableMultimodal: effectiveMultimodal,
+      // 空字符串 → 显式置空 model，让后端用 model_preset 默认（不是"不传"）
+      model: settings.model || null,
+      // 显式按"用户当前是否选中 folder"决定 scope；hook 内部也会兜底，
+      // 但这里写明意图便于后续如果想引入"忽略 folder"的入口（例如紧凑模式
+      // 顶栏「新建（KB）」按钮）只需调 newSession({ folderId: null }) 即可。
+      folderId: selectedFolderId ?? null,
+    });
+  }, [
+    newSession,
+    settings.agentMode,
+    settings.enableThinking,
+    settings.model,
+    selectedFolderId,
+  ]);
 
   const handleSessionRename = (s: ChatSessionInfo) => {
     if (s.session_id !== activeSessionId) {
@@ -1726,14 +2335,22 @@ export const KnowledgeChatPanel = ({
 
   const placeholder = effectiveDisabled
     ? "当前上下文不可问答"
-    : `直接向「${activeSession?.title || knowledgeBaseName || "知识库"}」提问...`;
+    : selectedFolderName
+      ? `向文件夹「${selectedFolderName}」提问...`
+      : `直接向「${activeSession?.title || knowledgeBaseName || "知识库"}」提问...`;
+
+  const sessionScopeLabel = selectedFolderName
+    ? `文件夹「${selectedFolderName}」`
+    : knowledgeBaseName
+      ? `知识库「${knowledgeBaseName}」`
+      : "历史会话";
 
   // 跨 turn 累积 citations：每个 assistant group 可引用前面所有 group 的 chunk
   const groupsWithAccumulatedCitations = useMemo(() => {
     const groups = groupMessages(messages);
     const accumulated = new Map<string, Citation>();
     return groups.map((group) => {
-      if (group.type === "assistant") {
+      if (group.type === "assistant-group") {
         for (const m of group.messages) {
           for (const c of m.citations ?? []) {
             if (c.chunk_id) accumulated.set(c.chunk_id, c);
@@ -1747,20 +2364,33 @@ export const KnowledgeChatPanel = ({
   return (
     <section
       className={cn(
-        "flex h-full min-h-0 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm",
+        "relative flex h-full min-h-0 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm",
         className
       )}
     >
-      {/* 左侧会话栏（紧凑模式或 lg 以下隐藏，由 SessionSidebar 内部 lg:flex 控制） */}
+      {/* 左侧图标栏 + 可折叠历史面板（默认隐藏） */}
       {!compact ? (
-        <SessionSidebar
-          sessions={sessions}
-          activeSessionId={activeSessionId}
-          onSelect={(id) => void selectSession(id)}
-          onNew={() => void newSession()}
-          onRename={handleSessionRename}
-          onDelete={(s) => void handleSessionDelete(s)}
-        />
+        <>
+          <SessionIconRail
+            historyOpen={sessionPanelOpen}
+            onToggleHistory={() => setSessionPanelOpen((v) => !v)}
+            onNew={() => void handleNewSession()}
+          />
+          {sessionPanelOpen ? (
+            <SessionDrawer
+              scopeLabel={sessionScopeLabel}
+              sessions={sessions}
+              activeSessionId={activeSessionId}
+              onClose={() => setSessionPanelOpen(false)}
+              onSelect={(id) => {
+                void selectSession(id);
+                setSessionPanelOpen(false);
+              }}
+              onRename={handleSessionRename}
+              onDelete={(s) => void handleSessionDelete(s)}
+            />
+          ) : null}
+        </>
       ) : null}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-row overflow-hidden">
@@ -1797,9 +2427,11 @@ export const KnowledgeChatPanel = ({
                 <PhasePill phase={phase} />
               </div>
               <p className="mt-1 truncate text-[11px] leading-5 text-muted">
-                {knowledgeBaseName
-                  ? `围绕「${knowledgeBaseName}」展开问答`
-                  : "选择一个知识库以开始问答"}
+                {selectedFolderName
+                  ? `文件夹问答 · ${selectedFolderName}`
+                  : knowledgeBaseName
+                    ? `知识库问答 · ${knowledgeBaseName}`
+                    : "选择一个知识库以开始问答"}
                 {activeSession ? ` · ${activeSession.message_count} 条消息` : ""}
               </p>
             </div>
@@ -1809,18 +2441,18 @@ export const KnowledgeChatPanel = ({
               <div className="flex items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => void newSession()}
-                  className="flex h-7 items-center gap-1 rounded-full border border-gray-200 px-2 text-[11px] text-foreground hover:border-primary"
+                  onClick={() => void handleNewSession()}
+                  className="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 text-foreground hover:border-primary"
                   title="新建会话"
+                  aria-label="新建会话"
                 >
-                  <MessageSquarePlus className="h-3 w-3" />
-                  新建
+                  <MessageSquarePlus className="h-3.5 w-3.5" />
                 </button>
                 <SessionPopover
                   sessions={sessions}
                   activeSessionId={activeSessionId}
                   onSelect={(id) => void selectSession(id)}
-                  onNew={() => void newSession()}
+                  onNew={() => void handleNewSession()}
                   onRename={handleSessionRename}
                   onDelete={(s) => void handleSessionDelete(s)}
                 />
@@ -1829,16 +2461,7 @@ export const KnowledgeChatPanel = ({
           </div>
         </div>
 
-        {/* folder 提示 */}
-        {selectedFolderName ? (
-          <div className="mx-5 mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
-            <Folder className="mt-0.5 h-3.5 w-3.5" />
-            <span>
-              文件夹「{selectedFolderName}
-              」级问答待后端支持，当前对话仍以整个知识库范围进行；入口已预留。
-            </span>
-          </div>
-        ) : null}
+        {/* scope 由左侧 KB / 文件夹选择驱动；切换时 hook 会自动加载对应 session 列表 */}
 
         {phase === "disconnected" ? (
           <div className="mx-5 mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
@@ -1946,6 +2569,8 @@ export const KnowledgeChatPanel = ({
               isStreaming={isStreaming}
               compact={compact}
               modeLocked={messages.length > 0}
+              models={models}
+              modelsErrored={modelsErrored}
             />
             <div className="mt-2 flex items-end gap-2">
               <textarea

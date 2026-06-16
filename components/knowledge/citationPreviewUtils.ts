@@ -4,6 +4,35 @@
  * 以及 HTML 消毒（仅用于知识库内可信片段的展示）。
  */
 
+/** 后端占位符：缺失标题/脚注时可能填入「无」等，展示层应视为空 */
+const ANNOTATION_PLACEHOLDERS = new Set([
+  "无",
+  "空",
+  "（无）",
+  "（空）",
+  "none",
+  "n/a",
+  "na",
+]);
+
+/** 是否为占位空注（无实际内容） */
+export function isCitationPlaceholderText(
+  text: string | null | undefined
+): boolean {
+  const t = (text ?? "").trim();
+  if (!t) return true;
+  return ANNOTATION_PLACEHOLDERS.has(t) || ANNOTATION_PLACEHOLDERS.has(t.toLowerCase());
+}
+
+/** 规范化标题/脚注：空或占位符返回 null */
+export function normalizeCitationAnnotation(
+  text: string | null | undefined
+): string | null {
+  const t = (text ?? "").trim();
+  if (!t || isCitationPlaceholderText(t)) return null;
+  return t;
+}
+
 export type TablePreviewParts = {
   caption: string;
   bodyHtml: string;
@@ -49,9 +78,9 @@ export function parseTablePreviewPreview(raw: string): TablePreviewParts | null 
   }
   if (!out.table_body) return null;
   return {
-    caption: out.table_caption,
+    caption: normalizeCitationAnnotation(out.table_caption) ?? "",
     bodyHtml: out.table_body,
-    footnote: out.table_footnote,
+    footnote: normalizeCitationAnnotation(out.table_footnote) ?? "",
   };
 }
 
@@ -133,8 +162,8 @@ export function parseImagePreviewPreview(raw: string): ImagePreviewParts | null 
       const end = i + 1 < hits.length ? hits[i + 1].start : s.length;
       out[key] = s.slice(start + headerLen, end).trim();
     }
-    caption = out.image_caption;
-    footnote = out.image_footnote;
+    caption = normalizeCitationAnnotation(out.image_caption) ?? "";
+    footnote = normalizeCitationAnnotation(out.image_footnote) ?? "";
     body = out.image_body;
   }
 

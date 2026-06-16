@@ -1,6 +1,8 @@
 import { API_CONFIG, getCommonHeaders } from "@/lib/config";
 import {
   ApiResponse,
+  ChunkImagePreviewResponse,
+  ChunkPositionResponse,
   FileDeleteResponse,
   FileIndexStatus,
   FilePreviewResponse,
@@ -411,6 +413,26 @@ export async function fetchFilePreview(
   const suffix = expires ? `?expires=${expires}` : "";
   return requestJson<FilePreviewResponse>(
     `/api/knowledge/file/${encodeURIComponent(fileId)}/preview${suffix}`,
+    { method: "GET" }
+  );
+}
+
+export async function fetchChunkImagePreview(
+  chunkId: string,
+  expires?: number
+): Promise<ChunkImagePreviewResponse> {
+  const suffix = expires ? `?expires=${expires}` : "";
+  return requestJson<ChunkImagePreviewResponse>(
+    `/api/knowledge/chunk/${encodeURIComponent(chunkId)}/image-preview${suffix}`,
+    { method: "GET" }
+  );
+}
+
+export async function fetchChunkPosition(
+  chunkId: string
+): Promise<ChunkPositionResponse> {
+  return requestJson<ChunkPositionResponse>(
+    `/api/knowledge/chunk/${encodeURIComponent(chunkId)}/position`,
     { method: "GET" }
   );
 }

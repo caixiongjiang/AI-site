@@ -38,11 +38,82 @@ import type {
 
 const PAGE_SIZE = 50;
 const TITLE_POLL_DELAYS_MS = [1500, 4000, 9000];
+const ACTIVE_SESSION_STORAGE_PREFIX = "knowledge_chat_active_session";
+
+function activeSessionStorageKey(
+  kbId: string,
+  folderId: string | null
+): string {
+  return `${ACTIVE_SESSION_STORAGE_PREFIX}:${kbId}:${folderId ?? "__kb__"}`;
+}
+
+function loadPersistedSessionId(
+  kbId: string,
+  folderId: string | null
+): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return localStorage.getItem(activeSessionStorageKey(kbId, folderId));
+  } catch {
+    return null;
+  }
+}
+
+function persistActiveSessionId(
+  kbId: string,
+  folderId: string | null,
+  sessionId: string
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(activeSessionStorageKey(kbId, folderId), sessionId);
+  } catch {
+    // localStorage 不可用时忽略
+  }
+}
 
 export interface UseKnowledgeChatOptions {
   knowledgeBaseId: string | null;
   /** 用户登录态（未登录时不做任何后端调用） */
   enabled: boolean;
+  /**
+   * 当前用户在 FolderTree 上选中的文件夹 ID（v0.8.0 文件夹问答）。
+   *
+   * 切换 folder / KB 时会自动加载对应 scope 的 session 列表并恢复最近一条
+   * 对话历史；不同 folder 的 session 列表彼此独立。
+   *
+   * 不传 / `null` → KB scope（folder_id IS NULL 的会话）。
+   */
+  folderId?: string | null;
+  /**
+   * 文件夹的可读名（仅用于 UI 提示文案）；hook 不会拿它做任何业务判断。
+   */
+  folderName?: string | null;
+  /**
+   * folder 模式下是否含子文件夹的文档；默认 true。仅作为新会话默认值。
+   */
+  includeSubfolders?: boolean;
+}
+
+/**
+ * 新建会话时可选的初始偏好。所有字段均为 optional：缺省时由后端默认值决定。
+ *
+ * 典型用途：用户在 ChatPanel 上已经选了某个模型 / 思考链开关，"新会话" 按钮
+ * 应当把当前选择带过去，避免新会话回到 fast preset 的默认值。
+ */
+export interface NewSessionInit {
+  modelPreset?: string;
+  model?: string | null;
+  enableThinking?: boolean;
+  enableMultimodal?: boolean;
+  agentMode?: boolean;
+  /**
+   * 把新会话锁定在此文件夹内（folder scope，v0.8.0）。
+   * 不传 → 走 hook 入参 `folderId`；显式传 `null` → 强制 KB scope，忽略 hook 入参。
+   */
+  folderId?: string | null;
+  /** folder 模式是否递归含子文件夹；不传时沿用 hook 入参 `includeSubfolders` */
+  includeSubfolders?: boolean;
 }
 
 export interface SendOptions {
@@ -50,8 +121,20 @@ export interface SendOptions {
   agentMode?: boolean;
   /** 覆盖 session 默认 enable_thinking */
   enableThinking?: boolean;
-  /** 覆盖 session 默认 model_preset */
+  /** 覆盖 session 默认 enable_multimodal */
+  enableMultimodal?: boolean;
+  /** 覆盖 session 默认 model_preset（采样参数模板，如 "fast" / "deep_thinking"） */
   modelPreset?: string;
+  /**
+   * 用户从 `/api/chat/models` 选定的 LiteLLM 模型字符串（如 `openai/gpt-4o-mini`）。
+   *
+   * 与 modelPreset 的关系：
+   * - 优先级高于 modelPreset：传了 model 时，model 决定具体模型，
+   *   modelPreset 仅作为 temperature / max_tokens / thinking_budget 等
+   *   采样参数的模板。
+   * - 不传或传空字符串 → 沿用 session 当前的 model（或 model_preset）。
+   */
+  model?: string;
   /** 覆盖 session 默认 max_tool_rounds */
   maxToolRounds?: number;
   /** 覆盖 session 默认 retrieve_top_k */
@@ -73,7 +156,7 @@ export interface UseKnowledgeChatResult {
   /** 加载会话/历史消息中 */
   isLoading: boolean;
   selectSession: (sessionId: string) => Promise<void>;
-  newSession: () => Promise<void>;
+  newSession: (init?: NewSessionInit) => Promise<void>;
   renameActive: (title: string) => Promise<void>;
   deleteActive: () => Promise<void>;
   send: (query: string, opts?: SendOptions) => Promise<void>;
@@ -130,7 +213,12 @@ function makeLocalId(prefix: string): string {
 export function useKnowledgeChat(
   options: UseKnowledgeChatOptions
 ): UseKnowledgeChatResult {
-  const { knowledgeBaseId, enabled } = options;
+  const {
+    knowledgeBaseId,
+    enabled,
+    folderId: optionFolderId = null,
+    includeSubfolders: optionIncludeSubfolders = true,
+  } = options;
 
   const [sessions, setSessions] = useState<ChatSessionInfo[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -202,25 +290,37 @@ export function useKnowledgeChat(
   }, []);
 
   // -------------------------------------------------------------------------
-  // 历史会话加载（按 KB 过滤）
+  // 历史会话加载（按 KB + scope 过滤）
   // -------------------------------------------------------------------------
-  const loadSessionsForKb = useCallback(
-    async (kbId: string): Promise<ChatSessionInfo[]> => {
-      // 服务端按 knowledge_base_id 直接过滤；同时保留客户端兜底过滤，
-      // 兼容旧后端版本（若返回了未过滤的列表，前端再筛一道也不会丢数据）。
+  const loadSessionsForScope = useCallback(
+    async (
+      kbId: string,
+      folderId: string | null
+    ): Promise<ChatSessionInfo[]> => {
       const list = await listChatSessions({
         page: 1,
         page_size: 100,
         knowledge_base_id: kbId,
+        scope: folderId ? "folder" : "kb",
+        ...(folderId ? { folder_id: folderId } : {}),
       });
       const items = list.items ?? [];
-      const filtered = items.every((s) => Array.isArray(s.knowledge_base_ids))
-        ? items.filter((s) => (s.knowledge_base_ids ?? []).includes(kbId))
-        : items;
-      setSessions(filtered);
-      return filtered;
+      setSessions(items);
+      return items;
     },
     []
+  );
+
+  /** 构造 createChatSession 的 scope 字段（folder / KB 二选一） */
+  const buildScopeFields = useCallback(
+    (folderId: string | null) =>
+      folderId
+        ? {
+            folder_id: folderId,
+            include_subfolders: optionIncludeSubfolders,
+          }
+        : {},
+    [optionIncludeSubfolders]
   );
 
   const loadMessagesForSession = useCallback(async (sessionId: string) => {
@@ -235,31 +335,41 @@ export function useKnowledgeChat(
   }, []);
 
   // -------------------------------------------------------------------------
-  // ensureSession：当前 KB 没有可用 session 就建一条
+  // ensureSession：当前 scope 没有可用 session 就建一条
   // -------------------------------------------------------------------------
   const ensureSession = useCallback(
-    async (kbId: string): Promise<ChatSessionInfo> => {
-      const existing = await loadSessionsForKb(kbId);
+    async (
+      kbId: string,
+      folderId: string | null
+    ): Promise<ChatSessionInfo> => {
+      const existing = await loadSessionsForScope(kbId, folderId);
       if (existing.length > 0) {
-        const target = existing[0];
+        const persistedId = loadPersistedSessionId(kbId, folderId);
+        const target =
+          (persistedId
+            ? existing.find((s) => s.session_id === persistedId)
+            : undefined) ?? existing[0];
         setActiveSessionId(target.session_id);
+        persistActiveSessionId(kbId, folderId, target.session_id);
         await loadMessagesForSession(target.session_id);
         return target;
       }
       const created = await createChatSession({
         knowledge_base_ids: [kbId],
         title: "新会话",
+        ...buildScopeFields(folderId),
       });
       setSessions([created]);
       setActiveSessionId(created.session_id);
+      persistActiveSessionId(kbId, folderId, created.session_id);
       setMessages([]);
       return created;
     },
-    [loadMessagesForSession, loadSessionsForKb]
+    [buildScopeFields, loadMessagesForSession, loadSessionsForScope]
   );
 
   // -------------------------------------------------------------------------
-  // KB 切换 → 重新装载
+  // KB / folder 切换 → 重新装载对应 scope 的 session 列表 + 对话历史
   // -------------------------------------------------------------------------
   useEffect(() => {
     if (!enabled || !knowledgeBaseId) {
@@ -272,12 +382,16 @@ export function useKnowledgeChat(
     }
 
     let cancelled = false;
+    // 切换 scope 时先清空，避免短暂展示上一个 folder/KB 的消息
+    setSessions([]);
+    setActiveSessionId(null);
+    setMessages([]);
     setIsLoading(true);
     setLastError(null);
 
     void (async () => {
       try {
-        await ensureSession(knowledgeBaseId);
+        await ensureSession(knowledgeBaseId, optionFolderId);
         if (!cancelled) {
           setPhase("idle");
         }
@@ -296,7 +410,7 @@ export function useKnowledgeChat(
     return () => {
       cancelled = true;
     };
-  }, [knowledgeBaseId, enabled, ensureSession]);
+  }, [knowledgeBaseId, optionFolderId, enabled, ensureSession]);
 
   // -------------------------------------------------------------------------
   // WebSocket 帧分发
@@ -335,6 +449,33 @@ export function useKnowledgeChat(
                 ? { ...m, retrieval: { state: "started" } }
                 : m
             )
+          );
+          break;
+        }
+
+        case "tool.progress": {
+          const toolCallId = frame.data.tool_call_id;
+          if (!toolCallId) break;
+          const targetId =
+            inflightAssistantIdRef.current ?? lastAssistantIdRef.current;
+          if (!targetId) break;
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== targetId) return m;
+              return {
+                ...m,
+                tool_calls: m.tool_calls.map((t) =>
+                  t.id === toolCallId
+                    ? {
+                        ...t,
+                        execution_stage: frame.data.stage,
+                        execution_model:
+                          frame.data.model ?? t.execution_model ?? null,
+                      }
+                    : t
+                ),
+              };
+            })
           );
           break;
         }
@@ -398,6 +539,9 @@ export function useKnowledgeChat(
               preview: c.preview ?? null,
               // Phase B：alias 提前下发，使流式期间 [cN] chip 能即时彩色渲染。
               alias: c.alias ?? null,
+              // 图片 chunk 专用：存储路径，用于按需请求 presigned URL
+              image_file_path: c.image_file_path ?? null,
+              bucket_name: c.bucket_name ?? null,
             };
             turnCitationsRef.current.set(c.chunk_id, cite);
           }
@@ -593,6 +737,10 @@ export function useKnowledgeChat(
             ...(frame.data.time_ms != null
               ? { time_ms: frame.data.time_ms }
               : {}),
+            ...(frame.data.execution_model
+              ? { execution_model: frame.data.execution_model }
+              : {}),
+            execution_stage: null,
           };
           setMessages((prev) =>
             prev.map((m) => {
@@ -874,6 +1022,9 @@ export function useKnowledgeChat(
     async (sessionId: string) => {
       if (sessionId === activeSessionId) return;
       setActiveSessionId(sessionId);
+      if (knowledgeBaseId) {
+        persistActiveSessionId(knowledgeBaseId, optionFolderId, sessionId);
+      }
       setMessages([]);
       setIsLoading(true);
       setLastError(null);
@@ -889,29 +1040,68 @@ export function useKnowledgeChat(
         setIsLoading(false);
       }
     },
-    [activeSessionId, loadMessagesForSession]
+    [activeSessionId, knowledgeBaseId, loadMessagesForSession, optionFolderId]
   );
 
-  const newSession = useCallback(async () => {
-    if (!knowledgeBaseId) return;
-    try {
-      setIsLoading(true);
-      const created = await createChatSession({
-        knowledge_base_ids: [knowledgeBaseId],
-        title: "新会话",
-      });
-      setSessions((prev) => [created, ...prev]);
-      setActiveSessionId(created.session_id);
-      setMessages([]);
-      setLastError(null);
-      setPhase("idle");
-    } catch (error) {
-      setLastError(error instanceof Error ? error.message : "创建会话失败");
-      setPhase("error");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [knowledgeBaseId]);
+  const newSession = useCallback(
+    async (init?: NewSessionInit) => {
+      if (!knowledgeBaseId) return;
+      // folder scope 解析：
+      //   - init.folderId === null（显式）→ 强制 KB scope
+      //   - init.folderId 非 undefined → 用它
+      //   - 否则取 hook 入参 optionFolderId（用户在 FolderTree 选中的）
+      const effectiveFolderId =
+        init?.folderId === null
+          ? null
+          : init?.folderId !== undefined
+            ? init.folderId
+            : optionFolderId;
+      const effectiveIncludeSubfolders =
+        init?.includeSubfolders !== undefined
+          ? init.includeSubfolders
+          : optionIncludeSubfolders;
+      try {
+        setIsLoading(true);
+        const created = await createChatSession({
+          knowledge_base_ids: [knowledgeBaseId],
+          title: "新会话",
+          ...(effectiveFolderId
+            ? {
+                folder_id: effectiveFolderId,
+                include_subfolders: effectiveIncludeSubfolders,
+              }
+            : {}),
+          ...(init?.modelPreset !== undefined
+            ? { model_preset: init.modelPreset }
+            : {}),
+          // model 允许为空字符串（前端清除选择 → 让后端走 model_preset），
+          // 所以用 ?? 而不是 ||
+          ...(init?.model !== undefined ? { model: init.model ?? null } : {}),
+          ...(init?.enableThinking !== undefined
+            ? { enable_thinking: init.enableThinking }
+            : {}),
+          ...(init?.enableMultimodal !== undefined
+            ? { enable_multimodal: init.enableMultimodal }
+            : {}),
+          ...(init?.agentMode !== undefined
+            ? { agent_mode: init.agentMode }
+            : {}),
+        });
+        setSessions((prev) => [created, ...prev]);
+        setActiveSessionId(created.session_id);
+        persistActiveSessionId(knowledgeBaseId, effectiveFolderId, created.session_id);
+        setMessages([]);
+        setLastError(null);
+        setPhase("idle");
+      } catch (error) {
+        setLastError(error instanceof Error ? error.message : "创建会话失败");
+        setPhase("error");
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [knowledgeBaseId, optionFolderId, optionIncludeSubfolders]
+  );
 
   const renameActive = useCallback(
     async (title: string) => {
@@ -932,18 +1122,28 @@ export function useKnowledgeChat(
     if (remaining.length > 0) {
       const next = remaining[0];
       setActiveSessionId(next.session_id);
+      persistActiveSessionId(knowledgeBaseId, optionFolderId, next.session_id);
       await loadMessagesForSession(next.session_id);
     } else {
-      // 当前 KB 没有会话了，自动建一条
+      // 当前 scope 没有会话了，自动建一条（继承 folder / KB scope）
       const created = await createChatSession({
         knowledge_base_ids: [knowledgeBaseId],
         title: "新会话",
+        ...buildScopeFields(optionFolderId),
       });
       setSessions([created]);
       setActiveSessionId(created.session_id);
+      persistActiveSessionId(knowledgeBaseId, optionFolderId, created.session_id);
       setMessages([]);
     }
-  }, [activeSessionId, knowledgeBaseId, loadMessagesForSession, sessions]);
+  }, [
+    activeSessionId,
+    buildScopeFields,
+    knowledgeBaseId,
+    loadMessagesForSession,
+    optionFolderId,
+    sessions,
+  ]);
 
   // -------------------------------------------------------------------------
   // 行为：发送 / 中断
@@ -985,8 +1185,16 @@ export function useKnowledgeChat(
       if (opts.enableThinking !== undefined) {
         payload.enable_thinking = opts.enableThinking;
       }
+      if (opts.enableMultimodal !== undefined) {
+        payload.enable_multimodal = opts.enableMultimodal;
+      }
       if (opts.modelPreset !== undefined) {
         payload.model_preset = opts.modelPreset;
+      }
+      // model 与 modelPreset 并存：model 选定具体模型，modelPreset 仍是采样参数模板。
+      // 空字符串视为"清除前端选择 → 沿用 session 默认"，所以这里 omit 而不是显式传 ""。
+      if (opts.model) {
+        payload.model = opts.model;
       }
       if (opts.maxToolRounds !== undefined) {
         payload.max_tool_rounds = opts.maxToolRounds;

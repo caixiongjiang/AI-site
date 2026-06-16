@@ -12,8 +12,10 @@
 
 import {
   AlignJustify,
+  AlertTriangle,
   FileText,
   Image as ImageIcon,
+  Loader2,
   Table as TableIcon,
 } from "lucide-react";
 import {
@@ -28,9 +30,11 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { Citation } from "@/lib/chat-types";
+import { fetchChunkImagePreview } from "@/lib/api/knowledge";
 import { CitationPreviewMarkdown } from "@/components/knowledge/CitationPreviewMarkdown";
 import { cn } from "@/lib/utils";
 import {
+  normalizeCitationAnnotation,
   parseImagePreviewPreview,
   parseTablePreviewPreview,
   sanitizeCitationHtml,
@@ -114,28 +118,138 @@ function usePopoverPosition(
   }, [open, positionKey, anchorRef, popRef]);
 }
 
+/**
+ * 从中文格式的 preview 中解析图片标题和脚注
+ * 格式：[图片]\n标题：xxx\n脚注：xxx
+ */
+function parseChineseImagePreview(raw: string): { caption: string; footnote: string } | null {
+  const s = (raw ?? "").trim();
+  if (!s) return null;
+  const caption =
+    normalizeCitationAnnotation(
+      s.match(/标题[：:]\s*(.+?)(?:\n|$)/)?.[1]?.trim() ?? ""
+    ) ?? "";
+  const footnote =
+    normalizeCitationAnnotation(
+      s.match(/脚注[：:]\s*(.+?)(?:\n|$)/)?.[1]?.trim() ?? ""
+    ) ?? "";
+  if (!caption && !footnote) return null;
+  return { caption, footnote };
+}
+
+/** 按需加载图片的内部组件 */
+function CitationImageLoader({
+  chunkId,
+  caption,
+  footnote,
+}: {
+  chunkId: string;
+  caption?: string;
+  footnote?: string;
+}) {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetchChunkImagePreview(chunkId)
+      .then((res) => {
+        if (cancelled) return;
+        const url = res?.preview_url ?? null;
+        setImageUrl(url);
+        if (!url) setError("无法获取图片预览链接");
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err?.message || "加载图片失败");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [chunkId]);
+
+  const safeSrc = imageUrl ? sanitizeCitationImageSrc(imageUrl) : null;
+
+  return (
+    <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 text-left">
+      {/* 图片 */}
+      <div className="min-h-0 flex-1 overflow-auto overscroll-contain rounded-md border border-gray-200 bg-gray-50/80 p-1.5">
+        {loading ? (
+          <div className="flex items-center justify-center gap-1.5 py-6 text-[11px] text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            加载中…
+          </div>
+        ) : error ? (
+          <div className="flex items-center justify-center gap-1.5 py-6 text-[11px] text-red-500">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            {error}
+          </div>
+        ) : safeSrc ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={safeSrc}
+            alt={caption || "引用图片"}
+            className="mx-auto max-h-[min(55vh,20rem)] w-auto max-w-full object-contain"
+            loading="lazy"
+          />
+        ) : (
+          <div className="px-2 py-6 text-center text-[11px] text-muted-foreground">
+            （预览中无可用图片链接）
+          </div>
+        )}
+      </div>
+      {/* 标题（支持 LaTeX） */}
+      {caption ? (
+        <div className="shrink-0 px-1 text-[11px] text-gray-700">
+          <CitationPreviewMarkdown content={caption} />
+        </div>
+      ) : null}
+      {/* 脚注 */}
+      {footnote ? (
+        <div className="shrink-0 px-1 text-[10px] text-gray-500">
+          <CitationPreviewMarkdown content={footnote} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function CitationPreviewBody({
   preview,
   chunkType,
+  chunkId,
 }: {
   preview: string;
   chunkType?: string | null;
+  /** 图片 chunk ID，用于按需加载图片 URL */
+  chunkId?: string | null;
 }) {
   const table = useMemo(() => parseTablePreviewPreview(preview), [preview]);
   const imageParts = useMemo(() => parseImagePreviewPreview(preview), [preview]);
 
+  // 当英文 key 解析失败但 chunk_type 是 image 时，尝试中文格式
+  const chineseImageParts = useMemo(() => {
+    if (imageParts || chunkType !== "image") return null;
+    return parseChineseImagePreview(preview);
+  }, [imageParts, chunkType, preview]);
+
   const useImageLayout =
-    imageParts &&
-    (chunkType === "image" ||
-      /image_(caption|footnote|body)\s*:/i.test(preview) ||
-      Boolean(imageParts.imageUrl));
+    (imageParts &&
+      (chunkType === "image" ||
+        /image_(caption|footnote|body)\s*:/i.test(preview) ||
+        Boolean(imageParts.imageUrl))) ||
+    (chunkType === "image" && chineseImageParts);
 
   if (table) {
     return (
       <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 text-left">
         {table.caption ? (
           <div className="shrink-0 rounded-md bg-gray-50 px-2 py-1.5 text-[11px] font-medium text-gray-900">
-            {table.caption}
+            <CitationPreviewMarkdown content={table.caption} />
           </div>
         ) : null}
         <div
@@ -152,42 +266,76 @@ export function CitationPreviewBody({
         />
         {table.footnote ? (
           <div className="shrink-0 rounded-md bg-gray-50 px-2 py-1.5 text-[10px] text-gray-600">
-            {table.footnote}
+            <CitationPreviewMarkdown content={table.footnote} />
           </div>
         ) : null}
       </div>
     );
   }
 
-  if (useImageLayout && imageParts) {
-    const safeSrc = imageParts.imageUrl
-      ? sanitizeCitationImageSrc(imageParts.imageUrl)
-      : null;
-    return (
-      <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 text-left">
-        {imageParts.caption ? (
-          <div className="shrink-0 rounded-md bg-gray-50 px-2 py-1.5 text-[11px] font-medium text-gray-900">
-            {imageParts.caption}
-          </div>
-        ) : null}
-        <div className="min-h-0 flex-1 overflow-auto overscroll-contain rounded-md border border-gray-200 bg-gray-50/80 p-1.5">
-          {safeSrc ? (
-            // eslint-disable-next-line @next/next/no-img-element
+  if (useImageLayout) {
+    // 优先使用英文 key 解析结果，其次中文格式
+    const caption = imageParts?.caption || chineseImageParts?.caption || "";
+    const footnote = imageParts?.footnote || chineseImageParts?.footnote || "";
+    const imageUrl = imageParts?.imageUrl ?? null;
+    const safeSrc = imageUrl ? sanitizeCitationImageSrc(imageUrl) : null;
+
+    // 如果有图片 URL（来自 read_image_chunks 工具结果），直接渲染
+    if (safeSrc) {
+      return (
+        <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 text-left">
+          {/* 图片 */}
+          <div className="min-h-0 flex-1 overflow-auto overscroll-contain rounded-md border border-gray-200 bg-gray-50/80 p-1.5">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={safeSrc}
-              alt={imageParts.caption || "引用图片"}
+              alt={caption || "引用图片"}
               className="mx-auto max-h-[min(55vh,20rem)] w-auto max-w-full object-contain"
               loading="lazy"
             />
-          ) : (
-            <div className="px-2 py-6 text-center text-[11px] text-muted-foreground">
-              （预览中无可用图片链接）
+          </div>
+          {/* 标题（支持 LaTeX） */}
+          {caption ? (
+            <div className="shrink-0 px-1 text-[11px] text-gray-700">
+              <CitationPreviewMarkdown content={caption} />
             </div>
-          )}
+          ) : null}
+          {/* 脚注 */}
+          {footnote ? (
+            <div className="shrink-0 px-1 text-[10px] text-gray-500">
+              <CitationPreviewMarkdown content={footnote} />
+            </div>
+          ) : null}
         </div>
-        {imageParts.footnote ? (
-          <div className="shrink-0 rounded-md bg-gray-50 px-2 py-1.5 text-[10px] text-gray-600">
-            {imageParts.footnote}
+      );
+    }
+
+    // 没有图片 URL：如果有 chunkId，按需加载；否则显示占位
+    if (chunkId) {
+      return (
+        <CitationImageLoader
+          chunkId={chunkId}
+          caption={caption}
+          footnote={footnote}
+        />
+      );
+    }
+
+    return (
+      <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 text-left">
+        <div className="min-h-0 flex-1 overflow-auto overscroll-contain rounded-md border border-gray-200 bg-gray-50/80 p-1.5">
+          <div className="px-2 py-6 text-center text-[11px] text-muted-foreground">
+            （预览中无可用图片链接）
+          </div>
+        </div>
+        {caption ? (
+          <div className="shrink-0 px-1 text-[11px] text-gray-700">
+            <CitationPreviewMarkdown content={caption} />
+          </div>
+        ) : null}
+        {footnote ? (
+          <div className="shrink-0 px-1 text-[10px] text-gray-500">
+            <CitationPreviewMarkdown content={footnote} />
           </div>
         ) : null}
       </div>
@@ -248,7 +396,13 @@ export function CitationChip({
     e.stopPropagation();
     const fileId = citation?.file_id;
     if (!fileId) return;
-    const url = `/knowledge/file/${encodeURIComponent(fileId)}`;
+    const chunkId = citation?.chunk_id;
+    const chunkType = citation?.chunk_type;
+    const params = new URLSearchParams();
+    if (chunkId) params.set("chunkId", chunkId);
+    if (chunkType) params.set("type", chunkType);
+    const qs = params.toString();
+    const url = `/knowledge/file/${encodeURIComponent(fileId)}${qs ? "?" + qs : ""}`;
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
@@ -271,26 +425,29 @@ export function CitationChip({
               width: POPOVER_W,
             }}
           >
-            <div className="flex items-center gap-1.5 text-[11px] text-blue-700">
-              <ChunkIcon className="h-3 w-3 shrink-0" />
-              <span className="font-medium">{typeLabel}</span>
-            </div>
-            <div className="mt-1.5 truncate text-[12px] font-medium text-foreground">
-              {fileName}
-              {pageText ? (
-                <span className="ml-1 font-normal text-muted">· {pageText}</span>
+            <div className="shrink-0 space-y-0.5 border-b border-gray-100 pb-2">
+              <div className="flex items-center gap-1.5 text-[11px] text-blue-700">
+                <ChunkIcon className="h-3 w-3 shrink-0" />
+                <span className="font-medium">{typeLabel}</span>
+              </div>
+              <div className="truncate text-[12px] font-medium leading-snug text-foreground">
+                {fileName}
+                {pageText ? (
+                  <span className="ml-1 font-normal text-muted">· {pageText}</span>
+                ) : null}
+              </div>
+              {sectionTitle ? (
+                <div className="truncate text-[11px] leading-snug text-muted">
+                  {sectionTitle}
+                </div>
               ) : null}
             </div>
-            {sectionTitle ? (
-              <div className="mt-0.5 truncate text-[11px] text-muted">
-                {sectionTitle}
-              </div>
-            ) : null}
             {preview ? (
-              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <div className="mt-2 flex min-h-0 flex-1 flex-col overflow-hidden">
                 <CitationPreviewBody
                   preview={preview}
                   chunkType={citation?.chunk_type}
+                  chunkId={citation?.chunk_id}
                 />
               </div>
             ) : (

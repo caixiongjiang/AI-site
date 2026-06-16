@@ -100,6 +100,9 @@ export async function listChatSessions(
     page?: number;
     page_size?: number;
     knowledge_base_id?: string;
+    /** 'kb' = 仅 KB 级会话；'folder' = 仅指定 folder 的会话（须配合 folder_id） */
+    scope?: "kb" | "folder";
+    folder_id?: string;
   } = {}
 ): Promise<ChatSessionListResponse> {
   const search = new URLSearchParams();
@@ -109,6 +112,12 @@ export async function listChatSessions(
   }
   if (params.knowledge_base_id) {
     search.set("knowledge_base_id", params.knowledge_base_id);
+  }
+  if (params.scope) {
+    search.set("scope", params.scope);
+  }
+  if (params.folder_id) {
+    search.set("folder_id", params.folder_id);
   }
   const suffix = search.toString() ? `?${search.toString()}` : "";
   return requestJson<ChatSessionListResponse>(`/api/chat/sessions${suffix}`, {

@@ -42,6 +42,9 @@ export interface Citation {
    * 老的真实 chunk_id 匹配路径。
    */
   alias?: string | null;
+  /** 图片 chunk 专用：对象存储路径，用于按需请求 presigned URL */
+  image_file_path?: string | null;
+  bucket_name?: string | null;
 }
 
 export interface ToolCallRecord {
@@ -69,6 +72,10 @@ export interface ToolCallRecord {
   retrieval_params?: Record<string, unknown>;
   /** 工具调用耗时（毫秒） */
   time_ms?: number;
+  /** read_image_chunks 等工具内部子阶段（仅流式进行中） */
+  execution_stage?: "loading_images" | "calling_vlm" | null;
+  /** 工具内部调用的子模型（如 read_image_chunks 的 VLM） */
+  execution_model?: string | null;
 }
 
 export interface TokenUsageRecord {
@@ -100,9 +107,20 @@ export interface ChatSessionInfo {
   user_id: string;
   title: string;
   knowledge_base_ids: string[];
+  /** 会话绑定的文件夹 ID；NULL=KB scope，非 NULL=folder scope */
+  folder_id?: string | null;
+  /** folder scope 下是否含子文件夹（仅 folder_id 非空时生效） */
+  include_subfolders?: boolean;
+  /** 后台 agent / 起标题 / 摘要等仍然走 preset；用户 chat 可被 `model` 覆盖 */
   model_preset: string;
+  /**
+   * 用户从 `/api/chat/models` 选定的 LiteLLM 模型字符串（如 `openai/gpt-4o-mini`）。
+   * `null` / `undefined` 表示用户没有显式选定，此时由 `model_preset` 决定模型。
+   */
+  model?: string | null;
   agent_mode: boolean;
   enable_thinking: boolean;
+  enable_multimodal?: boolean;
   max_tool_rounds: number;
   system_prompt?: string | null;
   message_count: number;
@@ -118,7 +136,20 @@ export interface ChatSessionInfo {
 export interface ChatSessionCreateRequest {
   title?: string;
   knowledge_base_ids: string[];
+  /**
+   * 可选：会话绑定的文件夹 ID（来自 `workspace_folder.folder_id`）。
+   * 传入后启用 folder scope，每轮检索范围限定在该文件夹下文档；
+   * 后端会校验 folder 所属 KB 必须 ∈ knowledge_base_ids，违反时返回 422。
+   */
+  folder_id?: string | null;
+  /**
+   * folder scope 下是否递归含子文件夹的文档，默认 true；
+   * 仅当 `folder_id` 非空时有意义。
+   */
+  include_subfolders?: boolean;
   model_preset?: string;
+  /** 用户选定的 LiteLLM 模型字符串；不传 → 由 `model_preset` 决定 */
+  model?: string | null;
   agent_mode?: boolean;
   enable_thinking?: boolean;
   max_tool_rounds?: number;
@@ -152,11 +183,24 @@ export interface ChatRequestPayload {
   query: string;
   agent_mode?: boolean | null;
   enable_thinking?: boolean | null;
+  enable_multimodal?: boolean | null;
   model_preset?: string | null;
+  /**
+   * 用户在前端选定的 LiteLLM 模型字符串；优先级高于 `model_preset`。
+   * 不传 → 沿用会话当前的 `model`（或 `model_preset`）。
+   */
+  model?: string | null;
   max_tool_rounds?: number | null;
   retrieve_top_k?: number | null;
   custom_system_prompt?: string | null;
   skip_retrieval?: boolean | null;
+  /**
+   * 请求级临时覆盖 folder scope；不传/null 表示沿用 session.folder_id。
+   * 后端要求：覆盖时 folder 所属 KB 必须 ∈ session.knowledge_base_ids。
+   */
+  folder_id?: string | null;
+  /** 请求级临时覆盖 include_subfolders；不传/null 表示沿用 session 默认 */
+  include_subfolders?: boolean | null;
 }
 
 // 客户端 → 服务端
@@ -182,6 +226,9 @@ export interface RetrievalChunkPreview {
   file_name?: string | null;
   /** Phase B：session 级短 alias（cN）。retrieval.done 帧提前下发供 alias chip 渲染。 */
   alias?: string | null;
+  /** 图片 chunk 专用：对象存储路径，用于按需请求 presigned URL */
+  image_file_path?: string | null;
+  bucket_name?: string | null;
 }
 
 // 服务端 → 客户端
@@ -198,6 +245,8 @@ export type ServerFrame =
         user_message_id: string;
         agent_mode: boolean;
         model_preset: string;
+        /** 本轮最终生效的 LiteLLM 模型字符串；为 null 表示由 model_preset 决定 */
+        model?: string | null;
       };
     }
   | {
@@ -228,6 +277,14 @@ export type ServerFrame =
       data: { index: number; text: string };
     }
   | {
+      type: "tool.progress";
+      data: {
+        stage: "loading_images" | "calling_vlm";
+        tool_call_id: string;
+        model?: string | null;
+      };
+    }
+  | {
       type: "tool_call.completed";
       data: {
         id: string;
@@ -240,6 +297,8 @@ export type ServerFrame =
         retrieval_chunks?: RetrievalChunkPreview[];
         /** 检索工具专用：查询参数 */
         retrieval_params?: Record<string, unknown>;
+        /** 工具内部调用的子模型（如 read_image_chunks 的 VLM） */
+        execution_model?: string | null;
       };
     }
   | {

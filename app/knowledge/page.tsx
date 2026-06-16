@@ -1415,6 +1415,7 @@ function KnowledgeWorkspace() {
           <KnowledgeChatPanel
             knowledgeBaseId={selectedKbId || null}
             knowledgeBaseName={selectedKb?.knowledge_base_name}
+            selectedFolderId={selectedFolder?.folder_id ?? null}
             selectedFolderName={selectedFolder?.folder_name ?? null}
             disabled={Boolean(chatDisabledReason)}
             disabledReason={chatDisabledReason ?? undefined}
