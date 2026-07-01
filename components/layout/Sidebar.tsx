@@ -11,6 +11,7 @@ import {
   HelpCircle,
   Info,
   LogOut,
+  Sparkle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -22,6 +23,7 @@ const navItems = [
   { icon: Home, label: "首页", href: "/", requiresAuth: false },
   { icon: Bot, label: "Agent应用", href: "/agents", requiresAuth: true },
   { icon: Library, label: "知识库", href: "/knowledge", requiresAuth: true },
+  { icon: Sparkle, label: "技能", href: "/skills", requiresAuth: true },
 ];
 
 const bottomItems = [
