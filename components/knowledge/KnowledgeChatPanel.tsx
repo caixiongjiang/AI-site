@@ -5,6 +5,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -12,8 +13,10 @@ import {
 import {
   AlignJustify,
   AlertTriangle,
+  ArrowUp,
   Bot,
   Brain,
+  Check,
   ChevronDown,
   ChevronRight,
   ChevronUp,
@@ -23,22 +26,22 @@ import {
   Cpu,
   Database,
   Eye,
+  ExternalLink,
   FileText,
   Folder,
   Image as ImageIcon,
   Loader2,
-  MessageSquare,
   MessageSquarePlus,
   Pencil,
   Plus,
-  Send,
+  Search,
   Share2,
+  Sparkle,
   Sparkles,
   Table as TableIcon,
   ThumbsDown,
   ThumbsUp,
   Trash2,
-  Wand2,
   Wrench,
   X,
 } from "lucide-react";
@@ -48,6 +51,7 @@ import {
   type ChatModelItem,
 } from "@/lib/api/chat-models";
 import { MarkdownAnswer } from "@/components/knowledge/MarkdownAnswer";
+import { ReportViewer } from "@/components/knowledge/ReportViewer";
 import { CitationPreviewMarkdown } from "@/components/knowledge/CitationPreviewMarkdown";
 import { ImagePreviewPopover } from "@/components/knowledge/ImagePreviewPopover";
 import {
@@ -63,6 +67,22 @@ import type {
   UiChatMessage,
 } from "@/lib/chat-types";
 import { cn, formatDate } from "@/lib/utils";
+import { fetchSkills, type SkillDescriptor } from "@/lib/api/skills";
+import { SlashSkillMenu } from "@/components/skills/SlashSkillMenu";
+import {
+  AtFileMentionMenu,
+  type AtMention,
+} from "@/components/knowledge/AtFileMentionMenu";
+import {
+  MentionComposer,
+  type MentionComposerHandle,
+} from "@/components/knowledge/MentionComposer";
+import {
+  INTERACTION_MODE_OPTIONS,
+  type InteractionMode,
+  modeFromInteraction,
+} from "@/lib/chat/interaction-modes";
+import { isAction } from "@/lib/actions/chat-actions";
 
 interface KnowledgeChatPanelProps {
   knowledgeBaseId: string | null;
@@ -98,8 +118,11 @@ const STARTER_PROMPTS = [
 
 const SESSION_DEFAULT_VISIBLE = 5;
 
+/** 对话主内容最大宽度，居中窄栏（类似 Cursor） */
+const CHAT_CONTENT_CLASS = "mx-auto w-full max-w-[720px]";
+
 interface ChatSettings {
-  agentMode: boolean;
+  interactionMode: InteractionMode;
   enableThinking: boolean;
   enableMultimodal: boolean;
   /**
@@ -1243,6 +1266,32 @@ function UserMessageBubble({
 // 连续 assistant 消息组（合并为一个视觉块）
 // ============================================================
 
+/**
+ * 从消息正文中提取 HTML 报告片段，返回 null 表示不是 HTML 报告。
+ *
+ * 兼容三种情况：
+ *   1. 纯 HTML（以 `<!DOCTYPE html>` 或 `<html>` 开头）
+ *   2. HTML 前带说明文字（如"现在所有证据已收齐，让我生成完整的 HTML 报告。"）
+ *   3. HTML 被 ```html 代码块包裹
+ *
+ * 通过定位 `<!DOCTYPE html>` / `<html>` 起点并截到 `</html>` 终点，
+ * 自动剥离前导说明、代码块围栏与尾部多余内容。
+ */
+function extractHtmlReport(content: string): string | null {
+  if (!content) return null;
+  const startMatch = /<!DOCTYPE html|<html[\s>]/i.exec(content);
+  if (!startMatch) return null;
+  let html = content.slice(startMatch.index);
+  const endMatch = /<\/html\s*>/i.exec(html);
+  if (!endMatch) return null;
+  html = html.slice(0, endMatch.index + endMatch[0].length);
+  return html.trim();
+}
+
+function hasHtmlReportStart(content: string): boolean {
+  return /<!DOCTYPE html|<html[\s>]/i.test(content);
+}
+
 /** 单个 assistant round 的可折叠内容块（中间轮默认折叠，最后一轮 / 正在流式展开） */
 function AssistantRoundBlock({
   message,
@@ -1250,6 +1299,7 @@ function AssistantRoundBlock({
   isIntermediate,
   allCitations,
   onViewSearchResults,
+  onViewReport,
 }: {
   message: UiChatMessage;
   /** 是否是组内最后一条（最终总结） */
@@ -1259,6 +1309,7 @@ function AssistantRoundBlock({
   /** 整组合并后的 citations（跨 round 去重），供 MarkdownAnswer 渲染引用 */
   allCitations: Citation[];
   onViewSearchResults?: (citations: Citation[], params?: Record<string, unknown>) => void;
+  onViewReport?: (html: string, citations: Citation[]) => void;
 }) {
   // 中间轮默认折叠；正在流式时保持展开；最后一轮始终展开
   const [collapsed, setCollapsed] = useState(isIntermediate && !message.inflight);
@@ -1272,6 +1323,13 @@ function AssistantRoundBlock({
 
   const m = message;
   const hasContent = Boolean(m.content);
+  // 模型可能在 HTML 报告前后附带说明文字（如"现在所有证据已收齐，让我生成…"），
+  // 或用 ```html 代码块包裹，这里从正文任意位置抽取出纯 HTML 片段。
+  const reportHtml = useMemo(() => extractHtmlReport(m.content), [m.content]);
+  const isHtmlReport = Boolean(reportHtml);
+  const isReportGenerating = Boolean(
+    m.inflight && hasHtmlReportStart(m.content) && !isHtmlReport
+  );
 
   return (
     <div>
@@ -1301,6 +1359,31 @@ function AssistantRoundBlock({
 
       {/* 正文（中间轮可折叠） */}
       {hasContent && !collapsed ? (
+        isReportGenerating ? (
+          <div className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3">
+            <div className="flex items-center gap-2 text-sm text-primary">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              正在生成调研报告…
+            </div>
+          </div>
+        ) : isHtmlReport ? (
+          <div className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-primary" />
+                <span className="text-sm font-medium text-primary">调研报告已生成</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => onViewReport?.(reportHtml ?? m.content, allCitations)}
+                className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary/90"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                查看报告
+              </button>
+            </div>
+          </div>
+        ) : (
         <div
           className={cn(
             "rounded-2xl bg-gray-50 px-4 py-3 text-sm leading-7 text-foreground",
@@ -1315,6 +1398,7 @@ function AssistantRoundBlock({
             />
           </div>
         </div>
+        )
       ) : hasContent && collapsed ? (
         /* 折叠态：显示简短摘要 */
         <div
@@ -1322,13 +1406,6 @@ function AssistantRoundBlock({
           onClick={() => setCollapsed(false)}
         >
           <span className="line-clamp-1">{m.content.slice(0, 100)}{m.content.length > 100 ? "…" : ""}</span>
-        </div>
-      ) : m.inflight ? (
-        <div className="rounded-2xl bg-gray-50 px-4 py-3">
-          <div className="flex items-center gap-2 text-xs text-muted">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            正在生成回复…
-          </div>
         </div>
       ) : null}
 
@@ -1351,12 +1428,14 @@ function AssistantMessageGroup({
   priorCitations,
   onOpenSourcesPanel,
   onViewSearchResults,
+  onViewReport,
 }: {
   messages: UiChatMessage[];
   /** 前面所有 group 累积的 citations（跨 turn 引用） */
   priorCitations?: Citation[];
   onOpenSourcesPanel?: (citations: Citation[]) => void;
   onViewSearchResults?: (citations: Citation[], params?: Record<string, unknown>) => void;
+  onViewReport?: (html: string, citations: Citation[]) => void;
 }) {
   // 本 group 自身的 citations（全量，供跨 turn 合并用）
   const ownCitations = useMemo(() => {
@@ -1422,6 +1501,7 @@ function AssistantMessageGroup({
                 isIntermediate={isIntermediate}
                 allCitations={allCitationsForRender}
                 onViewSearchResults={onViewSearchResults}
+                onViewReport={onViewReport}
               />
             </div>
           );
@@ -1750,187 +1830,88 @@ function SessionDrawer({
   );
 }
 
-// ============================================================
-// 对话框工具条：Chat/Agent 切换 + 思考 + 模型 + (Agent 时) 工具轮
-// ============================================================
-
-function ModeToggle({
-  agentMode,
-  onChange,
-  disabled,
-}: {
-  agentMode: boolean;
-  onChange: (next: boolean) => void;
-  disabled?: boolean;
-}) {
+/**
+ * 模型能力图标：思考 / 多模态（仅在模型选择列表中展示）
+ */
+function ModelCapabilityIcons({ model }: { model: ChatModelItem }) {
   return (
-    <div className="inline-flex items-center rounded-full border border-gray-200 bg-white p-0.5 text-[11px]">
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => onChange(false)}
+    <span className="inline-flex shrink-0 items-center gap-1">
+      <Brain
         className={cn(
-          "flex h-5 items-center gap-1 rounded-full px-2.5 transition-colors",
-          !agentMode
-            ? "bg-primary/10 text-primary"
-            : "text-muted hover:text-foreground",
-          disabled && "cursor-not-allowed opacity-60"
+          "h-3 w-3",
+          model.supports_thinking ? "text-primary" : "text-gray-300"
         )}
-        title="Chat：仅检索后直接回答，不调用工具"
-      >
-        <MessageSquare className="h-3 w-3" />
-        Chat
-      </button>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => onChange(true)}
+        aria-label={model.supports_thinking ? "支持思考" : "不支持思考"}
+      />
+      <Eye
         className={cn(
-          "flex h-5 items-center gap-1 rounded-full px-2.5 transition-colors",
-          agentMode
-            ? "bg-primary/10 text-primary"
-            : "text-muted hover:text-foreground",
-          disabled && "cursor-not-allowed opacity-60"
+          "h-3 w-3",
+          model.supports_multimodal ? "text-primary" : "text-gray-300"
         )}
-        title="Agent：模型可主动调用检索 / 工具补全上下文"
-      >
-        <Wand2 className="h-3 w-3" />
-        Agent
-      </button>
-    </div>
+        aria-label={model.supports_multimodal ? "支持多模态" : "不支持多模态"}
+      />
+    </span>
   );
 }
 
-function ThinkingChip({
-  supportsThinking,
-}: {
-  /** 当前模型是否支持思考链；false 时 chip 灰色禁用，true 时绿色自动开启不可关闭 */
-  supportsThinking?: boolean;
-}) {
-  const modelSupports = supportsThinking === true;
-
-  return (
-    <button
-      type="button"
-      disabled
-      className={cn(
-        "flex h-6 items-center gap-1 rounded-full border px-2.5 text-[11px] transition-colors",
-        modelSupports
-          ? "border-emerald-300 bg-emerald-50 text-emerald-700 cursor-default"
-          : "border-gray-200 bg-white text-muted cursor-not-allowed opacity-60"
-      )}
-      title={
-        modelSupports
-          ? "思考链已开启（当前模型支持思考）"
-          : "当前模型不支持思考链"
-      }
-    >
-      <Brain className="h-3 w-3" />
-      思考
-    </button>
-  );
-}
-
-function MultimodalChip({
-  supportsMultimodal,
-}: {
-  /** 当前模型是否支持多模态读图；false 时 chip 灰色禁用，true 时绿色自动开启不可关闭 */
-  supportsMultimodal?: boolean;
-}) {
-  const modelSupports = supportsMultimodal === true;
-
-  return (
-    <button
-      type="button"
-      disabled
-      className={cn(
-        "flex h-6 items-center gap-1 rounded-full border px-2.5 text-[11px] transition-colors",
-        modelSupports
-          ? "border-emerald-300 bg-emerald-50 text-emerald-700 cursor-default"
-          : "border-gray-200 bg-white text-muted cursor-not-allowed opacity-60"
-      )}
-      title={
-        modelSupports
-          ? "多模态已开启（当前模型支持图片理解）"
-          : "当前模型不支持多模态"
-      }
-    >
-      <Eye className="h-3 w-3" />
-      多模态
-    </button>
-  );
+function applyModelSelection(
+  settings: ChatSettings,
+  model: ChatModelItem
+): ChatSettings {
+  return {
+    ...settings,
+    model: model.id,
+    enableThinking: model.supports_thinking === true,
+    enableMultimodal: model.supports_multimodal === true,
+  };
 }
 
 /**
- * 模型选择器 chip
- *
- * 交互合约
- * --------
- * - 模型清单由调用方通过 props 传入（panel 层 ``useChatModels`` 已拉好），
- *   chip 只负责渲染下拉 + 触发 onChange，不再自己发请求。
- * - 扁平列表：按后端给出的顺序逐条列出，不分组、不显示 provider header，
- *   不展示原始 LiteLLM id，**只显示 ``label``**。
- * - 默认选哪个由 panel 在 settings 同步效果里决定（已对话 → 走 session
- *   持久化的 model；新会话 → 列表第一个）。
- *
- * Edge case
- * ---------
- * - 当 ``value`` 在当前列表里找不到（老会话用了已下线的模型）时，按钮文案
- *   退化为 raw value 字符串，下拉里没有任何条目高亮——提示用户重新选一个。
- * - 列表为空（模型清单尚未加载 / proxy 空配置）时下拉里出现一行说明文案，
- *   而不是渲染零项给用户看。
+ * 输入栏右侧内联模型选择：hover 时在上方展开列表（与 Cursor 一致）
  */
-function ModelChip({
+function InlineModelPicker({
   value,
   models,
   onChange,
   disabled,
-  errored,
 }: {
-  /** 当前已选模型 ID（LiteLLM 字符串） */
   value: string;
-  /** 由父组件 ``useChatModels`` 提供 */
   models: ChatModelItem[];
   onChange: (next: string) => void;
   disabled?: boolean;
-  /** 模型清单接口拉取失败时显示一行温和提示 */
-  errored?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
 
   const display = useMemo(() => {
-    if (!value) return { label: "选择模型", title: "请选择一个模型" };
+    if (!value) return "选择模型";
     const hit = models.find((m) => m.id === value);
-    if (hit) return { label: hit.label, title: hit.id };
-    return { label: value, title: value };
+    if (hit) return hit.label;
+    const slash = value.lastIndexOf("/");
+    return slash >= 0 ? value.slice(slash + 1) : value;
   }, [value, models]);
 
   return (
-    <div className="relative">
+    <div
+      className="relative shrink-0"
+      onMouseEnter={() => {
+        if (!disabled) setHovered(true);
+      }}
+      onMouseLeave={() => setHovered(false)}
+    >
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
         disabled={disabled}
         className={cn(
-          "flex h-6 items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 text-[11px] text-foreground transition-colors hover:border-primary",
+          "flex h-7 shrink-0 items-center gap-0.5 whitespace-nowrap rounded-full px-2 text-[11px] text-muted transition-colors hover:text-foreground",
           disabled && "cursor-not-allowed opacity-60"
         )}
-        title={display.title}
       >
-        <Cpu className="h-3 w-3" />
-        <span className="max-w-[160px] truncate">{display.label}</span>
-        <ChevronDown className="h-3 w-3" />
+        <span>{display}</span>
+        <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
       </button>
-      {open ? (
-        <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full left-0 z-40 mb-1 max-h-80 w-56 overflow-y-auto rounded-xl border border-gray-200 bg-white p-1 shadow-xl">
-            {errored ? (
-              <div className="px-2.5 py-1.5 text-[10px] text-amber-600">
-                模型清单接口不可达，使用离线兜底列表
-              </div>
-            ) : null}
-
+      {hovered ? (
+        <div className="absolute bottom-full right-0 z-50 mb-1 min-w-[11rem] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
+          <div className="max-h-56 overflow-y-auto p-1">
             {models.length === 0 ? (
               <div className="flex items-center gap-1 px-2.5 py-2 text-[11px] text-muted">
                 <Loader2 className="h-3 w-3 animate-spin" /> 加载模型中…
@@ -1940,146 +1921,371 @@ function ModelChip({
                 <button
                   key={m.id}
                   type="button"
-                  onClick={() => {
-                    onChange(m.id);
-                    setOpen(false);
-                  }}
+                  onClick={() => onChange(m.id)}
                   className={cn(
-                    "flex w-full items-center rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-gray-50",
+                    "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-gray-50",
                     m.id === value && "bg-primary/5"
                   )}
-                  title={m.id}
                 >
                   <span
                     className={cn(
-                      "truncate text-xs",
+                      "min-w-0 flex-1 truncate text-xs",
                       m.id === value ? "text-primary" : "text-foreground"
                     )}
                   >
                     {m.label}
                   </span>
+                  <ModelCapabilityIcons model={m} />
+                  {m.id === value ? (
+                    <Check className="h-3 w-3 shrink-0 text-primary" />
+                  ) : null}
                 </button>
               ))
             )}
           </div>
-        </>
+        </div>
       ) : null}
     </div>
   );
 }
 
-function ToolRoundsChip({
-  value,
-  onChange,
+/**
+ * Plan 模式选中后在输入栏展示的黄色 pill（与 Cursor 一致；Agent 默认不展示）
+ */
+function InteractionModeChip({
+  mode,
   disabled,
+  onRemove,
 }: {
-  value: number;
-  onChange: (next: number) => void;
+  mode: InteractionMode;
   disabled?: boolean;
+  onRemove: () => void;
 }) {
-  const [open, setOpen] = useState(false);
+  if (mode !== "plan") return null;
+
+  const plan = INTERACTION_MODE_OPTIONS.find((o) => o.key === "plan");
+  if (!plan) return null;
+  const Icon = plan.icon;
+
   return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        disabled={disabled}
-        className={cn(
-          "flex h-6 items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 text-[11px] text-foreground hover:border-primary",
-          disabled && "cursor-not-allowed opacity-60"
-        )}
-        title="Agent 模式下允许的工具调用回合上限"
-      >
-        <Wrench className="h-3 w-3" />
-        工具轮 {value}
-        <ChevronDown className="h-3 w-3" />
-      </button>
-      {open ? (
-        <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full left-0 z-40 mb-1 w-48 rounded-xl border border-gray-200 bg-white p-3 shadow-xl">
-            <div className="mb-2 flex items-center justify-between text-[11px] text-muted">
-              <span>最大工具回合</span>
-              <span className="text-foreground">{value}</span>
-            </div>
-            <input
-              type="range"
-              min={1}
-              max={10}
-              value={value}
-              onChange={(e) => onChange(Number(e.target.value))}
-              className="w-full accent-primary"
-            />
-            <div className="mt-1 flex justify-between text-[10px] text-muted">
-              <span>1</span>
-              <span>10</span>
-            </div>
-          </div>
-        </>
+    <span
+      className={cn(
+        "inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-[11px] leading-none whitespace-nowrap box-border",
+        "border-amber-200 bg-amber-50 text-amber-700"
+      )}
+    >
+      <Icon className="h-3 w-3 shrink-0 text-amber-600" strokeWidth={1.75} />
+      <span>{plan.label}</span>
+      {!disabled ? (
+        <button
+          type="button"
+          onClick={onRemove}
+          className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-amber-600 transition-colors hover:bg-amber-200/70 hover:text-amber-800"
+          aria-label="退出 Plan 模式"
+        >
+          <X className="h-3 w-3" />
+        </button>
       ) : null}
-    </div>
+    </span>
   );
 }
 
-function ChatToolbar({
+/**
+ * ➕ 号浮层配置菜单（Cursor 风格）
+ *
+ * 结构：顶部搜索框 + 上段模式选择（Agent / Plan）+ 分隔线
+ *      + 下段带 > 子菜单（模型 / 技能 / 工具轮）。
+ * - 搜索框过滤所有条目文字；
+ * - 上段点击选中模式（非 toggle），已选中项显示勾选；
+ * - 下段 hover 时在右侧展开子菜单，与 Cursor 一致。
+ */
+function PlusConfigMenu({
   settings,
   onChange,
-  isStreaming,
-  compact,
-  modeLocked,
   models,
-  modelsErrored,
+  skills,
+  selectedSkills,
+  onToggleSkill,
+  isStreaming,
+  onClose,
 }: {
   settings: ChatSettings;
   onChange: (next: ChatSettings) => void;
-  isStreaming: boolean;
-  compact?: boolean;
-  /** 会话已有消息时锁定模式，不允许切换 */
-  modeLocked?: boolean;
-  /** 由 panel 通过 ``useChatModels`` 集中拉取后下发，避免每个 chip 各自请求 */
   models: ChatModelItem[];
-  modelsErrored?: boolean;
+  skills: SkillDescriptor[];
+  selectedSkills: string[];
+  onToggleSkill: (name: string) => void;
+  isStreaming?: boolean;
+  onClose: () => void;
 }) {
-  // 当前模型是否支持思考链
-  const currentModelSupportsThinking = useMemo(() => {
-    if (!settings.model) return false;
-    const hit = models.find((m) => m.id === settings.model);
-    return hit?.supports_thinking === true;
+  const [query, setQuery] = useState("");
+  const [hoveredSub, setHoveredSub] = useState<null | "models" | "skills" | "tools">(null);
+
+  const q = query.trim().toLowerCase();
+  const match = (text: string) => !q || text.toLowerCase().includes(q);
+
+  const modeDisabled = isStreaming === true;
+
+  // 模式选择：Agent / Plan（点击选中，非 toggle）
+  const modeItems = INTERACTION_MODE_OPTIONS.filter(
+    (it) => match(it.label) || match(it.desc)
+  );
+
+  const currentModelLabel = useMemo(() => {
+    if (!settings.model) return "选择模型";
+    return models.find((m) => m.id === settings.model)?.label ?? settings.model;
   }, [settings.model, models]);
 
-  // 当前模型是否支持多模态读图
-  const currentModelSupportsMultimodal = useMemo(() => {
-    if (!settings.model) return false;
-    const hit = models.find((m) => m.id === settings.model);
-    return hit?.supports_multimodal === true;
-  }, [settings.model, models]);
+  const filteredMenuSkills = useMemo(() => {
+    return skills.filter(
+      (s) => match(s.name) || match(s.description) || match("技能")
+    );
+  }, [skills, q]);
+
+  const skillsValue =
+    selectedSkills.length > 0
+      ? `${selectedSkills.length} 已选`
+      : `${skills.length} 可用`;
+
+  const subItems = [
+    { key: "models" as const, icon: Cpu, label: "模型", value: currentModelLabel },
+    { key: "skills" as const, icon: Sparkle, label: "技能", value: skillsValue },
+    { key: "tools" as const, icon: Wrench, label: "工具轮", value: String(settings.maxToolRounds) },
+  ].filter((it) => {
+    if (it.key === "skills") {
+      return match(it.label) || match(it.value) || filteredMenuSkills.length > 0;
+    }
+    return match(it.label) || match(it.value);
+  });
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <ModeToggle
-        agentMode={settings.agentMode}
-        disabled={isStreaming || modeLocked}
-        onChange={(v) => onChange({ ...settings, agentMode: v })}
-      />
-      <ThinkingChip supportsThinking={currentModelSupportsThinking} />
-      <MultimodalChip supportsMultimodal={currentModelSupportsMultimodal} />
-      <ModelChip
-        value={settings.model}
-        models={models}
-        errored={modelsErrored}
-        disabled={isStreaming}
-        onChange={(v) => {
-          onChange({ ...settings, model: v });
-        }}
-      />
-      {settings.agentMode && !compact ? (
-        <ToolRoundsChip
-          value={settings.maxToolRounds}
-          disabled={isStreaming}
-          onChange={(v) => onChange({ ...settings, maxToolRounds: v })}
-        />
-      ) : null}
-    </div>
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div className="absolute bottom-full left-0 z-50 mb-2 w-60 overflow-visible rounded-xl border border-gray-200 bg-white shadow-xl">
+        {/* 顶部搜索框 */}
+        <div className="flex items-center gap-1.5 border-b border-gray-100 px-2.5 py-2">
+          <Search className="h-3.5 w-3.5 shrink-0 text-muted" />
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索配置项…"
+            className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted"
+          />
+        </div>
+
+        <div className="relative">
+          {/* 上段：模式选择（Agent / Plan） */}
+          {modeItems.length > 0 ? (
+            <div className="p-1.5">
+              {modeItems.map((it) => {
+                const Icon = it.icon;
+                const selected = settings.interactionMode === it.key;
+                return (
+                  <button
+                    key={it.key}
+                    type="button"
+                    disabled={modeDisabled}
+                    onClick={() => {
+                      if (modeDisabled) return;
+                      if (!selected) {
+                        onChange({ ...settings, interactionMode: it.key });
+                      }
+                      onClose();
+                    }}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
+                      modeDisabled ? "cursor-not-allowed opacity-50" : "hover:bg-gray-50",
+                      selected && it.key === "plan" && "bg-amber-50",
+                      selected && it.key === "agent" && "bg-gray-50"
+                    )}
+                    title={it.desc}
+                  >
+                    <Icon
+                      className={cn(
+                        "h-4 w-4 shrink-0",
+                        selected && it.key === "plan"
+                          ? "text-amber-600"
+                          : selected
+                            ? "text-primary"
+                            : "text-muted"
+                      )}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div
+                        className={cn(
+                          "truncate text-xs font-medium",
+                          selected && it.key === "plan"
+                            ? "text-amber-700"
+                            : "text-foreground"
+                        )}
+                      >
+                        {it.label}
+                      </div>
+                      <div className="truncate text-[10px] text-muted">{it.desc}</div>
+                    </div>
+                    {selected ? (
+                      <Check
+                        className={cn(
+                          "h-3.5 w-3.5 shrink-0",
+                          it.key === "plan" ? "text-amber-600" : "text-primary"
+                        )}
+                      />
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {/* 分隔线 */}
+          {modeItems.length > 0 && subItems.length > 0 ? (
+            <div className="mx-3 h-px bg-gray-100" />
+          ) : null}
+
+          {/* 下段：hover 时在右侧展开子菜单（Cursor 风格） */}
+          {subItems.length > 0 ? (
+            <div className="p-1.5">
+              {subItems.map((it) => {
+                const Icon = it.icon;
+                const isHovered = hoveredSub === it.key;
+                return (
+                  <div
+                    key={it.key}
+                    className="relative"
+                    onMouseEnter={() => setHoveredSub(it.key)}
+                    onMouseLeave={() => setHoveredSub(null)}
+                  >
+                    <div
+                      className={cn(
+                        "flex w-full cursor-default items-center gap-2 rounded-lg px-2 py-1.5 transition-colors",
+                        isHovered && "bg-gray-50"
+                      )}
+                    >
+                      <Icon className="h-4 w-4 shrink-0 text-muted" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-xs font-medium text-foreground">{it.label}</div>
+                      </div>
+                      <span className="max-w-[88px] truncate text-[10px] text-muted">{it.value}</span>
+                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted" />
+                    </div>
+
+                    {isHovered && it.key === "models" ? (
+                      <div className="absolute bottom-0 left-full z-10 pl-1">
+                        <div className="w-48 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
+                          <div className="max-h-56 overflow-y-auto p-1">
+                          {models.length === 0 ? (
+                            <div className="flex items-center gap-1 px-2.5 py-2 text-[11px] text-muted">
+                              <Loader2 className="h-3 w-3 animate-spin" /> 加载模型中…
+                            </div>
+                          ) : (
+                            models.map((m) => (
+                              <button
+                                key={m.id}
+                                type="button"
+                                onClick={() => onChange(applyModelSelection(settings, m))}
+                                className={cn(
+                                  "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-gray-50",
+                                  m.id === settings.model && "bg-primary/5"
+                                )}
+                              >
+                                <span
+                                  className={cn(
+                                    "min-w-0 flex-1 truncate text-xs",
+                                    m.id === settings.model ? "text-primary" : "text-foreground"
+                                  )}
+                                >
+                                  {m.label}
+                                </span>
+                                <ModelCapabilityIcons model={m} />
+                                {m.id === settings.model ? (
+                                  <Check className="h-3 w-3 shrink-0 text-primary" />
+                                ) : null}
+                              </button>
+                            ))
+                          )}
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {isHovered && it.key === "skills" ? (
+                      <div className="absolute bottom-0 left-full z-10 pl-1">
+                        <div className="w-48 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
+                          <div className="max-h-56 overflow-y-auto p-1">
+                            {filteredMenuSkills.length === 0 ? (
+                              <div className="px-2.5 py-2 text-[11px] text-muted">暂无可用技能</div>
+                            ) : (
+                              filteredMenuSkills.map((skill) => {
+                                const selected = selectedSkills.includes(skill.name);
+                                return (
+                                  <button
+                                    key={skill.name}
+                                    type="button"
+                                    onClick={() => onToggleSkill(skill.name)}
+                                    className={cn(
+                                      "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-gray-50",
+                                      selected && "bg-primary/5"
+                                    )}
+                                    title={skill.description}
+                                  >
+                                    <Sparkle className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
+                                    <span
+                                      className={cn(
+                                        "min-w-0 flex-1 truncate text-xs",
+                                        selected ? "text-primary" : "text-foreground"
+                                      )}
+                                    >
+                                      {skill.name}
+                                    </span>
+                                    {selected ? (
+                                      <Check className="h-3 w-3 shrink-0 text-primary" />
+                                    ) : null}
+                                  </button>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {isHovered && it.key === "tools" ? (
+                      <div className="absolute bottom-0 left-full z-10 pl-1">
+                        <div className="w-44 rounded-xl border border-gray-200 bg-white p-2.5 shadow-xl">
+                        <div className="mb-2 flex items-center justify-between text-[11px] text-muted">
+                          <span>最大工具回合</span>
+                          <span className="text-foreground">{settings.maxToolRounds}</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={1}
+                          max={10}
+                          value={settings.maxToolRounds}
+                          onChange={(e) =>
+                            onChange({ ...settings, maxToolRounds: Number(e.target.value) })
+                          }
+                          className="w-full accent-primary"
+                        />
+                        <div className="mt-1 flex justify-between text-[10px] text-muted">
+                          <span>1</span>
+                          <span>10</span>
+                        </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {modeItems.length === 0 && subItems.length === 0 ? (
+            <div className="px-3 py-4 text-center text-[11px] text-muted">无匹配配置项</div>
+          ) : null}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -2110,6 +2316,7 @@ export const KnowledgeChatPanel = ({
     activeSession,
     activeSessionId,
     messages,
+    hasSummary,
     phase,
     lastError,
     isStreaming,
@@ -2118,26 +2325,111 @@ export const KnowledgeChatPanel = ({
     newSession,
     renameActive,
     deleteActive,
+    clearMessages,
+    summarizeContext,
+    stopSummarize,
+    summarizing,
     send,
     stop,
     clearError,
   } = chat;
 
+  // input 是编辑器纯文本镜像（用于发送禁用判断 / slash 触发 / 布局），
+  // 真正的富文本与 pill 由 MentionComposer 维护。
   const [input, setInput] = useState("");
+  const [selectedSkillNames, setSelectedSkillNames] = useState<string[]>([]);
+  // 当前编辑器里内联 @ 引用（Cursor 式，可多个，文件/目录混选）
+  const [mentions, setMentions] = useState<AtMention[]>([]);
+  // 由编辑器算出的 @ 触发词（null=未触发；""=浏览；非空=搜索）
+  const [atQuery, setAtQuery] = useState<string | null>(null);
+  const [slashQuery, setSlashQuery] = useState<string | null>(null);
+  const composerRef = useRef<MentionComposerHandle>(null);
+  const [availableSkills, setAvailableSkills] = useState<SkillDescriptor[]>([]);
+  const [reportHtml, setReportHtml] = useState<string | null>(null);
+  const [reportCitations, setReportCitations] = useState<Citation[]>([]);
+
+  // 加载可用技能列表（首次挂载）
+  useEffect(() => {
+    fetchSkills({ enabledOnly: true })
+      .then(setAvailableSkills)
+      .catch(() => {});
+  }, []);
   const [settings, setSettings] = useState<ChatSettings>({
-    agentMode: true,
+    interactionMode: "agent",
     enableThinking: false,
     enableMultimodal: false,
     model: "",
-    maxToolRounds: 5,
+    maxToolRounds: 10,
   });
+  // ➕ 号浮层配置菜单开关（临时态，无需持久化）
+  const [plusMenuOpen, setPlusMenuOpen] = useState<boolean>(false);
 
   // 模型清单（页面级单例，多个 chip 共享，不会重复请求）
-  const { models, errored: modelsErrored } = useChatModels();
+  const { models } = useChatModels();
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
+  // Cursor 式滚动：新用户消息发出后置顶，底部保留一段"呼吸区"空白
+  const turnAnchorRef = useRef<HTMLDivElement>(null);
+  const bottomSpacerRef = useRef<HTMLDivElement>(null);
+  const pendingPinRef = useRef(false);
+  const [bottomSpacer, setBottomSpacer] = useState(0);
+  // 单/多行布局：仅当内容真实折行（lineCount>1）或含换行符时切多行；
+  // @ pill / 空格 / 短文本 均不应触发变高。
+  const [inputMultiline, setInputMultiline] = useState(false);
+  const inputMultilineRef = useRef(false);
+  // 单行布局下缓存编辑器可用宽度，用于从多行退回时探测是否仍是一行
+  const singleLineWidthRef = useRef(0);
+  const lineProbeRef = useRef<HTMLDivElement>(null);
+
+  const fitsSingleLineAtNarrowWidth = useCallback((html: string) => {
+    const probe = lineProbeRef.current;
+    const width = singleLineWidthRef.current;
+    if (!probe || width <= 0 || !html) return false;
+    probe.style.width = `${width}px`;
+    probe.innerHTML = html;
+    const style = window.getComputedStyle(probe);
+    const lineHeight = parseFloat(style.lineHeight) || 20;
+    return probe.scrollHeight <= lineHeight + 2;
+  }, []);
+
+  // 布局只信「几何测量」：lineCount 由编辑器实际渲染高度算出（空内容 / 纯空格 /
+  // 浏览器 <br> 残渣均为 1 行），不再用序列化文本里的 \n，避免误判换行。
+  const updateInputLayout = useCallback(
+    (_text: string, lineCount: number, editorHtml: string, editorWidth: number) => {
+      // 记录单行布局下的可用宽度（多行布局编辑器独占整行，宽度更大，不能用作探测基准）
+      if (!inputMultilineRef.current && editorWidth > 0) {
+        singleLineWidthRef.current = editorWidth;
+      }
+
+      let shouldMultiline = inputMultilineRef.current;
+      if (lineCount > 1) {
+        shouldMultiline = true;
+      } else if (inputMultilineRef.current) {
+        // 当前多行但几何已回到 1 行：多行布局宽度更大，需回到「单行窄宽度」探测，
+        // 确认收窄后仍是一行才退回，避免宽窄切换来回抖动。
+        if (!editorHtml || fitsSingleLineAtNarrowWidth(editorHtml)) {
+          shouldMultiline = false;
+        }
+      }
+
+      if (inputMultilineRef.current !== shouldMultiline) {
+        inputMultilineRef.current = shouldMultiline;
+        setInputMultiline(shouldMultiline);
+      }
+    },
+    [fitsSingleLineAtNarrowWidth]
+  );
+
+  const showMultilineLayout = inputMultiline;
+
+  // 单/多行布局切换后编辑器宽度变化，需重新测量行数（避免窄宽度下误折行）
+  useEffect(() => {
+    const id = requestAnimationFrame(() => composerRef.current?.remeasure());
+    return () => cancelAnimationFrame(id);
+  }, [showMultilineLayout]);
+
   const [sourcesSidePanel, setSourcesSidePanel] = useState<{
     citations: Citation[];
     showScore: boolean;
@@ -2159,6 +2451,15 @@ export const KnowledgeChatPanel = ({
   //   - "models 引用更新（同 session）"：保留 prev.model 中"在新清单里仍然存在"
   //     的用户选择；不存在时回落到第一项。
   const prevSessionIdRef = useRef<string | null>(null);
+
+  // 切换会话时重置为 Agent（后端尚无 plan 持久化）
+  useEffect(() => {
+    if (!activeSession?.session_id) return;
+    setSettings((prev) => ({ ...prev, interactionMode: "agent" }));
+    inputMultilineRef.current = false;
+    setInputMultiline(false);
+  }, [activeSession?.session_id]);
+
   useEffect(() => {
     if (!activeSession) return;
     if (models.length === 0) {
@@ -2168,11 +2469,11 @@ export const KnowledgeChatPanel = ({
         prevSessionIdRef.current !== activeSession.session_id;
       prevSessionIdRef.current = activeSession.session_id;
       setSettings((prev) => ({
-        agentMode: activeSession.agent_mode,
+        ...prev,
         enableThinking: activeSession.enable_thinking,
         enableMultimodal: false,
         model: switchedNow ? "" : prev.model,
-        maxToolRounds: activeSession.max_tool_rounds || 5,
+        maxToolRounds: activeSession.max_tool_rounds || 10,
       }));
       return;
     }
@@ -2204,11 +2505,11 @@ export const KnowledgeChatPanel = ({
       const modelSupportsThinking = resolvedModel?.supports_thinking === true;
       const modelSupportsMultimodal = resolvedModel?.supports_multimodal === true;
       return {
-        agentMode: activeSession.agent_mode,
+        ...prev,
         enableThinking: modelSupportsThinking,
         enableMultimodal: modelSupportsMultimodal,
         model: nextModel,
-        maxToolRounds: activeSession.max_tool_rounds || 5,
+        maxToolRounds: activeSession.max_tool_rounds || 10,
       };
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2223,36 +2524,193 @@ export const KnowledgeChatPanel = ({
       el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
   }, []);
 
-  // 自动滚动到底（仅当用户在底部时）
-  useEffect(() => {
+  // 底部"呼吸区"高度：让当前轮（最后一条用户消息 + 助手回复）能被滚动到视口顶部，
+  // 同时在滚到最底部时，最后一行文字大致落在视口中部（Cursor 视觉）。
+  const recomputeSpacer = useCallback(() => {
+    const container = scrollRef.current;
+    const anchor = turnAnchorRef.current;
+    const spacerEl = bottomSpacerRef.current;
+    if (!container || !anchor || !spacerEl) {
+      setBottomSpacer(0);
+      return;
+    }
+    const cTop = container.getBoundingClientRect().top;
+    const scroll = container.scrollTop;
+    const anchorTop = anchor.getBoundingClientRect().top - cTop + scroll;
+    const spacerTop = spacerEl.getBoundingClientRect().top - cTop + scroll;
+    // 当前轮高度（不含 spacer 自身）
+    const turnHeight = spacerTop - anchorTop;
+    const desired = Math.max(0, container.clientHeight - turnHeight);
+    setBottomSpacer((prev) => (Math.abs(prev - desired) > 1 ? desired : prev));
+  }, []);
+
+  // 把当前轮（最后一条用户消息）平滑滚动到视口顶部
+  const scrollTurnToTop = useCallback((smooth: boolean) => {
+    const container = scrollRef.current;
+    const anchor = turnAnchorRef.current;
+    if (!container || !anchor) return;
+    const cTop = container.getBoundingClientRect().top;
+    const anchorTop =
+      anchor.getBoundingClientRect().top - cTop + container.scrollTop;
+    const target = Math.max(0, anchorTop - 12);
+    container.scrollTo({ top: target, behavior: smooth ? "smooth" : "auto" });
+    isAtBottomRef.current = false;
+  }, []);
+
+  // 布局副作用：先算呼吸区高度，再决定滚动行为
+  useLayoutEffect(() => {
     const container = scrollRef.current;
     if (!container) return;
-    if (isAtBottomRef.current) {
+    recomputeSpacer();
+    if (pendingPinRef.current) {
+      pendingPinRef.current = false;
+      // 等呼吸区高度应用后再滚，保证有足够空间置顶
+      requestAnimationFrame(() => scrollTurnToTop(true));
+      return;
+    }
+    // 未处于置顶状态时：仅当用户本就在底部且内容溢出，才跟随到底
+    const overflows = container.scrollHeight > container.clientHeight + 4;
+    if (isAtBottomRef.current && overflows) {
       container.scrollTop = container.scrollHeight;
     }
-  }, [messages, isStreaming]);
+  }, [messages, isStreaming, recomputeSpacer, scrollTurnToTop]);
+
+  // 视口尺寸变化时重算呼吸区
+  useEffect(() => {
+    const onResize = () => recomputeSpacer();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [recomputeSpacer]);
+
+  const handleSelectSession = useCallback(
+    async (sessionId: string) => {
+      setSettings((prev) => ({ ...prev, interactionMode: "agent" }));
+      inputMultilineRef.current = false;
+      setInputMultiline(false);
+      await selectSession(sessionId);
+    },
+    [selectSession]
+  );
 
   const effectiveDisabled = disabled || !knowledgeBaseId || !enabled;
 
+  // 处理动作选择
+  const handleAction = useCallback(
+    async (name: string) => {
+      if (name === "clear") {
+        // 清空当前会话的消息（保留会话本身）
+        setSelectedSkillNames([]);
+        composerRef.current?.clear();
+        setMentions([]);
+        try {
+          await clearMessages();
+        } catch (error) {
+          console.error("清空上下文失败:", error);
+        }
+      } else if (name === "summary") {
+        // 总结对话上下文（后端生成摘要并标记旧消息）
+        setSelectedSkillNames([]);
+        composerRef.current?.clear();
+        setMentions([]);
+        try {
+          await summarizeContext();
+        } catch (error) {
+          console.error("总结上下文失败:", error);
+        }
+      }
+    },
+    [clearMessages, summarizeContext]
+  );
+
+  const slashMenu = SlashSkillMenu({
+    skills: availableSkills,
+    query: slashQuery,
+    onSelectMode: (mode) => {
+      setSettings((prev) => ({ ...prev, interactionMode: mode }));
+      composerRef.current?.removeSlashTrigger();
+    },
+    onSelect: (name, kind) => {
+      if (kind === "action") {
+        // 动作：直接执行，不入编辑器
+        void handleAction(name);
+        composerRef.current?.removeSlashTrigger();
+      } else {
+        // 技能：作为内联 pill 插入编辑器（同时清掉行首 `/` 触发词）
+        composerRef.current?.insertSkill(name);
+      }
+    },
+    disabled: effectiveDisabled || isStreaming,
+  });
+
+  const atMenu = AtFileMentionMenu({
+    knowledgeBaseId,
+    query: atQuery,
+    onSelect: (mention) => {
+      // 在编辑器光标处插入原子 pill（Cursor 式：留在文本之间，可多个）
+      composerRef.current?.insertMention(mention);
+    },
+    disabled: effectiveDisabled || isStreaming,
+  });
+
+  // 切换知识库时清空编辑器（@ 引用仅在当前知识库内有效）
+  useEffect(() => {
+    composerRef.current?.clear();
+    setMentions([]);
+    setSelectedSkillNames([]);
+    setAtQuery(null);
+    setSlashQuery(null);
+    inputMultilineRef.current = false;
+    setInputMultiline(false);
+  }, [knowledgeBaseId]);
+
   const handleSend = async (preset?: string) => {
     if (effectiveDisabled || isStreaming) return;
-    const content = (preset ?? input).trim();
-    if (!content) return;
+    // preset（starter prompt）无内联引用；否则取编辑器实时内容
+    const content = (preset ?? composerRef.current?.getText() ?? input).trim();
+    const turnMentions: AtMention[] = preset
+      ? []
+      : composerRef.current?.getMentions() ?? mentions;
+    const skillNames = (
+      preset ? [] : composerRef.current?.getSkills() ?? selectedSkillNames
+    ).filter((name) => !isAction(name));
+    // 允许仅含 @ / skill pill、无额外文字时发送
+    if (
+      !preset &&
+      !content &&
+      turnMentions.length === 0 &&
+      skillNames.length === 0
+    ) {
+      return;
+    }
+    // 清空输入
+    composerRef.current?.clear();
     setInput("");
-    isAtBottomRef.current = true;
+    setMentions([]);
+    setAtQuery(null);
+    setSlashQuery(null);
+    // 新一轮：发出后把这条用户消息滚动到视口顶部，而不是贴底
+    isAtBottomRef.current = false;
+    pendingPinRef.current = true;
     // 思考和多模态自动跟随模型能力
     const resolvedModel = models.find((m) => m.id === settings.model);
     const effectiveThinking = resolvedModel?.supports_thinking === true;
     const effectiveMultimodal = resolvedModel?.supports_multimodal === true;
     await send(content, {
-      agentMode: settings.agentMode,
+      mode: modeFromInteraction(settings.interactionMode),
       enableThinking: effectiveThinking,
       enableMultimodal: effectiveMultimodal,
       // 用户选了具体 model 才透传；空字符串 → 沿用 session 当前偏好。
       // 注意：这里不再传 modelPreset——preset 是后端事项，前端只表达"我要这个具体模型"。
       ...(settings.model ? { model: settings.model } : {}),
       maxToolRounds: settings.maxToolRounds,
+      forcedSkillNames: skillNames.length > 0 ? skillNames : undefined,
+      // @ 内联引用（软引用，可多个）：透传给后端解析为引用块 + seeding
+      mentions:
+        turnMentions.length > 0
+          ? turnMentions.map((m) => ({ kind: m.kind, id: m.id }))
+          : undefined,
     });
+    setSelectedSkillNames([]);
   };
 
   const handleRename = async () => {
@@ -2282,12 +2740,14 @@ export const KnowledgeChatPanel = ({
   // 这样侧边栏的「新建」按钮与 banner 「新建文件夹会话」按钮共享同一行为，
   // 由"用户当前是否站在某 folder 上"自然区分，不再需要一个隐藏开关。
   const handleNewSession = useCallback(async () => {
+    // 新会话固定默认 Agent 模式
+    setSettings((prev) => ({ ...prev, interactionMode: "agent" }));
     // 思考和多模态自动跟随模型能力
     const resolvedModel = models.find((m) => m.id === settings.model);
     const effectiveThinking = resolvedModel?.supports_thinking === true;
     const effectiveMultimodal = resolvedModel?.supports_multimodal === true;
     await newSession({
-      agentMode: settings.agentMode,
+      mode: "agent",
       enableThinking: effectiveThinking,
       enableMultimodal: effectiveMultimodal,
       // 空字符串 → 显式置空 model，让后端用 model_preset 默认（不是"不传"）
@@ -2299,15 +2759,14 @@ export const KnowledgeChatPanel = ({
     });
   }, [
     newSession,
-    settings.agentMode,
-    settings.enableThinking,
     settings.model,
+    models,
     selectedFolderId,
   ]);
 
   const handleSessionRename = (s: ChatSessionInfo) => {
     if (s.session_id !== activeSessionId) {
-      void selectSession(s.session_id).then(() => {
+      void handleSelectSession(s.session_id).then(() => {
         setRenaming(true);
         setRenameValue(s.title || "");
       });
@@ -2324,7 +2783,7 @@ export const KnowledgeChatPanel = ({
         : true;
     if (!confirmed) return;
     if (s.session_id !== activeSessionId) {
-      await selectSession(s.session_id);
+      await handleSelectSession(s.session_id);
     }
     try {
       await deleteActive();
@@ -2361,6 +2820,26 @@ export const KnowledgeChatPanel = ({
     });
   }, [messages]);
 
+  // 最后一条用户消息所在 group 索引：作为"当前轮"的置顶锚点
+  const lastUserGroupIndex = useMemo(() => {
+    let idx = -1;
+    groupsWithAccumulatedCitations.forEach((g, i) => {
+      if (g.group.type === "user") idx = i;
+    });
+    return idx;
+  }, [groupsWithAccumulatedCitations]);
+
+  // 是否显示 "Planning next moves"：模型正在生成，但当前这一轮还没有任何可见输出
+  //（思考 or 正文）——即用户提问后的等待期、以及多轮之间的间隙。一旦开始吐字则隐藏。
+  const showPlanning = useMemo(() => {
+    if (!isStreaming) return false;
+    const activeInflight = messages.find(
+      (m) => m.role === "assistant" && m.inflight
+    );
+    if (!activeInflight) return true;
+    return !activeInflight.content && !activeInflight.thinking;
+  }, [isStreaming, messages]);
+
   return (
     <section
       className={cn(
@@ -2383,7 +2862,7 @@ export const KnowledgeChatPanel = ({
               activeSessionId={activeSessionId}
               onClose={() => setSessionPanelOpen(false)}
               onSelect={(id) => {
-                void selectSession(id);
+                void handleSelectSession(id);
                 setSessionPanelOpen(false);
               }}
               onRename={handleSessionRename}
@@ -2397,7 +2876,8 @@ export const KnowledgeChatPanel = ({
         {/* 主体（顶栏 + 通知 + 消息流 + 输入区） */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* 顶部 */}
-        <div className="border-b border-gray-100 px-5 py-3">
+        <div className="border-b border-gray-100">
+          <div className={cn(CHAT_CONTENT_CLASS, "px-4 py-3 sm:px-5")}>
           <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
               <Bot className="h-5 w-5" />
@@ -2421,16 +2901,16 @@ export const KnowledgeChatPanel = ({
                   />
                 ) : (
                   <span className="truncate" title={activeSession?.title}>
-                    {activeSession?.title || "知识库问答"}
+                    {activeSession?.title || knowledgeBaseName}
                   </span>
                 )}
                 <PhasePill phase={phase} />
               </div>
               <p className="mt-1 truncate text-[11px] leading-5 text-muted">
                 {selectedFolderName
-                  ? `文件夹问答 · ${selectedFolderName}`
+                  ? selectedFolderName
                   : knowledgeBaseName
-                    ? `知识库问答 · ${knowledgeBaseName}`
+                    ? knowledgeBaseName
                     : "选择一个知识库以开始问答"}
                 {activeSession ? ` · ${activeSession.message_count} 条消息` : ""}
               </p>
@@ -2451,7 +2931,7 @@ export const KnowledgeChatPanel = ({
                 <SessionPopover
                   sessions={sessions}
                   activeSessionId={activeSessionId}
-                  onSelect={(id) => void selectSession(id)}
+                  onSelect={(id) => void handleSelectSession(id)}
                   onNew={() => void handleNewSession()}
                   onRename={handleSessionRename}
                   onDelete={(s) => void handleSessionDelete(s)}
@@ -2459,21 +2939,25 @@ export const KnowledgeChatPanel = ({
               </div>
             ) : null}
           </div>
+          </div>
         </div>
 
         {/* scope 由左侧 KB / 文件夹选择驱动；切换时 hook 会自动加载对应 session 列表 */}
 
         {phase === "disconnected" ? (
-          <div className="mx-5 mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+          <div className={cn(CHAT_CONTENT_CLASS, "mt-3 px-4 sm:px-5")}>
+          <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5" />
             <span className="flex-1">
               连接已断开。直接发送下一条消息即可自动重连。
             </span>
           </div>
+          </div>
         ) : null}
 
         {lastError ? (
-          <div className="mx-5 mt-3 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
+          <div className={cn(CHAT_CONTENT_CLASS, "mt-3 px-4 sm:px-5")}>
+          <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5" />
             <span className="flex-1">{lastError}</span>
             <button
@@ -2484,16 +2968,26 @@ export const KnowledgeChatPanel = ({
               关闭
             </button>
           </div>
+          </div>
         ) : null}
 
-        {/* 消息列表 */}
+        {/* 消息列表 + 输入区：消息在剩余视口内垂直居中，输入固定底部 */}
+        <div className="flex min-h-0 flex-1 flex-col">
         <div
           ref={scrollRef}
           tabIndex={-1}
           onScroll={handleScroll}
           onMouseEnter={(e) => e.currentTarget.focus({ preventScroll: true })}
-          className="flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 outline-none"
+          style={{ scrollbarGutter: "stable both-edges" }}
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain outline-none"
         >
+          <div
+            className={cn(
+              "flex min-h-full flex-col",
+              messages.length === 0 && "justify-center"
+            )}
+          >
+          <div className={cn(CHAT_CONTENT_CLASS, "space-y-4 px-4 pt-4 pb-2 sm:px-5")}>
           {isLoading && messages.length === 0 ? (
             <div className="flex items-center justify-center py-10 text-xs text-muted">
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -2519,21 +3013,33 @@ export const KnowledgeChatPanel = ({
             </div>
           ) : null}
 
+          {/* 上下文已总结提示 */}
+          {hasSummary && messages.length > 0 ? (
+            <div className="mb-4 flex items-center justify-center">
+              <div className="flex items-center gap-2 rounded-full bg-gray-100 px-4 py-1.5 text-xs text-muted">
+                <FileText className="h-3.5 w-3.5" />
+                <span>chat context summarized</span>
+              </div>
+            </div>
+          ) : null}
+
           {groupsWithAccumulatedCitations.map(({ group, accumulatedCitations }, gi) => {
             if (group.type === "user") {
               const m = group.messages[0];
+              const isLastUser = gi === lastUserGroupIndex;
               return (
-                <UserMessageBubble
-                  key={m.id}
-                  message={m}
-                  onViewRetrievalChunks={(c) =>
-                    setSourcesSidePanel({
-                      citations: c,
-                      showScore: true,
-                      params: m.retrieval?.params,
-                    })
-                  }
-                />
+                <div key={m.id} ref={isLastUser ? turnAnchorRef : undefined}>
+                  <UserMessageBubble
+                    message={m}
+                    onViewRetrievalChunks={(c) =>
+                      setSourcesSidePanel({
+                        citations: c,
+                        showScore: true,
+                        params: m.retrieval?.params,
+                      })
+                    }
+                  />
+                </div>
               );
             }
             // assistant-group
@@ -2549,77 +3055,294 @@ export const KnowledgeChatPanel = ({
                 onViewSearchResults={(c, params) =>
                   setSourcesSidePanel({ citations: c, showScore: true, params })
                 }
+                onViewReport={(html, citations) => {
+                  setReportHtml(html);
+                  setReportCitations(citations);
+                }}
               />
             );
           })}
+          {showPlanning ? (
+            <div className="flex">
+              <span className="text-shimmer text-[13px] font-medium">
+                Planning next moves
+              </span>
+            </div>
+          ) : null}
+          <div
+            ref={bottomSpacerRef}
+            aria-hidden
+            style={{ height: bottomSpacer }}
+          />
+          </div>
+          </div>
         </div>
 
         {/* 输入区：参数扁平化 toolbar + textarea + 发送/停止 */}
-        <div className="border-t border-gray-100 p-4">
+        <div className="shrink-0">
+          <div className={cn(CHAT_CONTENT_CLASS, "px-4 pb-4 pt-2 sm:px-5")}>
           {disabledReason ? (
             <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
               {disabledReason}
             </div>
           ) : null}
 
-          <div className="rounded-2xl border border-gray-200 bg-gray-50 p-2.5 transition-colors focus-within:border-primary">
-            <ChatToolbar
-              settings={settings}
-              onChange={setSettings}
-              isStreaming={isStreaming}
-              compact={compact}
-              modeLocked={messages.length > 0}
-              models={models}
-              modelsErrored={modelsErrored}
-            />
-            <div className="mt-2 flex items-end gap-2">
-              <textarea
-                value={input}
-                disabled={effectiveDisabled || isStreaming}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (
-                    e.key === "Enter" &&
-                    !e.shiftKey &&
-                    !e.nativeEvent.isComposing
-                  ) {
-                    e.preventDefault();
-                    void handleSend();
-                  }
-                }}
-                rows={compact ? 2 : 3}
-                placeholder={placeholder}
-                className={cn(
-                  "flex-1 resize-none bg-transparent px-1 text-sm leading-6 text-foreground outline-none placeholder:text-muted disabled:cursor-not-allowed disabled:text-muted",
-                  compact ? "min-h-[48px]" : "min-h-[64px]"
-                )}
-              />
-
-              {isStreaming ? (
+          <div className="transition-colors">
+            {summarizing ? (
+              <div className="mb-2 flex items-center justify-between rounded-lg bg-primary/5 px-3 py-2 text-xs text-primary">
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Summarizing chat context
+                </span>
                 <button
                   type="button"
-                  onClick={stop}
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-500 text-white transition-colors hover:bg-red-400"
-                  title="停止生成"
+                  onClick={stopSummarize}
+                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-primary transition-colors hover:bg-primary/10"
+                  title="中断总结"
                 >
-                  <CircleStop className="h-4 w-4" />
+                  停止
                 </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => void handleSend()}
-                  disabled={effectiveDisabled || !input.trim()}
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-white transition-colors hover:bg-primary-light disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-muted"
-                  title="发送（Enter）"
-                >
-                  <Send className="h-4 w-4" />
-                </button>
+              </div>
+            ) : null}
+            <div
+              className={cn(
+                "relative border border-gray-200 bg-white transition-colors focus-within:border-primary",
+                showMultilineLayout ? "rounded-2xl" : "rounded-full py-2"
               )}
-            </div>
-            <div className="mt-1 px-1 text-[10px] text-muted">
-              Enter 发送 · Shift + Enter 换行
+            >
+              {slashMenu.renderMenu()}
+              {atMenu.renderMenu()}
+              {/* 隐藏探测：克隆编辑器 HTML，在单行窄宽度下预测是否仍是一行 */}
+              <div
+                ref={lineProbeRef}
+                aria-hidden
+                className="pointer-events-none absolute -z-50 invisible block whitespace-pre-wrap break-words text-sm leading-5"
+                style={{ width: 0, left: -9999, top: -9999 }}
+              />
+              <div
+                className={cn(
+                  showMultilineLayout
+                    ? "flex flex-col gap-1.5 px-3 py-2"
+                    : "flex items-center gap-1.5 px-3"
+                )}
+              >
+                {!showMultilineLayout ? (
+                  <div className="relative flex shrink-0 items-center gap-1.5">
+                    <div className="relative shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setPlusMenuOpen((v) => !v)}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-muted transition-colors hover:border-primary hover:text-primary"
+                        title="配置（模式 / 模型 / 技能 / 工具轮）"
+                        aria-label="配置"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                      </button>
+                      {plusMenuOpen ? (
+                        <PlusConfigMenu
+                          settings={settings}
+                          onChange={setSettings}
+                          models={models}
+                          skills={availableSkills}
+                          selectedSkills={selectedSkillNames.filter((name) => !isAction(name))}
+                          onToggleSkill={(name) => {
+                            if (selectedSkillNames.includes(name)) {
+                              composerRef.current?.removeSkill(name);
+                            } else {
+                              composerRef.current?.insertSkill(name);
+                            }
+                          }}
+                          isStreaming={isStreaming}
+                          onClose={() => setPlusMenuOpen(false)}
+                        />
+                      ) : null}
+                    </div>
+                    <InteractionModeChip
+                      mode={settings.interactionMode}
+                      disabled={isStreaming}
+                      onRemove={() =>
+                        setSettings((prev) => ({ ...prev, interactionMode: "agent" }))
+                      }
+                    />
+                  </div>
+                ) : null}
+                <MentionComposer
+                  ref={composerRef}
+                  disabled={effectiveDisabled || isStreaming || summarizing}
+                  placeholder={summarizing ? "正在总结上下文…" : placeholder}
+                  compact={!showMultilineLayout}
+                  className={cn(showMultilineLayout ? "w-full" : "min-w-0 flex-1")}
+                  onChange={({
+                    text,
+                    mentions: ms,
+                    skills,
+                    atQuery: q,
+                    slashQuery: sq,
+                    lineCount,
+                    editorHtml,
+                    editorWidth,
+                  }) => {
+                    setInput(text);
+                    setMentions(ms);
+                    setSelectedSkillNames(skills);
+                    setAtQuery(q);
+                    setSlashQuery(sq);
+                    updateInputLayout(text, lineCount, editorHtml, editorWidth);
+                  }}
+                  onMenuKeyDown={(e) => {
+                    if (atMenu.handleKeyDown(e)) return;
+                    if (slashMenu.handleKeyDown(e)) return;
+                  }}
+                  onSubmit={() => void handleSend()}
+                />
+                {showMultilineLayout ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                      <div className="relative shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setPlusMenuOpen((v) => !v)}
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-muted transition-colors hover:border-primary hover:text-primary"
+                          title="配置（模式 / 模型 / 技能 / 工具轮）"
+                          aria-label="配置"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                        </button>
+                        {plusMenuOpen ? (
+                          <PlusConfigMenu
+                            settings={settings}
+                            onChange={setSettings}
+                            models={models}
+                            skills={availableSkills}
+                            selectedSkills={selectedSkillNames.filter((name) => !isAction(name))}
+                            onToggleSkill={(name) => {
+                              if (selectedSkillNames.includes(name)) {
+                                composerRef.current?.removeSkill(name);
+                              } else {
+                                composerRef.current?.insertSkill(name);
+                              }
+                            }}
+                            isStreaming={isStreaming}
+                            onClose={() => setPlusMenuOpen(false)}
+                          />
+                        ) : null}
+                      </div>
+                      <InteractionModeChip
+                        mode={settings.interactionMode}
+                        disabled={isStreaming}
+                        onRemove={() =>
+                          setSettings((prev) => ({ ...prev, interactionMode: "agent" }))
+                        }
+                      />
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <InlineModelPicker
+                        value={settings.model}
+                        models={models}
+                        disabled={effectiveDisabled || isStreaming || summarizing}
+                        onChange={(model) => {
+                          const resolved = models.find((m) => m.id === model);
+                          if (resolved) {
+                            setSettings(applyModelSelection(settings, resolved));
+                          } else {
+                            setSettings({ ...settings, model });
+                          }
+                        }}
+                      />
+                      {isStreaming ? (
+                        <button
+                          type="button"
+                          onClick={stop}
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-500 text-white transition-colors hover:bg-red-400"
+                          title="停止生成"
+                        >
+                          <CircleStop className="h-3.5 w-3.5" />
+                        </button>
+                      ) : summarizing ? (
+                        <button
+                          type="button"
+                          onClick={stopSummarize}
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-500 text-white transition-colors hover:bg-red-400"
+                          title="中断总结"
+                        >
+                          <CircleStop className="h-3.5 w-3.5" />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void handleSend()}
+                          disabled={effectiveDisabled || !input.trim()}
+                          className={cn(
+                            "flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors",
+                            effectiveDisabled || !input.trim()
+                              ? "cursor-not-allowed bg-gray-200 text-muted"
+                              : "bg-neutral-900 text-white hover:bg-neutral-800"
+                          )}
+                          title="发送（Enter）"
+                        >
+                          <ArrowUp className="h-3.5 w-3.5" strokeWidth={2.5} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="shrink-0">
+                      <InlineModelPicker
+                        value={settings.model}
+                        models={models}
+                        disabled={effectiveDisabled || isStreaming || summarizing}
+                        onChange={(model) => {
+                          const resolved = models.find((m) => m.id === model);
+                          if (resolved) {
+                            setSettings(applyModelSelection(settings, resolved));
+                          } else {
+                            setSettings({ ...settings, model });
+                          }
+                        }}
+                      />
+                    </div>
+                    {isStreaming ? (
+                      <button
+                        type="button"
+                        onClick={stop}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-500 text-white transition-colors hover:bg-red-400"
+                        title="停止生成"
+                      >
+                        <CircleStop className="h-3.5 w-3.5" />
+                      </button>
+                    ) : summarizing ? (
+                      <button
+                        type="button"
+                        onClick={stopSummarize}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-500 text-white transition-colors hover:bg-red-400"
+                        title="中断总结"
+                      >
+                        <CircleStop className="h-3.5 w-3.5" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void handleSend()}
+                        disabled={effectiveDisabled || !input.trim()}
+                        className={cn(
+                          "flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors",
+                          effectiveDisabled || !input.trim()
+                            ? "cursor-not-allowed bg-gray-200 text-muted"
+                            : "bg-neutral-900 text-white hover:bg-neutral-800"
+                        )}
+                        title="发送（Enter）"
+                      >
+                        <ArrowUp className="h-3.5 w-3.5" strokeWidth={2.5} />
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
           </div>
+          </div>
+        </div>
         </div>
         </div>
         {sourcesSidePanel && sourcesSidePanel.citations.length > 0 ? (
@@ -2631,6 +3354,18 @@ export const KnowledgeChatPanel = ({
           />
         ) : null}
       </div>
+
+      {/* 调研报告模态框 */}
+      {reportHtml && (
+        <ReportViewer
+          htmlContent={reportHtml}
+          citations={reportCitations}
+          onClose={() => {
+            setReportHtml(null);
+            setReportCitations([]);
+          }}
+        />
+      )}
     </section>
   );
 };

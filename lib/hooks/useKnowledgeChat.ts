@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChatStreamHandle,
+  clearChatMessages,
   createChatSession,
   deleteChatSession,
   getChatSession,
@@ -22,8 +23,10 @@ import {
   listChatSessions,
   openChatStream,
   renameChatSession,
+  summarizeChatContext,
 } from "@/lib/api/chat";
 import type {
+  ChatMention,
   ChatMessage,
   ChatRequestPayload,
   ChatSessionInfo,
@@ -106,7 +109,8 @@ export interface NewSessionInit {
   model?: string | null;
   enableThinking?: boolean;
   enableMultimodal?: boolean;
-  agentMode?: boolean;
+  /** 会话交互模式（agent / plan 等）；默认 agent */
+  mode?: string;
   /**
    * 把新会话锁定在此文件夹内（folder scope，v0.8.0）。
    * 不传 → 走 hook 入参 `folderId`；显式传 `null` → 强制 KB scope，忽略 hook 入参。
@@ -117,8 +121,8 @@ export interface NewSessionInit {
 }
 
 export interface SendOptions {
-  /** 覆盖 session 默认 agent_mode */
-  agentMode?: boolean;
+  /** 覆盖 session 默认 mode */
+  mode?: string;
   /** 覆盖 session 默认 enable_thinking */
   enableThinking?: boolean;
   /** 覆盖 session 默认 enable_multimodal */
@@ -141,6 +145,19 @@ export interface SendOptions {
   retrieveTopK?: number;
   /** 跳过服务端无条件初次召回（仅特殊场景使用） */
   skipRetrieval?: boolean;
+  /** Slash 显式召唤的技能名列表（后端注入当轮 user turn，非 system prompt） */
+  forcedSkillNames?: string[];
+  /**
+   * Cursor 式 @ 内联引用（软引用，可多个，文件/目录混选）。
+   * 后端解析为「引用资料」块（小文件全量注入 / 大文件与目录仅提示 document_id），不锁死 scope。
+   */
+  mentions?: ChatMention[];
+  /**
+   * 请求级临时覆盖 folder scope（@ 目录）；不传 → 沿用 session.folder_id。
+   */
+  folderId?: string | null;
+  /** 请求级临时覆盖 include_subfolders；不传 → 沿用 session 默认 */
+  includeSubfolders?: boolean;
 }
 
 export interface UseKnowledgeChatResult {
@@ -155,12 +172,22 @@ export interface UseKnowledgeChatResult {
   isStreaming: boolean;
   /** 加载会话/历史消息中 */
   isLoading: boolean;
+  /** 正在总结上下文（POST /summarize 进行中） */
+  summarizing: boolean;
+  /** 当前会话是否已有上下文总结消息（后端 role=summary） */
+  hasSummary: boolean;
   selectSession: (sessionId: string) => Promise<void>;
   newSession: (init?: NewSessionInit) => Promise<void>;
   renameActive: (title: string) => Promise<void>;
   deleteActive: () => Promise<void>;
+  /** 清空当前会话消息（保留会话本身） */
+  clearMessages: () => Promise<void>;
+  /** 触发后端上下文总结并刷新消息列表 */
+  summarizeContext: () => Promise<void>;
   send: (query: string, opts?: SendOptions) => Promise<void>;
   stop: () => void;
+  /** 中断正在进行的上下文总结 */
+  stopSummarize: () => void;
   /** 主动关连接（一般在卸载时） */
   disconnect: () => void;
   /** 重置错误 chip */
@@ -223,6 +250,7 @@ export function useKnowledgeChat(
   const [sessions, setSessions] = useState<ChatSessionInfo[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<UiChatMessage[]>([]);
+  const [hasSummary, setHasSummary] = useState(false);
   const [phase, setPhase] = useState<ChatPhase>("idle");
   const [lastError, setLastError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -328,8 +356,13 @@ export function useKnowledgeChat(
       page: 1,
       page_size: PAGE_SIZE,
     });
-    const ui = (data.items ?? [])
-      .filter((m) => m.role !== "tool" && m.role !== "system")
+    const items = data.items ?? [];
+    // 检测是否有 summary 消息
+    const hasSummaryMsg = items.some((m) => m.role === "summary");
+    setHasSummary(hasSummaryMsg);
+    // 过滤掉 tool/system/summary 消息
+    const ui = items
+      .filter((m) => m.role !== "tool" && m.role !== "system" && m.role !== "summary")
       .map(fromBackendMessage);
     setMessages(ui);
   }, []);
@@ -1083,8 +1116,8 @@ export function useKnowledgeChat(
           ...(init?.enableMultimodal !== undefined
             ? { enable_multimodal: init.enableMultimodal }
             : {}),
-          ...(init?.agentMode !== undefined
-            ? { agent_mode: init.agentMode }
+          ...(init?.mode !== undefined
+            ? { mode: init.mode }
             : {}),
         });
         setSessions((prev) => [created, ...prev]);
@@ -1146,6 +1179,62 @@ export function useKnowledgeChat(
   ]);
 
   // -------------------------------------------------------------------------
+  // 清空当前会话的消息（保留会话本身）
+  // -------------------------------------------------------------------------
+  const clearMessages = useCallback(async () => {
+    if (!activeSessionId) return;
+    try {
+      await clearChatMessages(activeSessionId);
+      setMessages([]);
+      // 更新会话列表中的 message_count
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.session_id === activeSessionId
+            ? { ...s, message_count: 0, last_message_at: undefined }
+            : s
+        )
+      );
+    } catch (error) {
+      console.error("清空消息失败:", error);
+      throw error;
+    }
+  }, [activeSessionId]);
+
+  // -------------------------------------------------------------------------
+  // 总结当前会话上下文
+  // -------------------------------------------------------------------------
+  const summarizeAbortRef = useRef<AbortController | null>(null);
+  const [summarizing, setSummarizing] = useState(false);
+
+  const summarizeContext = useCallback(async () => {
+    if (!activeSessionId) return;
+    // 已有总结在进行中，不重复触发
+    if (summarizeAbortRef.current) return;
+    const controller = new AbortController();
+    summarizeAbortRef.current = controller;
+    setSummarizing(true);
+    try {
+      await summarizeChatContext(activeSessionId, controller.signal);
+      // 重新加载消息以获取总结后的状态
+      await loadMessagesForSession(activeSessionId);
+    } catch (error) {
+      // 用户主动中断：AbortError，不打错误日志
+      if ((error as Error)?.name !== "AbortError") {
+        console.error("总结上下文失败:", error);
+        throw error;
+      }
+    } finally {
+      summarizeAbortRef.current = null;
+      setSummarizing(false);
+    }
+  }, [activeSessionId, loadMessagesForSession]);
+
+  /** 中断正在进行的上下文总结 */
+  const stopSummarize = useCallback(() => {
+    summarizeAbortRef.current?.abort();
+  }, []);
+
+  // -------------------------------------------------------------------------
   // 行为：发送 / 中断
   // -------------------------------------------------------------------------
   const send = useCallback(
@@ -1181,7 +1270,7 @@ export function useKnowledgeChat(
         session_id: activeSessionId,
         query: trimmed,
       };
-      if (opts.agentMode !== undefined) payload.agent_mode = opts.agentMode;
+      if (opts.mode !== undefined) payload.mode = opts.mode;
       if (opts.enableThinking !== undefined) {
         payload.enable_thinking = opts.enableThinking;
       }
@@ -1204,6 +1293,20 @@ export function useKnowledgeChat(
       }
       if (opts.skipRetrieval !== undefined) {
         payload.skip_retrieval = opts.skipRetrieval;
+      }
+      if (opts.forcedSkillNames && opts.forcedSkillNames.length > 0) {
+        payload.forced_skill_names = opts.forcedSkillNames;
+      }
+      // Cursor 式 @ 内联引用：软引用，可多个，透传给后端解析为引用块
+      if (opts.mentions && opts.mentions.length > 0) {
+        payload.mentions = opts.mentions;
+      }
+      // 请求级临时覆盖 folder scope（@ 目录）
+      if (opts.folderId !== undefined) {
+        payload.folder_id = opts.folderId;
+        if (opts.includeSubfolders !== undefined) {
+          payload.include_subfolders = opts.includeSubfolders;
+        }
       }
 
       const handle = ensureWs();
@@ -1267,6 +1370,7 @@ export function useKnowledgeChat(
     activeSession,
     activeSessionId,
     messages,
+    hasSummary,
     phase,
     lastError,
     isStreaming: phase === "running" || phase === "connecting",
@@ -1275,6 +1379,10 @@ export function useKnowledgeChat(
     newSession,
     renameActive,
     deleteActive,
+    clearMessages,
+    summarizeContext,
+    stopSummarize,
+    summarizing,
     send,
     stop,
     disconnect,

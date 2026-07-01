@@ -11,7 +11,7 @@
 // 通用业务对象
 // ---------------------------------------------------------------------------
 
-export type ChatRole = "system" | "user" | "assistant" | "tool";
+export type ChatRole = "system" | "user" | "assistant" | "tool" | "summary";
 
 export interface Citation {
   chunk_id: string;
@@ -118,7 +118,7 @@ export interface ChatSessionInfo {
    * `null` / `undefined` 表示用户没有显式选定，此时由 `model_preset` 决定模型。
    */
   model?: string | null;
-  agent_mode: boolean;
+  mode: string;
   enable_thinking: boolean;
   enable_multimodal?: boolean;
   max_tool_rounds: number;
@@ -150,7 +150,8 @@ export interface ChatSessionCreateRequest {
   model_preset?: string;
   /** 用户选定的 LiteLLM 模型字符串；不传 → 由 `model_preset` 决定 */
   model?: string | null;
-  agent_mode?: boolean;
+  /** 会话交互模式（agent / plan 等）；默认 agent */
+  mode?: string;
   enable_thinking?: boolean;
   max_tool_rounds?: number;
   system_prompt?: string | null;
@@ -178,10 +179,17 @@ export interface ChatMessageListResponse {
 // WebSocket 帧定义（§4.2 / §4.3）
 // ---------------------------------------------------------------------------
 
+/** @ 内联引用（文件或目录）；后端按 kind 解析为 document_ids */
+export interface ChatMention {
+  kind: "file" | "folder";
+  id: string;
+}
+
 export interface ChatRequestPayload {
   session_id: string;
   query: string;
-  agent_mode?: boolean | null;
+  /** 会话交互模式（agent / plan 等）；不传/null 表示沿用 session 默认 */
+  mode?: string | null;
   enable_thinking?: boolean | null;
   enable_multimodal?: boolean | null;
   model_preset?: string | null;
@@ -195,12 +203,20 @@ export interface ChatRequestPayload {
   custom_system_prompt?: string | null;
   skip_retrieval?: boolean | null;
   /**
+   * Cursor 式 @ 内联引用（软引用，可多个，文件/目录混选）。
+   * 后端解析为「引用资料」块注入 user prompt（小文件全量注入 / 大文件与目录仅提示 document_id）；
+   * 不锁死 scope，模型仍可在引用之外检索。file 所属 KB 必须 ∈ session.knowledge_base_ids。
+   */
+  mentions?: ChatMention[] | null;
+  /**
    * 请求级临时覆盖 folder scope；不传/null 表示沿用 session.folder_id。
    * 后端要求：覆盖时 folder 所属 KB 必须 ∈ session.knowledge_base_ids。
    */
   folder_id?: string | null;
   /** 请求级临时覆盖 include_subfolders；不传/null 表示沿用 session 默认 */
   include_subfolders?: boolean | null;
+  /** Slash 强制召唤的技能名列表 */
+  forced_skill_names?: string[] | null;
 }
 
 // 客户端 → 服务端
@@ -243,7 +259,7 @@ export type ServerFrame =
       data: {
         session_id: string;
         user_message_id: string;
-        agent_mode: boolean;
+        mode: string;
         model_preset: string;
         /** 本轮最终生效的 LiteLLM 模型字符串；为 null 表示由 model_preset 决定 */
         model?: string | null;

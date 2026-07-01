@@ -32,3 +32,39 @@
     @apply bg-gray-400;
   }
 }
+
+/* 流式等待时的"Planning next moves"文字微光：一束高光从左向右飘过 */
+.text-shimmer {
+  background-image: linear-gradient(
+    100deg,
+    #9ca3af 0%,
+    #9ca3af 35%,
+    #111827 50%,
+    #9ca3af 65%,
+    #9ca3af 100%
+  );
+  background-size: 220% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: text-shimmer 1.8s linear infinite;
+}
+
+@keyframes text-shimmer {
+  0% {
+    background-position: 160% 0;
+  }
+  100% {
+    background-position: -60% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .text-shimmer {
+    animation: none;
+    color: #6b7280;
+    -webkit-text-fill-color: #6b7280;
+  }
+}

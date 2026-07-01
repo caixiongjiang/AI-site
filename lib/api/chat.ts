@@ -170,6 +170,23 @@ export async function listChatMessages(
   );
 }
 
+export async function clearChatMessages(sessionId: string): Promise<void> {
+  await requestJson<void>(
+    `/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`,
+    { method: "DELETE" }
+  );
+}
+
+export async function summarizeChatContext(
+  sessionId: string,
+  signal?: AbortSignal
+): Promise<void> {
+  await requestJson<void>(
+    `/api/chat/sessions/${encodeURIComponent(sessionId)}/summarize`,
+    { method: "POST", signal }
+  );
+}
+
 // ---------------------------------------------------------------------------
 // WebSocket：openChatStream
 // ---------------------------------------------------------------------------

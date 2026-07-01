@@ -294,6 +294,30 @@ export async function fetchFolderFiles(folderId: string): Promise<KnowledgeFile[
   }));
 }
 
+/**
+ * 按文件名在指定知识库内模糊搜索文件（供 @ 文件选择器使用）。
+ * q 为空时返回该知识库下的前 limit 个文件，便于无输入时直接展示候选。
+ */
+export async function searchFiles(input: {
+  knowledgeBaseId: string;
+  q?: string;
+  limit?: number;
+}): Promise<KnowledgeFile[]> {
+  const params = new URLSearchParams({
+    knowledge_base_id: input.knowledgeBaseId,
+  });
+  if (input.q) params.set("q", input.q);
+  if (input.limit) params.set("limit", String(input.limit));
+  const data = await requestJson<FileListResponse>(
+    `/api/knowledge/file/search?${params.toString()}`,
+    { method: "GET" }
+  );
+  return (data.files ?? []).map((file) => ({
+    ...file,
+    ...mapFileStatus(file.status),
+  }));
+}
+
 export async function uploadKnowledgeFiles(input: {
   files: File[];
   knowledge_base_id: string;
