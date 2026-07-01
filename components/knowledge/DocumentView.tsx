@@ -61,6 +61,7 @@ export const DocumentView = ({
   const [highlight, setHighlight] = useState<HighlightInfo | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const highlightBoxRef = useRef<HTMLDivElement | null>(null);
   const [pageDimsMap, setPageDimsMap] = useState<Map<number, PageRenderDims>>(new Map());
 
   // 自适应尺寸：宽度不超过容器，高度不超过容器（确保至少一页完整可见）
@@ -91,6 +92,7 @@ export const DocumentView = ({
     fetchChunkPosition(highlightChunkId)
       .then((res) => {
         if (cancelled) return;
+        highlightBoxRef.current = null;
         setHighlight({
           pageIndex: res.page_index ?? 0,
           chunkType: res.chunk_type ?? "unknown",
@@ -131,17 +133,41 @@ export const DocumentView = ({
     []
   );
 
-  // 滚动到目标页
+  // 滚动到目标页：优先把高亮框本身居中，回退到整页居中
   useEffect(() => {
     if (!highlight || numPages === 0) return;
-    const timer = setTimeout(() => {
-      const el = pageRefs.current.get(highlight.pageIndex);
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
+    const container = containerRef.current;
+    if (!container) return;
+
+    const scrollToHighlight = () => {
+      const box = highlightBoxRef.current;
+      const pageEl = pageRefs.current.get(highlight.pageIndex);
+      if (!pageEl) return;
+
+      // 优先：以高亮框中心对齐视口中心
+      if (box) {
+        const boxRect = box.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        const boxCenterInContainer =
+          boxRect.top - containerRect.top + container.scrollTop + boxRect.height / 2;
+        const target = boxCenterInContainer - containerRect.height / 2;
+        container.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
+        return;
       }
-    }, 600);
+
+      // 回退：整页居中
+      const pageRect = pageEl.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      const pageCenterInContainer =
+        pageRect.top - containerRect.top + container.scrollTop + pageRect.height / 2;
+      const target = pageCenterInContainer - containerRect.height / 2;
+      container.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
+    };
+
+    // 高亮框依赖 canvas 渲染完成 + overlay 挂载，给足时间
+    const timer = setTimeout(scrollToHighlight, 600);
     return () => clearTimeout(timer);
-  }, [highlight, numPages]);
+  }, [highlight, numPages, pageDimsMap]);
 
   const setPageRef = useCallback(
     (pageIndex: number, el: HTMLDivElement | null) => {
@@ -220,18 +246,31 @@ export const DocumentView = ({
                   renderTextLayer
                   renderAnnotationLayer
                 >
-                  {highlight &&
-                  highlight.pageIndex === index &&
-                  hasPositionedElements(highlight.elements) ? (
-                    <ElementBBoxOverlay
-                      elements={highlight.elements}
-                      pageDims={pageDimsMap.get(index)}
-                      coordRange={highlight.coordRange}
-                      variant={
-                        highlight.chunkType === "text" ? "text" : "media"
-                      }
-                    />
-                  ) : null}
+                  {(() => {
+                    if (!highlight) return null;
+                    // 文本 chunk 可能跨页：按元素各自的 page_index 渲染高亮框，
+                    // 缺失时回退到 chunk 目标页，避免整块画错页。
+                    const pageElements = highlight.elements.filter(
+                      (e) =>
+                        (e.page_index ?? highlight.pageIndex) === index
+                    );
+                    if (!hasPositionedElements(pageElements)) return null;
+                    return (
+                      <ElementBBoxOverlay
+                        elements={pageElements}
+                        pageDims={pageDimsMap.get(index)}
+                        coordRange={highlight.coordRange}
+                        variant={
+                          highlight.chunkType === "text" ? "text" : "media"
+                        }
+                        boxRef={
+                          index === highlight.pageIndex
+                            ? highlightBoxRef
+                            : undefined
+                        }
+                      />
+                    );
+                  })()}
                 </Page>
               </div>
             ))}
@@ -268,11 +307,14 @@ function ElementBBoxOverlay({
   pageDims,
   coordRange,
   variant = "media",
+  boxRef,
 }: {
   elements: ElementPosition[];
   pageDims?: PageRenderDims;
   coordRange: number;
   variant?: "text" | "media";
+  /** 第一个有效高亮矩形的 ref，供外层做"高亮居中"滚动 */
+  boxRef?: React.RefObject<HTMLDivElement | null>;
 }) {
   if (!pageDims || pageDims.renderedWidth === 0 || coordRange <= 0) return null;
 
@@ -283,6 +325,8 @@ function ElementBBoxOverlay({
       ? "border-2 border-amber-500 bg-amber-400/30"
       : "border-2 border-red-500 bg-red-500/20";
 
+  let refAssigned = false;
+
   return (
     <>
       {elements.map((el) => {
@@ -291,9 +335,13 @@ function ElementBBoxOverlay({
         const width = (x1 - x0) * scaleX;
         const height = (y1 - y0) * scaleY;
         if (width <= 0 || height <= 0) return null;
+        // 只把第一个有效矩形挂到 boxRef，作为居中锚点
+        const shouldRef = !refAssigned && boxRef;
+        if (shouldRef) refAssigned = true;
         return (
           <div
             key={el.element_id}
+            ref={shouldRef ? boxRef : undefined}
             className={`pointer-events-none absolute ${boxClass}`}
             style={{
               left: `${x0 * scaleX}px`,

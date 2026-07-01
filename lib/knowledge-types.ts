@@ -111,6 +111,8 @@ export interface ChunkImagePreviewResponse {
 export interface ElementPosition {
   element_id: string;
   element_type: string;
+  /** 元素所在页码（从 0 开始）；文本 chunk 可能跨页，需逐元素渲染高亮 */
+  page_index?: number | null;
   page_position?: number[] | null;
 }
 

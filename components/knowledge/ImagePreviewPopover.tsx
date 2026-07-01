@@ -148,7 +148,7 @@ export function ImagePreviewPopover({
   // 点击外部关闭
   useEffect(() => {
     if (!open) return;
-    const handler = (e: MouseEvent) => {
+    const handler = (e: globalThis.MouseEvent) => {
       const target = e.target as Node;
       if (
         popRef.current?.contains(target) ||
