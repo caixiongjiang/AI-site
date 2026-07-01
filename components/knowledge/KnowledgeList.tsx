@@ -4,6 +4,7 @@ import { type ReactNode, useMemo, useState } from "react";
 import {
   ChevronRight,
   Database,
+  PanelLeftClose,
   Plus,
   Search,
   Sparkles,
@@ -20,6 +21,9 @@ interface KnowledgeListProps {
   onCreate?: () => void;
   onCreateChild?: (knowledgeBase: KnowledgeBaseInfo) => void;
   onDelete?: (knowledgeBase: KnowledgeBaseInfo) => void;
+  /** 仅折叠知识库列表栏，不影响右侧文件夹/文件树 */
+  collapsed?: boolean;
+  onCollapse?: () => void;
 }
 
 export const KnowledgeList = ({
@@ -29,6 +33,8 @@ export const KnowledgeList = ({
   onCreate,
   onCreateChild,
   onDelete,
+  collapsed = false,
+  onCollapse,
 }: KnowledgeListProps) => {
   const [searchTerm, setSearchTerm] = useState("");
 
@@ -172,17 +178,34 @@ export const KnowledgeList = ({
 
   const roots = childrenByParent.get(null) ?? [];
 
+  if (collapsed) {
+    return null;
+  }
+
   return (
     <aside className="flex w-[240px] shrink-0 flex-col border-r border-gray-200 bg-gray-50">
       <div className="border-b border-gray-200 px-3 py-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-            <Sparkles className="h-3.5 w-3.5 text-primary" />
-            知识库
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1">
+            {onCollapse ? (
+              <button
+                type="button"
+                onClick={onCollapse}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-gray-200/70 hover:text-foreground"
+                title="收起知识库管理"
+                aria-label="收起知识库管理"
+              >
+                <PanelLeftClose className="h-4 w-4" strokeWidth={1.5} />
+              </button>
+            ) : null}
+            <div className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-foreground">
+              <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" />
+              <span className="truncate">知识库</span>
+            </div>
           </div>
           <button
             onClick={onCreate}
-            className="flex h-7 items-center gap-1 rounded-full bg-primary px-2.5 text-[11px] text-white transition-transform hover:-translate-y-0.5"
+            className="flex h-7 shrink-0 items-center gap-1 rounded-full bg-primary px-2.5 text-[11px] text-white transition-transform hover:-translate-y-0.5"
           >
             <Plus className="h-3 w-3" />
             新建

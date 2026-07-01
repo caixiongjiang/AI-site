@@ -10,6 +10,7 @@ import {
   Folder,
   FolderPlus,
   Loader2,
+  PanelLeftOpen,
   Plus,
   RotateCcw,
   Search,
@@ -37,6 +38,9 @@ interface FolderTreeProps {
   onSearchChange?: (term: string) => void;
   onSelectTrash?: () => void;
   trashContent?: ReactNode;
+  /** 知识库列表已折叠时，在文件夹树头部显示展开按钮 */
+  kbListCollapsed?: boolean;
+  onExpandKbList?: () => void;
 }
 
 export const FolderTree = ({
@@ -58,6 +62,8 @@ export const FolderTree = ({
   onSearchChange,
   onSelectTrash,
   trashContent,
+  kbListCollapsed = false,
+  onExpandKbList,
 }: FolderTreeProps) => {
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
   const [draggingFileId, setDraggingFileId] = useState<string | null>(null);
@@ -344,9 +350,22 @@ export const FolderTree = ({
   return (
     <div className="flex h-full min-h-0 flex-col border-r border-gray-200 bg-white">
       <div className="flex items-center justify-between border-b border-gray-200 px-3 py-2.5">
-        <span className="text-sm font-medium text-foreground/70">
-          {knowledgeBase ? knowledgeBase.knowledge_base_name : "目录"}
-        </span>
+        <div className="flex min-w-0 items-center gap-1.5">
+          {kbListCollapsed && onExpandKbList ? (
+            <button
+              type="button"
+              onClick={onExpandKbList}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-gray-100 hover:text-foreground"
+              title="展开知识库管理"
+              aria-label="展开知识库管理"
+            >
+              <PanelLeftOpen className="h-3.5 w-3.5" strokeWidth={1.5} />
+            </button>
+          ) : null}
+          <span className="truncate text-sm font-medium text-foreground/70">
+            {knowledgeBase ? knowledgeBase.knowledge_base_name : "目录"}
+          </span>
+        </div>
         {activeView !== "trash" ? (
           <div className="flex items-center gap-1">
             <button

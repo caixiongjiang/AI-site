@@ -506,15 +506,22 @@ function TrashItemRow({
 // ---- 左侧栏可拖拽分割条 ----
 // 写入 localStorage 并在双击时回到 DEFAULT；min/max 是为了避免拖到无法操作。
 const SPLIT_STORAGE_KEY = "knowledge-workspace-left-width";
+/** 左侧管理区「知识库列表」折叠状态持久化 key（不含文件夹/文件树） */
+const KB_LIST_COLLAPSE_STORAGE_KEY = "knowledge-workspace-kb-list-collapsed";
+/** @deprecated 旧 key，读取后迁移到 KB_LIST_COLLAPSE_STORAGE_KEY */
+const COLLAPSE_STORAGE_KEY = "knowledge-workspace-left-collapsed";
 /** 默认更宽，便于文件名与列表可读（仍可拖拽 / 双击分割条恢复此默认） */
 const SPLIT_DEFAULT = 460;
 const SPLIT_MIN = 260;
 const SPLIT_MAX = 800;
+/** 收起知识库列表后，文件夹/文件树区域固定宽度（不再随分割条变化） */
+const FOLDER_TREE_ONLY_WIDTH = 300;
 
 function KnowledgeWorkspace() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetFolderRef = useRef<string | null>(null);
   const [leftWidth, setLeftWidth] = useState<number>(SPLIT_DEFAULT);
+  const [kbListCollapsed, setKbListCollapsed] = useState<boolean>(false);
   const [dragging, setDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState<string | null>(null);
@@ -540,6 +547,11 @@ function KnowledgeWorkspace() {
   );
   const selectedFolder = folders.find((folder) => folder.folder_id === selectedFolderId);
   const canMoveFiles = true;
+
+  /** 左侧总宽：展开知识库列表时用可拖拽宽度；收起后仅保留文件夹树固定宽 */
+  const effectiveLeftWidth = kbListCollapsed
+    ? FOLDER_TREE_ONLY_WIDTH
+    : leftWidth;
 
   const visibleFiles = useMemo(() => {
     if (!selectedFolderId) return files;
@@ -757,6 +769,35 @@ function KnowledgeWorkspace() {
       // localStorage 不可用（隐私模式 / 配额满）→ 用默认值即可
     }
   }, []);
+
+  // 启动时还原知识库列表折叠状态（兼容旧 key）
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const legacy = window.localStorage.getItem(COLLAPSE_STORAGE_KEY);
+      const current = window.localStorage.getItem(KB_LIST_COLLAPSE_STORAGE_KEY);
+      if (current !== null) {
+        setKbListCollapsed(current === "1");
+      } else if (legacy !== null) {
+        setKbListCollapsed(legacy === "1");
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // 知识库列表折叠状态持久化
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        KB_LIST_COLLAPSE_STORAGE_KEY,
+        kbListCollapsed ? "1" : "0"
+      );
+    } catch {
+      // ignore
+    }
+  }, [kbListCollapsed]);
 
   // 拖拽期间监听全局 mousemove / mouseup；同步给 body 加 col-resize 光标 + 禁选中。
   useEffect(() => {
@@ -1248,7 +1289,7 @@ function KnowledgeWorkspace() {
         className="grid h-screen grid-cols-1 bg-white xl:grid-cols-[var(--knowledge-left-width)_6px_minmax(0,1fr)]"
         style={
           {
-            "--knowledge-left-width": `${leftWidth}px`,
+            "--knowledge-left-width": `${effectiveLeftWidth}px`,
           } as React.CSSProperties
         }
       >
@@ -1256,6 +1297,8 @@ function KnowledgeWorkspace() {
           <KnowledgeList
             knowledgeBases={knowledgeBasesView}
             selectedId={selectedKbId}
+            collapsed={kbListCollapsed}
+            onCollapse={() => setKbListCollapsed(true)}
             onSelect={(id) => {
               setSelectedKbId(id);
               setSelectedFolderId(null);
@@ -1267,7 +1310,17 @@ function KnowledgeWorkspace() {
             onDelete={(kb) => handleDeleteKnowledgeBase(kb)}
           />
 
-          <div className="min-w-0 flex-1 overflow-hidden">
+          <div
+            className={cn(
+              "overflow-hidden",
+              kbListCollapsed ? "shrink-0" : "min-w-0 flex-1"
+            )}
+            style={
+              kbListCollapsed
+                ? { width: FOLDER_TREE_ONLY_WIDTH }
+                : undefined
+            }
+          >
             {!selectedKbId ? (
               <div className="flex h-full items-center justify-center bg-white text-sm text-muted">
                 选择一个知识库
@@ -1281,6 +1334,8 @@ function KnowledgeWorkspace() {
                 searchTerm={searchTerm}
                 canMoveFiles={canMoveFiles}
                 activeView={activeView}
+                kbListCollapsed={kbListCollapsed}
+                onExpandKbList={() => setKbListCollapsed(false)}
                 onSelectFolder={(id) => {
                   setSelectedFolderId(id);
                 }}
@@ -1381,37 +1436,53 @@ function KnowledgeWorkspace() {
           />
         </div>
 
-        {/* 可拖拽分割条：仅在 xl 及以上展示。
-            - 单击拖拽即可调整左右宽度（min 240 / max 720 / default 360）
-            - 双击可一键回到默认值
-            - 宽度记到 localStorage，下次进入保持。
-            div 本身留 6px 宽度给鼠标更容易抓到，里面再画一根 1.5px 视觉细线。 */}
+        {/* 可拖拽分割条：仅在 xl 及以上、且知识库列表未折叠时可用。
+            收起知识库列表时左侧为固定宽度，分割条仅作视觉分隔。 */}
         <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="拖动调整左侧宽度"
-          onMouseDown={(event) => {
-            event.preventDefault();
-            setDragging(true);
-          }}
-          onDoubleClick={() => setLeftWidth(SPLIT_DEFAULT)}
           className={cn(
-            "group hidden h-full w-full cursor-col-resize items-center justify-center xl:flex",
-            dragging && "bg-primary/10"
+            "group relative hidden h-full w-full xl:flex xl:items-center xl:justify-center",
+            dragging && !kbListCollapsed && "bg-primary/10"
           )}
-          title="拖动调整宽度（双击恢复默认）"
         >
           <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={
+              kbListCollapsed
+                ? "文件夹区域固定宽度"
+                : "拖动调整左侧宽度"
+            }
+            onMouseDown={(event) => {
+              if (kbListCollapsed) return;
+              event.preventDefault();
+              setDragging(true);
+            }}
+            onDoubleClick={() => {
+              if (kbListCollapsed) return;
+              setLeftWidth(SPLIT_DEFAULT);
+            }}
             className={cn(
-              "h-full w-px transition-colors",
-              dragging
-                ? "bg-primary/60"
-                : "bg-gray-200 group-hover:bg-primary/40"
+              "h-full w-full",
+              kbListCollapsed ? "cursor-default" : "cursor-col-resize"
             )}
-          />
+            title={
+              kbListCollapsed
+                ? "收起知识库时文件夹区域为固定宽度"
+                : "拖动调整宽度（双击恢复默认）"
+            }
+          >
+            <div
+              className={cn(
+                "h-full w-px transition-colors",
+                dragging
+                  ? "bg-primary/60"
+                  : "bg-gray-200 group-hover:bg-primary/40"
+              )}
+            />
+          </div>
         </div>
 
-        <div className="flex min-h-0 min-w-0 overflow-hidden p-4">
+        <div className="relative flex min-h-0 min-w-0 overflow-hidden p-4">
           <KnowledgeChatPanel
             knowledgeBaseId={selectedKbId || null}
             knowledgeBaseName={selectedKb?.knowledge_base_name}
