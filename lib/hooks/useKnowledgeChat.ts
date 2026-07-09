@@ -139,8 +139,6 @@ export interface SendOptions {
    * - 不传或传空字符串 → 沿用 session 当前的 model（或 model_preset）。
    */
   model?: string;
-  /** 覆盖 session 默认 max_tool_rounds */
-  maxToolRounds?: number;
   /** 覆盖 session 默认 retrieve_top_k */
   retrieveTopK?: number;
   /** 跳过服务端无条件初次召回（仅特殊场景使用） */
@@ -1284,9 +1282,6 @@ export function useKnowledgeChat(
       // 空字符串视为"清除前端选择 → 沿用 session 默认"，所以这里 omit 而不是显式传 ""。
       if (opts.model) {
         payload.model = opts.model;
-      }
-      if (opts.maxToolRounds !== undefined) {
-        payload.max_tool_rounds = opts.maxToolRounds;
       }
       if (opts.retrieveTopK !== undefined) {
         payload.retrieve_top_k = opts.retrieveTopK;

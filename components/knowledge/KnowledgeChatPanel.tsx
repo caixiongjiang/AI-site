@@ -135,7 +135,6 @@ interface ChatSettings {
    * 注意：模型 preset 不再出现在前端，是后端抽取 / 起标题 / 摘要等场景的事。
    */
   model: string;
-  maxToolRounds: number;
 }
 
 // ============================================================
@@ -1279,13 +1278,24 @@ function UserMessageBubble({
  */
 function extractHtmlReport(content: string): string | null {
   if (!content) return null;
-  const startMatch = /<!DOCTYPE html|<html[\s>]/i.exec(content);
-  if (!startMatch) return null;
-  let html = content.slice(startMatch.index);
-  const endMatch = /<\/html\s*>/i.exec(html);
-  if (!endMatch) return null;
-  html = html.slice(0, endMatch.index + endMatch[0].length);
-  return html.trim();
+
+  const extractFromHtmlSource = (source: string): string | null => {
+    const startMatch = /<!DOCTYPE html|<html[\s>]/i.exec(source);
+    if (!startMatch) return null;
+    let html = source.slice(startMatch.index);
+    const endMatch = /<\/html\s*>/i.exec(html);
+    if (!endMatch) return null;
+    html = html.slice(0, endMatch.index + endMatch[0].length);
+    return html.trim();
+  };
+
+  const fencedMatch = /```html\s*\n([\s\S]*?)```/i.exec(content);
+  if (fencedMatch) {
+    const fromFence = extractFromHtmlSource(fencedMatch[1]);
+    if (fromFence) return fromFence;
+  }
+
+  return extractFromHtmlSource(content);
 }
 
 function hasHtmlReportStart(content: string): boolean {
@@ -2050,7 +2060,6 @@ function PlusConfigMenu({
   const subItems = [
     { key: "models" as const, icon: Cpu, label: "模型", value: currentModelLabel },
     { key: "skills" as const, icon: Sparkle, label: "技能", value: skillsValue },
-    { key: "tools" as const, icon: Wrench, label: "工具轮", value: String(settings.maxToolRounds) },
   ].filter((it) => {
     if (it.key === "skills") {
       return match(it.label) || match(it.value) || filteredMenuSkills.length > 0;
@@ -2249,31 +2258,6 @@ function PlusConfigMenu({
                         </div>
                       </div>
                     ) : null}
-
-                    {isHovered && it.key === "tools" ? (
-                      <div className="absolute bottom-0 left-full z-10 pl-1">
-                        <div className="w-44 rounded-xl border border-gray-200 bg-white p-2.5 shadow-xl">
-                        <div className="mb-2 flex items-center justify-between text-[11px] text-muted">
-                          <span>最大工具回合</span>
-                          <span className="text-foreground">{settings.maxToolRounds}</span>
-                        </div>
-                        <input
-                          type="range"
-                          min={1}
-                          max={10}
-                          value={settings.maxToolRounds}
-                          onChange={(e) =>
-                            onChange({ ...settings, maxToolRounds: Number(e.target.value) })
-                          }
-                          className="w-full accent-primary"
-                        />
-                        <div className="mt-1 flex justify-between text-[10px] text-muted">
-                          <span>1</span>
-                          <span>10</span>
-                        </div>
-                        </div>
-                      </div>
-                    ) : null}
                   </div>
                 );
               })}
@@ -2359,7 +2343,6 @@ export const KnowledgeChatPanel = ({
     enableThinking: false,
     enableMultimodal: false,
     model: "",
-    maxToolRounds: 10,
   });
   // ➕ 号浮层配置菜单开关（临时态，无需持久化）
   const [plusMenuOpen, setPlusMenuOpen] = useState<boolean>(false);
@@ -2473,7 +2456,6 @@ export const KnowledgeChatPanel = ({
         enableThinking: activeSession.enable_thinking,
         enableMultimodal: false,
         model: switchedNow ? "" : prev.model,
-        maxToolRounds: activeSession.max_tool_rounds || 10,
       }));
       return;
     }
@@ -2509,7 +2491,6 @@ export const KnowledgeChatPanel = ({
         enableThinking: modelSupportsThinking,
         enableMultimodal: modelSupportsMultimodal,
         model: nextModel,
-        maxToolRounds: activeSession.max_tool_rounds || 10,
       };
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2702,7 +2683,6 @@ export const KnowledgeChatPanel = ({
       // 用户选了具体 model 才透传；空字符串 → 沿用 session 当前偏好。
       // 注意：这里不再传 modelPreset——preset 是后端事项，前端只表达"我要这个具体模型"。
       ...(settings.model ? { model: settings.model } : {}),
-      maxToolRounds: settings.maxToolRounds,
       forcedSkillNames: skillNames.length > 0 ? skillNames : undefined,
       // @ 内联引用（软引用，可多个）：透传给后端解析为引用块 + seeding
       mentions:

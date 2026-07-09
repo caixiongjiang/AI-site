@@ -121,7 +121,6 @@ export interface ChatSessionInfo {
   mode: string;
   enable_thinking: boolean;
   enable_multimodal?: boolean;
-  max_tool_rounds: number;
   system_prompt?: string | null;
   message_count: number;
   last_message_at?: string | null;
@@ -153,7 +152,6 @@ export interface ChatSessionCreateRequest {
   /** 会话交互模式（agent / plan 等）；默认 agent */
   mode?: string;
   enable_thinking?: boolean;
-  max_tool_rounds?: number;
   system_prompt?: string | null;
 }
 
@@ -198,7 +196,6 @@ export interface ChatRequestPayload {
    * 不传 → 沿用会话当前的 `model`（或 `model_preset`）。
    */
   model?: string | null;
-  max_tool_rounds?: number | null;
   retrieve_top_k?: number | null;
   custom_system_prompt?: string | null;
   skip_retrieval?: boolean | null;
