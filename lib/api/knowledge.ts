@@ -1,4 +1,4 @@
-import { API_CONFIG, getCommonHeaders } from "@/lib/config";
+import { API_CONFIG, getCommonHeaders, getCurrentUserId } from "@/lib/config";
 import {
   ApiResponse,
   ChunkImagePreviewResponse,
@@ -441,6 +441,22 @@ export async function fetchFilePreview(
   );
 }
 
+/**
+ * 构造文件原始内容的直读 URL（走后端 /raw 流式端点）。
+ *
+ * 不再使用 MinIO 预签名 URL 作为 react-pdf 的数据源 —— 预签名 URL 内嵌
+ * 内网域名（如 milvus-minio:9000）且为 http，浏览器既无法解析又会被
+ * https 站点的混合内容策略拦截。改为由后端服务端读取对象存储并以内联
+ * 方式返回，URL 落在公网 API 域名上、同协议、且通过 query token 鉴权
+ * （react-pdf 无法自定义请求头）。
+ */
+export function buildFileRawUrl(fileId: string): string {
+  const base = buildKnowledgeUrl(`/knowledge/file/${encodeURIComponent(fileId)}/raw`);
+  const token = encodeURIComponent(getCurrentUserId());
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}token=${token}`;
+}
+
 export async function fetchChunkImagePreview(
   chunkId: string,
   expires?: number
@@ -450,6 +466,24 @@ export async function fetchChunkImagePreview(
     `/api/knowledge/chunk/${encodeURIComponent(chunkId)}/image-preview${suffix}`,
     { method: "GET" }
   );
+}
+
+/**
+ * 构造图片 chunk 原始内容的直读 URL（走后端 /raw-image 流式端点）。
+ *
+ * 不再使用 MinIO 预签名 URL 作为 <img> 数据源 —— 预签名 URL 内嵌
+ * 内网域名（如 milvus-minio:9000）且为 http，浏览器既无法解析又会被
+ * https 站点的混合内容策略拦截。改为由后端服务端读取对象存储并以内联
+ * 方式返回，URL 落在公网 API 域名上、同协议、且通过 query token 鉴权
+ * （<img> 无法自定义请求头）。
+ */
+export function buildChunkImageRawUrl(chunkId: string): string {
+  const base = buildKnowledgeUrl(
+    `/knowledge/chunk/${encodeURIComponent(chunkId)}/raw-image`
+  );
+  const token = encodeURIComponent(getCurrentUserId());
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}token=${token}`;
 }
 
 export async function fetchChunkPosition(

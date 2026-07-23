@@ -10,7 +10,7 @@ import {
   CachedKnowledgeFileView,
   getCachedKnowledgeFileView,
 } from "@/lib/knowledge-viewer";
-import { fetchFilePreview } from "@/lib/api/knowledge";
+import { fetchFilePreview, buildFileRawUrl } from "@/lib/api/knowledge";
 import type { KnowledgeFile } from "@/lib/knowledge-types";
 
 export default function KnowledgeFilePage() {
@@ -19,7 +19,8 @@ export default function KnowledgeFilePage() {
   const fileId = Array.isArray(params?.fileId) ? params.fileId[0] : params?.fileId;
   const highlightChunkId = searchParams?.get("chunkId") || null;
   const [cachedFile, setCachedFile] = useState<CachedKnowledgeFileView | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  // react-pdf 直读后端 /raw 流式端点（不使用 MinIO 预签名 URL）
+  const previewUrl = fileId ? buildFileRawUrl(fileId) : null;
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [loadingFromApi, setLoadingFromApi] = useState(false);
@@ -42,7 +43,6 @@ export default function KnowledgeFilePage() {
             knowledge_base_id: undefined,
           };
           setCachedFile({ file });
-          setPreviewUrl(data.preview_url);
         })
         .catch((err) => {
           setPreviewError(
@@ -52,28 +52,6 @@ export default function KnowledgeFilePage() {
         .finally(() => setLoadingFromApi(false));
     }
   }, [fileId]);
-
-  // 有缓存时，单独获取 preview URL
-  useEffect(() => {
-    if (!fileId || !cachedFile || previewUrl) return;
-    let cancelled = false;
-
-    fetchFilePreview(fileId)
-      .then((data) => {
-        if (!cancelled) setPreviewUrl(data.preview_url);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setPreviewError(
-            err instanceof Error ? err.message : "获取文件预览地址失败"
-          );
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [fileId, cachedFile, previewUrl]);
 
   if (!fileId) {
     return null;

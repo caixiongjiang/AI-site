@@ -15,7 +15,6 @@ import {
   AlertTriangle,
   FileText,
   Image as ImageIcon,
-  Loader2,
   Table as TableIcon,
 } from "lucide-react";
 import {
@@ -30,7 +29,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { Citation } from "@/lib/chat-types";
-import { fetchChunkImagePreview } from "@/lib/api/knowledge";
+import { buildChunkImageRawUrl } from "@/lib/api/knowledge";
 import { CitationPreviewMarkdown } from "@/components/knowledge/CitationPreviewMarkdown";
 import { cn } from "@/lib/utils";
 import {
@@ -137,7 +136,7 @@ function parseChineseImagePreview(raw: string): { caption: string; footnote: str
   return { caption, footnote };
 }
 
-/** 按需加载图片的内部组件 */
+/** 按 chunk_id 直读后端 /raw-image 流式端点的图片组件 */
 function CitationImageLoader({
   chunkId,
   caption,
@@ -147,59 +146,29 @@ function CitationImageLoader({
   caption?: string;
   footnote?: string;
 }) {
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  // 直读后端 /raw-image 流式端点（公网域名 + query token 鉴权），
+  // 不再走 MinIO 预签名 URL（内网域名 + http，浏览器不可用）。
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    fetchChunkImagePreview(chunkId)
-      .then((res) => {
-        if (cancelled) return;
-        const url = res?.preview_url ?? null;
-        setImageUrl(url);
-        if (!url) setError("无法获取图片预览链接");
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err?.message || "加载图片失败");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [chunkId]);
-
-  const safeSrc = imageUrl ? sanitizeCitationImageSrc(imageUrl) : null;
+  const rawUrl = buildChunkImageRawUrl(chunkId);
 
   return (
     <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 text-left">
       {/* 图片 */}
       <div className="min-h-0 flex-1 overflow-auto overscroll-contain rounded-md border border-gray-200 bg-gray-50/80 p-1.5">
-        {loading ? (
-          <div className="flex items-center justify-center gap-1.5 py-6 text-[11px] text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            加载中…
-          </div>
-        ) : error ? (
+        {error ? (
           <div className="flex items-center justify-center gap-1.5 py-6 text-[11px] text-red-500">
             <AlertTriangle className="h-3.5 w-3.5" />
             {error}
           </div>
-        ) : safeSrc ? (
+        ) : (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={safeSrc}
+            src={rawUrl}
             alt={caption || "引用图片"}
             className="mx-auto max-h-[min(55vh,20rem)] w-auto max-w-full object-contain"
             loading="lazy"
+            onError={() => setError("图片加载失败")}
           />
-        ) : (
-          <div className="px-2 py-6 text-center text-[11px] text-muted-foreground">
-            （预览中无可用图片链接）
-          </div>
         )}
       </div>
       {/* 标题（支持 LaTeX） */}

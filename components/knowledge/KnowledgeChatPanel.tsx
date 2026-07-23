@@ -55,6 +55,7 @@ import { ReportViewer } from "@/components/knowledge/ReportViewer";
 import { RecallPathSection } from "@/components/knowledge/RecallFlowChart";
 import { CitationPreviewMarkdown } from "@/components/knowledge/CitationPreviewMarkdown";
 import { ImagePreviewPopover } from "@/components/knowledge/ImagePreviewPopover";
+import { buildChunkImageRawUrl } from "@/lib/api/knowledge";
 import {
   normalizeCitationAnnotation,
   stripHtmlToPlain,
@@ -252,22 +253,32 @@ function toolResultCountLabel(count: number | undefined): string {
 }
 
 /**
- * 从工具结果文本中提取图片 URL 和对应 caption
- * 匹配模式: `image_url: <url>` + 后续 `caption: <text>`
+ * 从工具结果文本中提取图片 chunk 及对应 caption，并构造公网直读 URL。
+ *
+ * 工具结果文本块形如：
+ *   --- chunk_id=c22, page=8 ---
+ *   mode: direct_image
+ *   image_url: <MinIO 内部预签名 URL，浏览器不可用>
+ *   caption: ...
+ *   footnote: ...
+ *
+ * 这里不再使用后端返回的 MinIO 预签名 URL（内网域名 + http，浏览器无法解析且
+ * 被 https 站点的混合内容策略拦截），改为从 chunk_id 构造后端 /raw-image
+ * 流式端点的公网 URL（query token 鉴权），供 <img> 直接加载。
  */
 function extractToolResultImages(text: string): Array<{ url: string; caption: string }> {
   if (!text) return [];
   const results: Array<{ url: string; caption: string }> = [];
-  // 匹配 image_url: <url>（支持 http(s) 和 presigned URL）
-  const urlRe = /image_url:\s*(https?:\/\/[^\s\n]+)/gi;
+  // 匹配 --- chunk_id=<id>[, page=N] --- 头
+  const headerRe = /---\s*chunk_id=([^\s,]+)(?:[^\n]*?)\s*---/gi;
   let m: RegExpExecArray | null;
-  while ((m = urlRe.exec(text)) !== null) {
-    const url = m[1];
-    // 向后找 caption
+  while ((m = headerRe.exec(text)) !== null) {
+    const chunkId = m[1];
+    // 在该 header 之后寻找 caption: <text>
     const rest = text.slice(m.index + m[0].length);
     const captionMatch = rest.match(/^\s*\n?caption:\s*(.+?)(?:\n|$)/);
     const caption = captionMatch ? captionMatch[1].trim() : "";
-    results.push({ url, caption });
+    results.push({ url: buildChunkImageRawUrl(chunkId), caption });
   }
   return results;
 }

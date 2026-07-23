@@ -13,7 +13,6 @@
 
 import {
   Image as ImageIcon,
-  Loader2,
   AlertTriangle,
 } from "lucide-react";
 import {
@@ -26,7 +25,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import { fetchChunkImagePreview } from "@/lib/api/knowledge";
+import { buildChunkImageRawUrl } from "@/lib/api/knowledge";
 import { CitationPreviewMarkdown } from "@/components/knowledge/CitationPreviewMarkdown";
 import { normalizeCitationAnnotation } from "@/components/knowledge/citationPreviewUtils";
 import { cn } from "@/lib/utils";
@@ -112,38 +111,18 @@ export function ImagePreviewPopover({
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  // 直读后端 /raw-image 流式端点（公网域名 + query token 鉴权），
+  // 不再走 MinIO 预签名 URL（内网域名 + http，浏览器不可用）。
+  const imageUrl = chunkId ? buildChunkImageRawUrl(chunkId) : null;
   const [error, setError] = useState<string | null>(null);
 
   usePopoverPosition(open, anchorRef, popRef);
 
-  // 点击触发时加载图片
+  // 点击触发时打开弹窗
   const handleToggle = useCallback((e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
-    setOpen((prev) => {
-      const next = !prev;
-      // 首次打开时加载图片
-      if (next && !imageUrl && !loading) {
-        setLoading(true);
-        setError(null);
-        fetchChunkImagePreview(chunkId)
-          .then((res) => {
-            setImageUrl(res?.preview_url ?? null);
-            if (!res?.preview_url) {
-              setError("无法获取图片预览链接");
-            }
-          })
-          .catch((err) => {
-            setError(err?.message || "加载图片失败");
-          })
-          .finally(() => {
-            setLoading(false);
-          });
-      }
-      return next;
-    });
-  }, [chunkId, imageUrl, loading]);
+    setOpen((prev) => !prev);
+  }, []);
 
   // 点击外部关闭
   useEffect(() => {
@@ -207,12 +186,7 @@ export function ImagePreviewPopover({
 
             {/* 图片区域 */}
             <div className="mt-2 min-h-0 flex-1 overflow-auto overscroll-contain rounded-md border border-gray-200 bg-gray-50/80 p-1.5">
-              {loading ? (
-                <div className="flex items-center justify-center gap-1.5 py-6 text-[11px] text-muted-foreground">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  加载中…
-                </div>
-              ) : error ? (
+              {error ? (
                 <div className="flex items-center justify-center gap-1.5 py-6 text-[11px] text-red-500">
                   <AlertTriangle className="h-3.5 w-3.5" />
                   {error}
@@ -224,6 +198,7 @@ export function ImagePreviewPopover({
                   alt={caption || "图片预览"}
                   className="mx-auto max-h-[min(55vh,20rem)] w-auto max-w-full object-contain"
                   loading="lazy"
+                  onError={() => setError("图片加载失败")}
                 />
               ) : (
                 <div className="px-2 py-6 text-center text-[11px] text-muted-foreground">
