@@ -1,0 +1,44 @@
+import type { ComponentType } from "react";
+import { Home, Bot, Library, Sparkle } from "lucide-react";
+
+export type FeatureKey = "home" | "agents" | "knowledge" | "skills";
+
+export interface FeatureConfig {
+  key: FeatureKey;
+  label: string;
+  href: string;
+  icon: ComponentType<{ className?: string }>;
+  /**
+   * 始终锁定（敬请期待），与登录态无关。
+   * 登录前后都不可进入，点击只展示「敬请期待」提示。
+   */
+  locked?: boolean;
+  /**
+   * 需要登录才能访问。登录前点击会弹出登录 modal。
+   * locked 优先级高于 requiresAuth。
+   */
+  requiresAuth?: boolean;
+}
+
+/**
+ * 侧栏导航特性清单（唯一事实源）。
+ *
+ * 当前开放策略：
+ *   - 首页 / Agent应用：始终锁定（敬请期待），登录后也不解锁
+ *   - 知识库 / 技能：登录前锁定，登录后解锁
+ */
+export const FEATURES: FeatureConfig[] = [
+  { key: "home", label: "首页", href: "/", icon: Home, locked: true },
+  { key: "agents", label: "Agent应用", href: "/agents", icon: Bot, locked: true },
+  { key: "knowledge", label: "知识库", href: "/knowledge", icon: Library, requiresAuth: true },
+  { key: "skills", label: "技能", href: "/skills", icon: Sparkle, requiresAuth: true },
+];
+
+export function isFeatureAccessible(
+  feature: FeatureConfig,
+  isAuthenticated: boolean,
+): boolean {
+  if (feature.locked) return false;
+  if (feature.requiresAuth && !isAuthenticated) return false;
+  return true;
+}

@@ -3,28 +3,20 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Home,
-  Bot,
-  Library,
-  Lock,
   Settings,
   HelpCircle,
   Info,
   LogOut,
-  Sparkle,
+  Lock,
+  Sparkles,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { ProfileDrawer } from "./ProfileDrawer";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { useAuthModal } from "@/components/auth/AuthModalProvider";
-
-const navItems = [
-  { icon: Home, label: "首页", href: "/", requiresAuth: false },
-  { icon: Bot, label: "Agent应用", href: "/agents", requiresAuth: true },
-  { icon: Library, label: "知识库", href: "/knowledge", requiresAuth: true },
-  { icon: Sparkle, label: "技能", href: "/skills", requiresAuth: true },
-];
+import { FEATURES, type FeatureConfig } from "@/lib/features";
 
 const bottomItems = [
   { icon: Settings, label: "设置", href: "/settings" },
@@ -34,6 +26,7 @@ const bottomItems = [
 export const Sidebar = () => {
   const pathname = usePathname() ?? "/";
   const [showProfile, setShowProfile] = useState(false);
+  const [lockedFeature, setLockedFeature] = useState<FeatureConfig | null>(null);
   const { isAuthenticated, logout, user } = useAuth();
   const { openAuthModal } = useAuthModal();
   const avatarText =
@@ -69,18 +62,21 @@ export const Sidebar = () => {
 
         {/* Navigation Items */}
         <nav className="flex flex-1 flex-col gap-5">
-          {navItems.map((item) => {
+          {FEATURES.map((item) => {
             const Icon = item.icon;
-            const isActive = pathname === item.href || 
+            const isActive = pathname === item.href ||
                            (item.href !== "/" && pathname.startsWith(item.href));
-            
+
+            const showLockBadge =
+              item.locked || (!isAuthenticated && item.requiresAuth);
+
             const content = (
               <>
                 {isActive && (
                   <span className="absolute -left-2.5 h-5 w-0.5 rounded-r bg-primary" />
                 )}
                 <Icon className="h-5 w-5 text-foreground" />
-                {!isAuthenticated && item.requiresAuth && (
+                {showLockBadge && (
                   <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#1f2426] ring-1 ring-white/10">
                     <Lock className="h-2.5 w-2.5 text-primary-light" />
                   </span>
@@ -88,6 +84,25 @@ export const Sidebar = () => {
               </>
             );
 
+            // 始终锁定（敬请期待）：登录前后都不可进入
+            if (item.locked) {
+              return (
+                <button
+                  key={item.href}
+                  type="button"
+                  onClick={() => setLockedFeature(item)}
+                  className={cn(
+                    "relative flex h-10 w-10 items-center justify-center rounded-lg transition-all",
+                    isActive ? "bg-primary/20" : "hover:bg-primary/10"
+                  )}
+                  aria-label={item.label}
+                >
+                  {content}
+                </button>
+              );
+            }
+
+            // 需登录：未登录时弹登录 modal
             if (!isAuthenticated && item.requiresAuth) {
               return (
                 <button
@@ -98,11 +113,11 @@ export const Sidebar = () => {
                       title:
                         item.href === "/knowledge"
                           ? "登录以构建你的专属知识库"
-                          : "登录以保存和管理你的专属 Agent",
+                          : "登录以使用" + item.label,
                       description:
                         item.href === "/knowledge"
                           ? "知识库支持上传资料、建立索引并围绕你的私有内容持续问答。登录后这些内容才能安全保存到你的工作区。"
-                          : "Agent 设计、发布和个性化配置都需要绑定到你的账号，登录后你的创作成果才能被完整保存。",
+                          : "「" + item.label + "」需要绑定到你的账号，登录后才能完整保存与使用。",
                       nextPath: item.href,
                       featureLabel: item.label,
                     })
@@ -149,7 +164,7 @@ export const Sidebar = () => {
               </Link>
             );
           })}
-          
+
           {/* Profile Info Button */}
           <button
             onClick={() => setShowProfile(true)}
@@ -171,6 +186,95 @@ export const Sidebar = () => {
       </aside>
 
       <ProfileDrawer isOpen={showProfile} onClose={() => setShowProfile(false)} />
+
+      {lockedFeature && (
+        <ComingSoonModal
+          feature={lockedFeature}
+          onClose={() => setLockedFeature(null)}
+          onLogin={() => {
+            const feature = lockedFeature;
+            setLockedFeature(null);
+            openAuthModal({
+              title: "登录后解锁更多能力",
+              description:
+                "「" + feature.label + "」暂未开放，登录后可先使用「知识库」与「技能」模块。",
+              featureLabel: feature.label,
+            });
+          }}
+        />
+      )}
     </>
   );
 };
+
+function ComingSoonModal({
+  feature,
+  onClose,
+  onLogin,
+}: {
+  feature: FeatureConfig;
+  onClose: () => void;
+  onLogin: () => void;
+}) {
+  const { isAuthenticated } = useAuth();
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-[1200] bg-black/60 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      <div className="fixed inset-0 z-[1201] flex items-center justify-center px-6">
+        <div className="relative w-full max-w-md overflow-hidden rounded-[28px] border border-white/10 bg-[#101314] shadow-[0_40px_160px_rgba(0,0,0,0.5)]">
+          <div className="absolute inset-x-0 top-0 h-32 bg-[radial-gradient(circle_at_top,rgba(0,217,128,0.22),transparent_70%)]" />
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:bg-white/5 hover:text-white"
+          >
+            <X className="h-4 w-4" />
+          </button>
+
+          <div className="relative p-7">
+            <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/15 text-primary-light">
+              <Lock className="h-5 w-5" />
+            </div>
+
+            <h2 className="mt-5 text-2xl text-foreground">
+              {feature.label} · 敬请期待
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-muted">
+              该模块正在打磨中，暂未开放使用。
+              {isAuthenticated
+                ? "你可以先使用左侧的「知识库」与「技能」继续你的工作。"
+                : "登录后可先使用「知识库」与「技能」模块。"}
+            </p>
+
+            <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-gray-200">
+              <Sparkles className="h-3.5 w-3.5 text-primary-light" />
+              {feature.label}
+            </div>
+
+            <div className="mt-7 space-y-3">
+              {!isAuthenticated && (
+                <button
+                  type="button"
+                  onClick={onLogin}
+                  className="flex w-full items-center justify-center rounded-2xl bg-white px-4 py-3 text-sm font-medium text-black transition hover:-translate-y-0.5"
+                >
+                  登录 / 注册
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex w-full items-center justify-center rounded-2xl border border-white/10 px-4 py-3 text-sm text-foreground transition hover:bg-white/5"
+              >
+                知道了
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}

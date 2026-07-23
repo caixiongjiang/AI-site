@@ -365,6 +365,13 @@ function ToolCallRow({ tc, onViewSearchResults }: { tc: ToolCallRecord; onViewSe
     // 完成态：显示命中数量 + 查看按钮
     if (!inflight && tc.result_brief) {
       const hasChunks = tc.retrieval_chunks && tc.retrieval_chunks.length > 0;
+      // 直答短路场景下 chunks 为空，但 route_plan / recall_stats 仍有展示价值，
+      // 此时也允许打开「全部来源」侧栏查看路由计划与召回链路。
+      const hasRoutePlan = !!(
+        tc.retrieval_params && (tc.retrieval_params as Record<string, unknown>).route_plan
+      );
+      const hasRecallStats = !!tc.recall_stats;
+      const canOpenSources = hasChunks || hasRoutePlan || hasRecallStats;
       return (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 px-3 py-2 text-xs">
           {/* 整行可点击展开/折叠（"查看"按钮除外） */}
@@ -388,7 +395,7 @@ function ToolCallRow({ tc, onViewSearchResults }: { tc: ToolCallRecord; onViewSe
               ) : null}
             </span>
             <div className="flex items-center gap-1">
-              {hasChunks && onViewSearchResults ? (
+              {canOpenSources && onViewSearchResults ? (
                 <button
                   type="button"
                   onClick={(e) => {
@@ -710,6 +717,53 @@ function RetrievalChip({
   );
 }
 
+/** 直答短路来源块：展示 qa_dense 高置信命中的 atomic_qa 来源信息 */
+function DirectAnswerBlock({ direct }: { direct: Record<string, unknown> }) {
+  const qaId = typeof direct.qa_id === "string" ? direct.qa_id : null;
+  const score = typeof direct.score === "number" ? direct.score : null;
+  const sourceChunkIds = Array.isArray(direct.source_chunk_ids)
+    ? (direct.source_chunk_ids as unknown[]).filter(
+        (id): id is string => typeof id === "string",
+      )
+    : [];
+  if (!qaId && score === null && sourceChunkIds.length === 0) return null;
+  return (
+    <div className="border-b border-amber-100 bg-amber-50/50 px-4 py-3 text-[12px]">
+      <div className="mb-1.5 flex items-center gap-1.5 text-amber-800">
+        <Sparkles className="h-3.5 w-3.5 shrink-0" />
+        <span className="font-medium">直答来源</span>
+        <span className="text-[11px] text-amber-700/80">qa_dense 高置信命中</span>
+      </div>
+      {qaId ? (
+        <div className="text-muted-foreground">
+          atomic_qa: <span className="font-mono text-foreground">{qaId}</span>
+        </div>
+      ) : null}
+      {score !== null ? (
+        <div className="text-muted-foreground">
+          置信度: <span className="font-mono text-foreground">{score.toFixed(4)}</span>
+        </div>
+      ) : null}
+      {sourceChunkIds.length > 0 ? (
+        <div className="mt-1 text-muted-foreground">
+          依据 chunk:
+          <div className="mt-1 flex flex-wrap gap-1">
+            {sourceChunkIds.map((id) => (
+              <span
+                key={id}
+                className="rounded bg-white px-1.5 py-0.5 font-mono text-[10px] text-gray-600 ring-1 ring-amber-200"
+                title={id}
+              >
+                {id.length > 16 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** 从 citation alias（如 "c7"）提取序号，用于与 MarkdownAnswer 中的内联引用序号保持一致 */
 function getAliasIndex(c: Citation): number {
   if (c.alias) {
@@ -795,6 +849,11 @@ function ReferencesSidePanel({
         onMouseEnter={(e) => e.currentTarget.focus({ preventScroll: true })}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain outline-none"
       >
+        {showScore && params && (params as Record<string, unknown>).direct_answer ? (
+          <DirectAnswerBlock
+            direct={(params as Record<string, unknown>).direct_answer as Record<string, unknown>}
+          />
+        ) : null}
         {showScore && params && Object.keys(params).length > 0 ? (
           <div className="border-b border-gray-100">
             <button
@@ -3337,7 +3396,10 @@ export const KnowledgeChatPanel = ({
         </div>
         </div>
         </div>
-        {sourcesSidePanel && sourcesSidePanel.citations.length > 0 ? (
+        {sourcesSidePanel &&
+        (sourcesSidePanel.citations.length > 0 ||
+          sourcesSidePanel.params ||
+          sourcesSidePanel.recallStats) ? (
           <ReferencesSidePanel
             citations={sourcesSidePanel.citations}
             showScore={sourcesSidePanel.showScore}

@@ -20,10 +20,13 @@ import {
 import { SkillList } from "@/components/skills/SkillList";
 import { SkillDetail as SkillDetailComponent } from "@/components/skills/SkillDetail";
 import { SkillEditor } from "@/components/skills/SkillEditor";
+import { RequireAuth } from "@/components/auth/RequireAuth";
+import { useAuth } from "@/components/auth/AuthProvider";
 
 type View = "list" | "detail" | "create" | "edit";
 
 export default function SkillsPage() {
+  const { isAuthenticated } = useAuth();
   const [view, setView] = useState<View>("list");
   const [skills, setSkills] = useState<SkillDescriptor[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,8 +53,9 @@ export default function SkillsPage() {
   }, []);
 
   useEffect(() => {
+    if (!isAuthenticated) return;
     void loadSkills();
-  }, [loadSkills]);
+  }, [loadSkills, isAuthenticated]);
 
   // 查看详情
   const handleView = useCallback(async (name: string) => {
@@ -129,7 +133,13 @@ export default function SkillsPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <RequireAuth
+      featureLabel="技能"
+      title="登录以管理你的技能"
+      description="技能的创建、编辑与启停都需要绑定到你的账号，登录后才能安全保存并供知识库调用。"
+      nextPath="/skills"
+    >
+      <div className="min-h-screen bg-gray-50">
       {loadError ? (
         <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           {loadError}
@@ -172,6 +182,7 @@ export default function SkillsPage() {
           onCancel={handleBack}
         />
       )}
-    </div>
+      </div>
+    </RequireAuth>
   );
 }
