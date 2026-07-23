@@ -46,6 +46,7 @@ import {
   Loader2,
   LockKeyhole,
   LogIn,
+  PanelLeftOpen,
   Trash2,
   Undo2,
   X,
@@ -1322,7 +1323,18 @@ function KnowledgeWorkspace() {
             }
           >
             {!selectedKbId ? (
-              <div className="flex h-full items-center justify-center bg-white text-sm text-muted">
+              <div className="relative flex h-full flex-col items-center justify-center bg-white text-sm text-muted">
+                {kbListCollapsed ? (
+                  <button
+                    type="button"
+                    onClick={() => setKbListCollapsed(false)}
+                    className="absolute left-2 top-2.5 flex h-6 w-6 items-center justify-center rounded-md text-muted transition-colors hover:bg-gray-100 hover:text-foreground"
+                    title="展开知识库管理"
+                    aria-label="展开知识库管理"
+                  >
+                    <PanelLeftOpen className="h-3.5 w-3.5" strokeWidth={1.5} />
+                  </button>
+                ) : null}
                 选择一个知识库
               </div>
             ) : (
