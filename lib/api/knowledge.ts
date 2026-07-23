@@ -451,7 +451,7 @@ export async function fetchFilePreview(
  * （react-pdf 无法自定义请求头）。
  */
 export function buildFileRawUrl(fileId: string): string {
-  const base = buildKnowledgeUrl(`/knowledge/file/${encodeURIComponent(fileId)}/raw`);
+  const base = buildKnowledgeUrl(`/api/knowledge/file/${encodeURIComponent(fileId)}/raw`);
   const token = encodeURIComponent(getCurrentUserId());
   const sep = base.includes("?") ? "&" : "?";
   return `${base}${sep}token=${token}`;
@@ -479,7 +479,7 @@ export async function fetchChunkImagePreview(
  */
 export function buildChunkImageRawUrl(chunkId: string): string {
   const base = buildKnowledgeUrl(
-    `/knowledge/chunk/${encodeURIComponent(chunkId)}/raw-image`
+    `/api/knowledge/chunk/${encodeURIComponent(chunkId)}/raw-image`
   );
   const token = encodeURIComponent(getCurrentUserId());
   const sep = base.includes("?") ? "&" : "?";
