@@ -70,6 +70,8 @@ export interface ToolCallRecord {
   retrieval_chunks?: RetrievalChunkPreview[];
   /** 检索工具专用：查询参数 */
   retrieval_params?: Record<string, unknown>;
+  /** 检索工具专用：召回链路统计（每路 recalled/aligned/final + 融合/rerank 计数 + chunk_id 截断列表），独立于查询参数 */
+  recall_stats?: RecallStats;
   /** 工具调用耗时（毫秒） */
   time_ms?: number;
   /** read_image_chunks 等工具内部子阶段（仅流式进行中） */
@@ -244,6 +246,42 @@ export interface RetrievalChunkPreview {
   bucket_name?: string | null;
 }
 
+// ---------------------------------------------------------------------------
+// 召回链路统计（v1.1：与后端 src/retrieve/pipeline/types.py 的 RecallStats 对齐）
+// 由 search_knowledge_base 工具结果 params.recall_stats 带出，供「全部来源」面板
+// 中间的「召回链路」栏目渲染：每路召回 → 对齐 → 融合 → rerank 各阶段计数 + chunk_id 截断列表。
+// ---------------------------------------------------------------------------
+
+export interface RouteRecallStat {
+  route: string;
+  top_k: number;
+  /** Phase 2 该路原始召回 item 数 */
+  recalled_count: number;
+  /** Phase 3 跨粒度对齐后 chunk 数（section/qa/summary 路由展开后会变） */
+  aligned_count?: number | null;
+  /** Phase 5 rerank 后最终结果中该路贡献的 chunk 数（按 source_routes 归属，sum ≥ rerank_count） */
+  final_count?: number | null;
+  execution_time_ms?: number;
+  /** 该路召回的前 N 个 chunk_id（截断展示） */
+  sample_chunk_ids?: string[];
+}
+
+export interface RecallStats {
+  routes: RouteRecallStat[];
+  /** Phase 4 融合去重后候选数 */
+  fused_count: number;
+  /** 融合后候选 chunk_id（截断） */
+  fused_chunk_ids?: string[];
+  /** Phase 5 rerank 后数量 */
+  rerank_count: number;
+  /** 最终返回的 chunk_id（按分数降序，截断） */
+  final_chunk_ids?: string[];
+  /** Phase 5.5 精排后阈值过滤掉的数量 */
+  dropped_by_threshold?: number;
+  /** 是否走直答短路（true 时 fused/rerank 为空） */
+  short_circuited?: boolean;
+}
+
 // 服务端 → 客户端
 export type ServerFrame =
   | {
@@ -310,6 +348,8 @@ export type ServerFrame =
         retrieval_chunks?: RetrievalChunkPreview[];
         /** 检索工具专用：查询参数 */
         retrieval_params?: Record<string, unknown>;
+        /** 检索工具专用：召回链路统计（独立于查询参数） */
+        recall_stats?: RecallStats;
         /** 工具内部调用的子模型（如 read_image_chunks 的 VLM） */
         execution_model?: string | null;
       };

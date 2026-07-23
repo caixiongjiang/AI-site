@@ -52,6 +52,7 @@ import {
 } from "@/lib/api/chat-models";
 import { MarkdownAnswer } from "@/components/knowledge/MarkdownAnswer";
 import { ReportViewer } from "@/components/knowledge/ReportViewer";
+import { RecallPathSection } from "@/components/knowledge/RecallFlowChart";
 import { CitationPreviewMarkdown } from "@/components/knowledge/CitationPreviewMarkdown";
 import { ImagePreviewPopover } from "@/components/knowledge/ImagePreviewPopover";
 import {
@@ -62,6 +63,7 @@ import type {
   ChatPhase,
   ChatSessionInfo,
   Citation,
+  RecallStats,
   RetrievalChunkPreview,
   ToolCallRecord,
   UiChatMessage,
@@ -212,7 +214,7 @@ function ThinkingBlock({
   );
 }
 
-function ToolCallTimeline({ toolCalls, onViewSearchResults }: { toolCalls: ToolCallRecord[]; onViewSearchResults?: (citations: Citation[], params?: Record<string, unknown>) => void }) {
+function ToolCallTimeline({ toolCalls, onViewSearchResults }: { toolCalls: ToolCallRecord[]; onViewSearchResults?: (citations: Citation[], params?: Record<string, unknown>, recallStats?: RecallStats) => void }) {
   if (!toolCalls || toolCalls.length === 0) return null;
   return (
     <div className="mt-2 space-y-1.5">
@@ -327,7 +329,7 @@ function ToolCallDetailBlock({
   );
 }
 
-function ToolCallRow({ tc, onViewSearchResults }: { tc: ToolCallRecord; onViewSearchResults?: (citations: Citation[], params?: Record<string, unknown>) => void }) {
+function ToolCallRow({ tc, onViewSearchResults }: { tc: ToolCallRecord; onViewSearchResults?: (citations: Citation[], params?: Record<string, unknown>, recallStats?: RecallStats) => void }) {
   const [open, setOpen] = useState(false);
   const inflight = Boolean(tc.inflight);
   const isSearchTool = SEARCH_TOOL_NAMES.has(tc.name);
@@ -394,6 +396,7 @@ function ToolCallRow({ tc, onViewSearchResults }: { tc: ToolCallRecord; onViewSe
                     onViewSearchResults(
                       retrievalChunksToCitations(tc.retrieval_chunks),
                       tc.retrieval_params,
+                      tc.recall_stats,
                     );
                   }}
                   className="rounded-md px-1.5 py-0.5 text-[11px] text-emerald-600 transition-colors hover:bg-emerald-100"
@@ -720,13 +723,16 @@ function ReferencesSidePanel({
   citations,
   showScore,
   params,
+  recallStats,
   onClose,
 }: {
   citations: Citation[];
   /** true=检索结果（按 score 降序，显示分数）；false=全部来源（按页码，不显示分数） */
   showScore: boolean;
-  /** 查询参数 JSON（仅检索结果视图有） */
+  /** 查询参数 JSON（仅检索结果视图有，不含召回统计） */
   params?: Record<string, unknown>;
+  /** 召回链路统计（独立于查询参数） */
+  recallStats?: RecallStats;
   onClose: () => void;
 }) {
   const [paramsOpen, setParamsOpen] = useState(false);
@@ -812,6 +818,11 @@ function ReferencesSidePanel({
               </div>
             ) : null}
           </div>
+        ) : null}
+        {showScore && recallStats ? (
+          <RecallPathSection
+            stats={recallStats}
+          />
         ) : null}
         {docGroups.map((doc) => (
           <DocGroup key={doc.key} doc={doc} showScore={showScore} />
@@ -1318,7 +1329,7 @@ function AssistantRoundBlock({
   isIntermediate: boolean;
   /** 整组合并后的 citations（跨 round 去重），供 MarkdownAnswer 渲染引用 */
   allCitations: Citation[];
-  onViewSearchResults?: (citations: Citation[], params?: Record<string, unknown>) => void;
+  onViewSearchResults?: (citations: Citation[], params?: Record<string, unknown>, recallStats?: RecallStats) => void;
   onViewReport?: (html: string, citations: Citation[]) => void;
 }) {
   // 中间轮默认折叠；正在流式时保持展开；最后一轮始终展开
@@ -1444,7 +1455,7 @@ function AssistantMessageGroup({
   /** 前面所有 group 累积的 citations（跨 turn 引用） */
   priorCitations?: Citation[];
   onOpenSourcesPanel?: (citations: Citation[]) => void;
-  onViewSearchResults?: (citations: Citation[], params?: Record<string, unknown>) => void;
+  onViewSearchResults?: (citations: Citation[], params?: Record<string, unknown>, recallStats?: RecallStats) => void;
   onViewReport?: (html: string, citations: Citation[]) => void;
 }) {
   // 本 group 自身的 citations（全量，供跨 turn 合并用）
@@ -2417,6 +2428,7 @@ export const KnowledgeChatPanel = ({
     citations: Citation[];
     showScore: boolean;
     params?: Record<string, unknown>;
+    recallStats?: RecallStats;
   } | null>(null);
   const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
 
@@ -3032,8 +3044,8 @@ export const KnowledgeChatPanel = ({
                 onOpenSourcesPanel={(c) =>
                   setSourcesSidePanel({ citations: c, showScore: false })
                 }
-                onViewSearchResults={(c, params) =>
-                  setSourcesSidePanel({ citations: c, showScore: true, params })
+                onViewSearchResults={(c, params, recallStats) =>
+                  setSourcesSidePanel({ citations: c, showScore: true, params, recallStats })
                 }
                 onViewReport={(html, citations) => {
                   setReportHtml(html);
@@ -3330,6 +3342,7 @@ export const KnowledgeChatPanel = ({
             citations={sourcesSidePanel.citations}
             showScore={sourcesSidePanel.showScore}
             params={sourcesSidePanel.params}
+            recallStats={sourcesSidePanel.recallStats}
             onClose={() => setSourcesSidePanel(null)}
           />
         ) : null}

@@ -765,6 +765,9 @@ export function useKnowledgeChat(
             ...(frame.data.retrieval_params
               ? { retrieval_params: frame.data.retrieval_params }
               : {}),
+            ...(frame.data.recall_stats
+              ? { recall_stats: frame.data.recall_stats }
+              : {}),
             ...(frame.data.time_ms != null
               ? { time_ms: frame.data.time_ms }
               : {}),
