@@ -51,8 +51,10 @@ import {
   type ChatModelItem,
 } from "@/lib/api/chat-models";
 import { MarkdownAnswer } from "@/components/knowledge/MarkdownAnswer";
+import { ContextIndicator } from "@/components/knowledge/ContextIndicator";
 import { ReportViewer } from "@/components/knowledge/ReportViewer";
 import { RecallPathSection } from "@/components/knowledge/RecallFlowChart";
+import { QueryParamsSection } from "@/components/knowledge/QueryParamsPanel";
 import { CitationPreviewMarkdown } from "@/components/knowledge/CitationPreviewMarkdown";
 import { ImagePreviewPopover } from "@/components/knowledge/ImagePreviewPopover";
 import { buildChunkImageRawUrl } from "@/lib/api/knowledge";
@@ -800,8 +802,6 @@ function ReferencesSidePanel({
   recallStats?: RecallStats;
   onClose: () => void;
 }) {
-  const [paramsOpen, setParamsOpen] = useState(false);
-
   // 按 score 或页码排列，再按文档分组
   const docGroups = useMemo(() => {
     const sorted = [...citations].sort(
@@ -866,28 +866,7 @@ function ReferencesSidePanel({
           />
         ) : null}
         {showScore && params && Object.keys(params).length > 0 ? (
-          <div className="border-b border-gray-100">
-            <button
-              type="button"
-              onClick={() => setParamsOpen((v) => !v)}
-              className="flex w-full items-center gap-2 bg-gray-50/70 px-3 py-2.5 text-left transition-colors hover:bg-gray-100/70"
-            >
-              {paramsOpen ? (
-                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              ) : (
-                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              )}
-              <Database className="h-3.5 w-3.5 shrink-0 text-primary" />
-              <span className="text-[13px] font-medium text-foreground">查询参数</span>
-            </button>
-            {paramsOpen ? (
-              <div className="max-h-[300px] overflow-auto px-3 pb-3">
-                <pre className="whitespace-pre-wrap break-all rounded-md bg-gray-50 p-3 text-[11px] leading-relaxed text-gray-600">
-                  {JSON.stringify(params, null, 2)}
-                </pre>
-              </div>
-            ) : null}
-          </div>
+          <QueryParamsSection params={params} />
         ) : null}
         {showScore && recallStats ? (
           <RecallPathSection
@@ -1168,7 +1147,7 @@ function DocGroup({
 // ============================================================
 
 interface MessageGroup {
-  type: "user" | "assistant-group";
+  type: "user" | "assistant-group" | "summary";
   messages: UiChatMessage[];
 }
 
@@ -1190,6 +1169,10 @@ function groupMessages(messages: UiChatMessage[]): MessageGroup[] {
       groups.push({ type: "user", messages: [m] });
     } else if (m.role === "assistant") {
       currentAssistantGroup.push(m);
+    } else if (m.role === "summary") {
+      // summary 是持久化的时间线事件，不能和相邻 assistant 消息合并。
+      flushAssistant();
+      groups.push({ type: "summary", messages: [m] });
     }
     // tool / system 已在 hook 层被过滤，不会出现
   }
@@ -2381,7 +2364,6 @@ export const KnowledgeChatPanel = ({
     activeSession,
     activeSessionId,
     messages,
-    hasSummary,
     phase,
     lastError,
     isStreaming,
@@ -2394,6 +2376,7 @@ export const KnowledgeChatPanel = ({
     summarizeContext,
     stopSummarize,
     summarizing,
+    contextStatus,
     send,
     stop,
     clearError,
@@ -2967,6 +2950,7 @@ export const KnowledgeChatPanel = ({
                   </span>
                 )}
                 <PhasePill phase={phase} />
+                <ContextIndicator report={contextStatus} />
               </div>
               <p className="mt-1 truncate text-[11px] leading-5 text-muted">
                 {selectedFolderName
@@ -3075,17 +3059,14 @@ export const KnowledgeChatPanel = ({
             </div>
           ) : null}
 
-          {/* 上下文已总结提示 */}
-          {hasSummary && messages.length > 0 ? (
-            <div className="mb-4 flex items-center justify-center">
-              <div className="flex items-center gap-2 rounded-full bg-gray-100 px-4 py-1.5 text-xs text-muted">
-                <FileText className="h-3.5 w-3.5" />
-                <span>chat context summarized</span>
-              </div>
-            </div>
-          ) : null}
-
           {groupsWithAccumulatedCitations.map(({ group, accumulatedCitations }, gi) => {
+            if (group.type === "summary") {
+              return (
+                <div key={group.messages[0].id} className="flex">
+                  <span className="text-[13px] text-muted">Chat context summarized</span>
+                </div>
+              );
+            }
             if (group.type === "user") {
               const m = group.messages[0];
               const isLastUser = gi === lastUserGroupIndex;
@@ -3124,10 +3105,10 @@ export const KnowledgeChatPanel = ({
               />
             );
           })}
-          {showPlanning ? (
+          {summarizing || showPlanning ? (
             <div className="flex">
               <span className="text-shimmer text-[13px] font-medium">
-                Planning next moves
+                {summarizing ? "Summarizing chat context" : "Planning next moves"}
               </span>
             </div>
           ) : null}
@@ -3150,22 +3131,6 @@ export const KnowledgeChatPanel = ({
           ) : null}
 
           <div className="transition-colors">
-            {summarizing ? (
-              <div className="mb-2 flex items-center justify-between rounded-lg bg-primary/5 px-3 py-2 text-xs text-primary">
-                <span className="inline-flex items-center gap-2">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Summarizing chat context
-                </span>
-                <button
-                  type="button"
-                  onClick={stopSummarize}
-                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-primary transition-colors hover:bg-primary/10"
-                  title="中断总结"
-                >
-                  停止
-                </button>
-              </div>
-            ) : null}
             <div
               className={cn(
                 "relative border border-gray-200 bg-white transition-colors focus-within:border-primary",

@@ -24,6 +24,7 @@ import {
   openChatStream,
   renameChatSession,
   summarizeChatContext,
+  fetchContextStatus,
 } from "@/lib/api/chat";
 import type {
   ChatMention,
@@ -37,6 +38,7 @@ import type {
   UiChatMessage,
   UiToolCall,
   ChatPhase,
+  ContextStatusReport,
 } from "@/lib/chat-types";
 
 const PAGE_SIZE = 50;
@@ -174,6 +176,10 @@ export interface UseKnowledgeChatResult {
   summarizing: boolean;
   /** 当前会话是否已有上下文总结消息（后端 role=summary） */
   hasSummary: boolean;
+  /** 当前会话上下文用量（后端计量；无会话时为 null） */
+  contextStatus: ContextStatusReport | null;
+  /** 主动刷新上下文用量 */
+  refreshContextStatus: () => Promise<void>;
   selectSession: (sessionId: string) => Promise<void>;
   newSession: (init?: NewSessionInit) => Promise<void>;
   renameActive: (title: string) => Promise<void>;
@@ -249,6 +255,7 @@ export function useKnowledgeChat(
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<UiChatMessage[]>([]);
   const [hasSummary, setHasSummary] = useState(false);
+  const [contextStatus, setContextStatus] = useState<ContextStatusReport | null>(null);
   const [phase, setPhase] = useState<ChatPhase>("idle");
   const [lastError, setLastError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -350,17 +357,30 @@ export function useKnowledgeChat(
   );
 
   const loadMessagesForSession = useCallback(async (sessionId: string) => {
-    const data = await listChatMessages(sessionId, {
-      page: 1,
-      page_size: PAGE_SIZE,
-    });
-    const items = data.items ?? [];
+    // UI 全量回放：按时间正序翻页拉完；LLM 上下文装配另走后端最近 N 条，不在此截断
+    const allItems: Awaited<ReturnType<typeof listChatMessages>>["items"] = [];
+    let page = 1;
+    let total = Number.POSITIVE_INFINITY;
+    while (allItems.length < total) {
+      const data = await listChatMessages(sessionId, {
+        page,
+        page_size: PAGE_SIZE,
+      });
+      total = data.total ?? 0;
+      const items = data.items ?? [];
+      if (items.length === 0) break;
+      allItems.push(...items);
+      page += 1;
+      // 防御：避免异常 total 导致死循环
+      if (page > 1000) break;
+    }
     // 检测是否有 summary 消息
-    const hasSummaryMsg = items.some((m) => m.role === "summary");
+    const hasSummaryMsg = allItems.some((m) => m.role === "summary");
     setHasSummary(hasSummaryMsg);
-    // 过滤掉 tool/system/summary 消息
-    const ui = items
-      .filter((m) => m.role !== "tool" && m.role !== "system" && m.role !== "summary")
+    // tool/system 不参与 UI 时间线；summary 是持久化的上下文压缩事件，
+    // 必须保留，以便刷新后仍在其原始时间位置显示完成状态。
+    const ui = allItems
+      .filter((m) => m.role !== "tool" && m.role !== "system")
       .map(fromBackendMessage);
     setMessages(ui);
   }, []);
@@ -878,6 +898,13 @@ export function useKnowledgeChat(
           resetInflight();
           setPhase("ready");
 
+          // 刷新上下文用量（Cursor 式 Context 指示器）
+          if (activeSessionIdRef.current) {
+            void fetchContextStatus(activeSessionIdRef.current)
+              .then((report) => setContextStatus(report))
+              .catch((err) => console.debug("fetchContextStatus failed", err));
+          }
+
           // 首轮异步起标题：轮询拉 session
           const sid = activeSessionIdRef.current;
           if (sid) {
@@ -1218,6 +1245,12 @@ export function useKnowledgeChat(
       await summarizeChatContext(activeSessionId, controller.signal);
       // 重新加载消息以获取总结后的状态
       await loadMessagesForSession(activeSessionId);
+      try {
+        const report = await fetchContextStatus(activeSessionId);
+        setContextStatus(report);
+      } catch (err) {
+        console.debug("fetchContextStatus failed", err);
+      }
     } catch (error) {
       // 用户主动中断：AbortError，不打错误日志
       if ((error as Error)?.name !== "AbortError") {
@@ -1363,12 +1396,46 @@ export function useKnowledgeChat(
     [activeSessionId, sessions]
   );
 
+  const refreshContextStatus = useCallback(async () => {
+    const sid = activeSessionIdRef.current;
+    if (!sid || !enabled) {
+      setContextStatus(null);
+      return;
+    }
+    try {
+      const report = await fetchContextStatus(sid);
+      setContextStatus(report);
+    } catch (err) {
+      console.debug("fetchContextStatus failed", err);
+    }
+  }, [enabled]);
+
+  useEffect(() => {
+    if (!activeSessionId || !enabled) {
+      setContextStatus(null);
+      return;
+    }
+    void refreshContextStatus();
+  }, [activeSessionId, enabled, refreshContextStatus]);
+
+  useEffect(() => {
+    const onFocus = () => {
+      if (activeSessionIdRef.current && enabled) {
+        void refreshContextStatus();
+      }
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [enabled, refreshContextStatus]);
+
   return {
     sessions,
     activeSession,
     activeSessionId,
     messages,
     hasSummary,
+    contextStatus,
+    refreshContextStatus,
     phase,
     lastError,
     isStreaming: phase === "running" || phase === "connecting",

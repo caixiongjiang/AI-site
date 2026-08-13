@@ -19,6 +19,7 @@ import type {
   ChatRequestPayload,
   ClientFrame,
   ServerFrame,
+  ContextStatusReport,
 } from "@/lib/chat-types";
 
 const CHAT_API_PREFIX = process.env.NEXT_PUBLIC_CHAT_API_PREFIX ?? "";
@@ -154,6 +155,7 @@ export async function deleteChatSession(sessionId: string): Promise<void> {
   );
 }
 
+/** UI 历史全量回放分页（page=1 最早；调用方应翻页拼完）。LLM 上下文不走此接口。 */
 export async function listChatMessages(
   sessionId: string,
   params: { page?: number; page_size?: number } = {}
@@ -184,6 +186,16 @@ export async function summarizeChatContext(
   await requestJson<void>(
     `/api/chat/sessions/${encodeURIComponent(sessionId)}/summarize`,
     { method: "POST", signal }
+  );
+}
+
+export async function fetchContextStatus(
+  sessionId: string,
+  signal?: AbortSignal
+): Promise<ContextStatusReport> {
+  return requestJson<ContextStatusReport>(
+    `/api/chat/sessions/${encodeURIComponent(sessionId)}/context-status`,
+    { method: "GET", signal }
   );
 }
 

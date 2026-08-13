@@ -456,3 +456,40 @@ export type ChatPhase =
   | "stopped"
   | "error"
   | "disconnected";
+
+
+/** GET /api/chat/sessions/{id}/context-status */
+export interface ContextStatusBreakdown {
+  system: number;
+  /** 技能索引（已从 system 中扣除）；旧后端未下发时为 undefined */
+  skills?: number;
+  tools_schema: number;
+  /** 持久化上下文摘要（已从 history 中扣除）；旧后端未下发时为 undefined */
+  summary?: number;
+  history: number;
+  user: number;
+  reserved_output: number;
+}
+
+export interface ContextCompactionInfo {
+  at?: string | null;
+  trigger?: string | null;
+  input_tokens?: number | null;
+  summary_tokens?: number | null;
+}
+
+export interface ContextStatusReport {
+  session_id: string;
+  model?: string | null;
+  max_context: number;
+  reserved_output: number;
+  used_tokens: number;
+  soft_limit: number;
+  ratio: number;
+  threshold_ratio: number;
+  will_compact_at: number;
+  counting: string;
+  breakdown: ContextStatusBreakdown;
+  last_compaction?: ContextCompactionInfo | null;
+  summary_count: number;
+}

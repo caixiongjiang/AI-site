@@ -28,6 +28,8 @@ export interface ChatModelItem {
   supports_thinking?: boolean;
   /** 模型是否支持多模态读图（前端据此控制多模态 Chip 显隐） */
   supports_multimodal?: boolean;
+  /** 模型最大上下文长度（tokens，来自后端 config/long_context_models.json）；null 表示未声明 */
+  max_context?: number | null;
 }
 
 export interface ChatModelListPayload {
