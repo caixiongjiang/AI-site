@@ -517,6 +517,8 @@ const SPLIT_MIN = 260;
 const SPLIT_MAX = 800;
 /** 收起知识库列表后，文件夹/文件树区域固定宽度（不再随分割条变化） */
 const FOLDER_TREE_ONLY_WIDTH = 300;
+/** 当前选中的知识库 ID 持久化 key（刷新后保持在原知识库，而非跳回第一个） */
+const SELECTED_KB_STORAGE_KEY = "knowledge-workspace-selected-kb";
 
 function KnowledgeWorkspace() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -666,11 +668,21 @@ function KnowledgeWorkspace() {
     try {
       const list = await fetchKnowledgeBaseTree();
       setKnowledgeBases(list);
-      setSelectedKbId((current) =>
-        list.some((kb) => kb.knowledge_base_id === current)
-          ? current
-          : list[0]?.knowledge_base_id ?? ""
-      );
+      setSelectedKbId((current) => {
+        if (current && list.some((kb) => kb.knowledge_base_id === current)) {
+          return current;
+        }
+        // 刷新后 current 为空 → 优先恢复上次选中的知识库，避免跳回第一个
+        try {
+          const persisted = window.localStorage.getItem(SELECTED_KB_STORAGE_KEY);
+          if (persisted && list.some((kb) => kb.knowledge_base_id === persisted)) {
+            return persisted;
+          }
+        } catch {
+          // localStorage 不可用 → 回退到首个
+        }
+        return list[0]?.knowledge_base_id ?? "";
+      });
       setKnowledgeMetrics((current) =>
         Object.fromEntries(
           list.map((kb) => [
@@ -799,6 +811,17 @@ function KnowledgeWorkspace() {
       // ignore
     }
   }, [kbListCollapsed]);
+  // 当前选中知识库持久化（刷新后保持在原知识库，而非跳回第一个）
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!selectedKbId) return;
+    try {
+      window.localStorage.setItem(SELECTED_KB_STORAGE_KEY, selectedKbId);
+    } catch {
+      // ignore
+    }
+  }, [selectedKbId]);
+
 
   // 拖拽期间监听全局 mousemove / mouseup；同步给 body 加 col-resize 光标 + 禁选中。
   useEffect(() => {
@@ -1443,6 +1466,7 @@ function KnowledgeWorkspace() {
             ref={fileInputRef}
             type="file"
             multiple
+            accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.md,.markdown,.json,.png,.jpg,.jpeg,.gif,.webp,.svg,.bmp"
             className="hidden"
             onChange={handleFileSelect}
           />

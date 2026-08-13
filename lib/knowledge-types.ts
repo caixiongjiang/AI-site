@@ -60,6 +60,10 @@ export interface KnowledgeFile extends FileInfo {
   updated_at?: string;
   index_status?: FileIndexStatus;
   progress?: number;
+  /** 预览渲染提示（来自 /preview；Word/PPT 转 PDF 时为 pdf） */
+  render_as?: "pdf" | "original" | string | null;
+  preview_mime_type?: string | null;
+  has_converted_pdf?: boolean;
 }
 
 export interface TrashItem {
@@ -99,6 +103,12 @@ export interface FilePreviewResponse {
   file_size?: number | null;
   preview_url: string;
   expires_in: number;
+  /** pdf：用 PDF.js 渲染（含原生 PDF / Word·PPT 转换 PDF）；original：原文件 */
+  render_as?: "pdf" | "original" | string | null;
+  /** 实际预览 MIME；Office 转 PDF 时为 application/pdf */
+  preview_mime_type?: string | null;
+  /** Word/PPT 是否已持久化转换 PDF */
+  has_converted_pdf?: boolean;
 }
 
 export interface ChunkImagePreviewResponse {

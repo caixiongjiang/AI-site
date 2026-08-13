@@ -206,12 +206,15 @@ export function CitationPreviewBody({
     return parseChineseImagePreview(preview);
   }, [imageParts, chunkType, preview]);
 
+  // 必须由 chunk 类型决定是否加载原图：PPT 的 MinerU 预览常只有「[图片]」，
+  // 没有 image_caption / 标题字段，不能因此退化成纯文本预览。
   const useImageLayout =
-    (imageParts &&
-      (chunkType === "image" ||
-        /image_(caption|footnote|body)\s*:/i.test(preview) ||
-        Boolean(imageParts.imageUrl))) ||
-    (chunkType === "image" && chineseImageParts);
+    chunkType === "image" ||
+    Boolean(
+      imageParts &&
+        (/image_(caption|footnote|body)\s*:/i.test(preview) ||
+          imageParts.imageUrl)
+    );
 
   if (table) {
     return (

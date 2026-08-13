@@ -41,6 +41,9 @@ export default function KnowledgeFilePage() {
             mime_type: data.mime_type ?? null,
             file_size: data.file_size ?? null,
             knowledge_base_id: undefined,
+            render_as: data.render_as ?? null,
+            preview_mime_type: data.preview_mime_type ?? null,
+            has_converted_pdf: data.has_converted_pdf ?? false,
           };
           setCachedFile({ file });
         })

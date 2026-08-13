@@ -3,13 +3,14 @@
 /**
  * DocumentView - 文件预览组件（PDF.js 渲染）
  *
- * 使用 react-pdf 渲染 PDF 文件，支持：
+ * 使用 react-pdf 渲染 PDF / Word / PPT（后两者走后端转换 PDF）：
  * - 页码跳转（通过 chunkId 定位）
  * - 图片/表格/文本 chunk：按关联 element 的 MinerU bbox 叠加高亮矩形框
- * - 非 PDF 文件：降级为占位提示
+ * - 非 PDF 可渲染格式：降级为占位提示
  */
 
 import { KnowledgeFile } from "@/lib/knowledge-types";
+import { isPdfPreviewableFile } from "@/lib/knowledge-viewer";
 import { formatBytes } from "@/lib/utils";
 import { AlertCircle, FileText, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -54,8 +55,17 @@ export const DocumentView = ({
   isLoadingPreview,
   highlightChunkId,
 }: DocumentViewProps) => {
-  const isPdf =
-    file.mime_type?.includes("pdf") || file.file_name.toLowerCase().endsWith(".pdf");
+  // PDF 原生文件，以及 Word/PPT（后端 /raw 默认返回转换 PDF）
+  const isPdf = isPdfPreviewableFile(file);
+  const isOfficeConvertedPreview = (() => {
+    const name = file.file_name.toLowerCase();
+    return (
+      name.endsWith(".doc") ||
+      name.endsWith(".docx") ||
+      name.endsWith(".ppt") ||
+      name.endsWith(".pptx")
+    );
+  })();
 
   const [numPages, setNumPages] = useState<number>(0);
   const [highlight, setHighlight] = useState<HighlightInfo | null>(null);
@@ -223,13 +233,17 @@ export const DocumentView = ({
             loading={
               <div className="flex h-full items-center justify-center">
                 <Loader2 className="h-5 w-5 animate-spin text-muted" />
-                <span className="ml-2 text-sm text-muted">正在解析 PDF...</span>
+                <span className="ml-2 text-sm text-muted">正在解析文档...</span>
               </div>
             }
             error={
               <div className="flex h-full flex-col items-center justify-center p-8">
                 <AlertCircle className="h-5 w-5 text-red-400" />
-                <p className="mt-2 text-sm text-muted">PDF 加载失败</p>
+                <p className="mt-2 text-sm text-muted">
+                  {isOfficeConvertedPreview
+                    ? "文档预览加载失败（可能尚未生成转换 PDF，请等待索引完成）"
+                    : "PDF 加载失败"}
+                </p>
               </div>
             }
           >
