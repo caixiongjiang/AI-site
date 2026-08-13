@@ -1,132 +1,178 @@
-# JarsonCai's Assistant
+<div align="center">
 
-一个基于 Next.js 14 的现代化 AI 助手应用，提供智能对话、知识库问答和智能体应用等功能。
+# AI-site: Agentic Knowledge Base Frontend
 
-## 技术栈
+<p align="center"><b>Knowledge Base Q&amp;A&nbsp; ◦ &nbsp;PDF + Office Preview&nbsp; ◦ &nbsp;Bbox Source Tracing&nbsp; ◦ &nbsp;Streaming Chat with Citations&nbsp; ◦ &nbsp;Skills</b></p>
 
-- **框架**: Next.js 14 (App Router)
-- **语言**: TypeScript (严格模式)
-- **样式**: Tailwind CSS
-- **图标**: Lucide React
-- **状态管理**: React Hooks
+<h4 align="center">
+  <a href="#-quick-start">🚀 Quick Start</a>&nbsp; • &nbsp;
+  <a href="#-features">🎯 Features</a>&nbsp; • &nbsp;
+  <a href="#-project-structure">🌲 Structure</a>&nbsp; • &nbsp;
+  <a href="#-tech-stack">🧭 Tech Stack</a>
+</h4>
 
-## 功能特性
+</div>
 
-### 🏠 首页
-- 居中式大标题输入框
-- 智能模式选择器（普通对话/Agent选择）
-- 快捷功能卡片
-- 作者简介抽屉
+---
 
-### 🤖 Agent 应用中心
-- 智能体卡片网格展示
-- 实时搜索过滤
-- 分类标签展示
-- 使用统计和评分
+# 📑 Introduction
 
-### 💬 Agent 使用页面
-- 三栏式布局设计
-- 实时对话功能
-- 知识库/文件挂载
-- 智能回复与引用
+`AI-site` 是 [agentic_knowledge_system](https://github.com/JarsonCai/agentic_knowledge_system)（AKS）的 Web 前端，把后端的多粒度检索、Agentic 对话与 bbox 溯源能力以可视化方式呈现出来：在一个三栏式工作区里，左侧管理知识库 / 文件夹 / 文件，中间用 `react-pdf` 渲染文档（原生 PDF 与 Word/PPT 转换 PDF），右侧与知识库对话，回答带引用 chip，点击即可在 PDF 上**按 MinerU 坐标叠加高亮框**并跳转到对应页。
 
-### 📚 知识库问答
-- 知识库列表管理
-- 文件网格/详情视图
-- 文档内容渲染
-- AI 助手问答侧边栏
+当前已落地：**知识库管理、文件上传与索引、文档预览与 bbox 溯源、知识库对话、技能管理**。首页与 Agent 应用中心为锁定状态（敬请期待）。
 
-## 开始使用
+### 🎯 Features
 
-### 安装依赖
+> 一个把 AKS 的“检索—对话—溯源”串成完整体验的 Next.js 前端。
 
-\`\`\`bash
+- **知识库工作区**：知识库 / 文件夹 / 文件三级管理，网格 + 详情视图，回收站恢复 / 永久删除，索引进度实时刷新。
+- **多格式预览**：PDF 原生渲染；Word / PPT 经后端转换 PDF 后同样用 `react-pdf` 渲染（`isPdfPreviewableFile` 统一判定），非可渲染格式降级占位。
+- **bbox 源溯源**：对话引用 → `chunk/{id}/position` 取元素 bbox → 按 0~1000 归一化坐标在对应页 canvas 上叠加高亮框，并自动跳页。
+- **流式对话**：WebSocket 流式输出，支持工具调用、引用、图片 chunk 预览、Markdown + KaTeX 渲染；带 `@文件` 提及与召回流程图。
+- **技能管理**：技能列表 / 详情 / 编辑器，对话中通过 `@skill` 调用。
+- **Logto 认证**：PKCE 流程，`RequireAuth` 路由守卫，回调页处理。
+- **设计系统**：Tailwind，主色 `#00B36B → #00D980`，系统字体栈，Lucide 图标。
+
+### 🛠️ Deployment Options
+
+- **本地开发**：`npm run dev`（端口 4001），通过 `NEXT_PUBLIC_API_URL` 指向本地 AKS（默认 `http://localhost:8000`）。
+- **生产**：`npm run build && npm start`，环境变量见 `.env.production`。
+
+---
+
+# 🌲 Project Structure
+
+```
+AI-site/
+├── app/                         # Next.js App Router
+│   ├── page.tsx                # 首页（锁定）
+│   ├── knowledge/
+│   │   ├── page.tsx            # 知识库工作区（主入口）
+│   │   └── file/[fileId]/page.tsx  # 文件预览 + bbox 溯源
+│   ├── skills/page.tsx        # 技能管理（list / detail / editor）
+│   ├── agents/                 # Agent 应用中心（锁定）
+│   ├── callback/page.tsx      # Logto 回调
+│   ├── login · settings · help
+│   └── layout.tsx              # 根布局
+├── components/
+│   ├── knowledge/              # DocumentView / KnowledgeChatPanel / RecallFlowChart /
+│   │                           # FileGrid / FolderTree / CitationChip / MarkdownAnswer / MentionComposer …
+│   ├── agents/                 # AgentCard / ChatPanel / document-compliance …
+│   ├── skills/                 # SkillList / SkillDetail / SkillEditor / SlashSkillMenu
+│   ├── layout/                 # AppShell / Sidebar / ProfileDrawer
+│   ├── home/ · auth/ · common/
+├── lib/
+│   ├── api/                    # knowledge.ts · chat.ts · skills.ts · agents/
+│   ├── knowledge-types.ts     # KnowledgeFile / ChunkPositionResponse / FilePreviewResponse …
+│   ├── knowledge-viewer.ts    # isPdfPreviewableFile + 视图缓存
+│   ├── chat/ · actions/ · hooks/
+│   ├── logto.ts · auth.ts · config.ts
+├── next.config.mjs             # /skill-api → Skill Service 反向代理
+├── tailwind.config.ts
+└── package.json
+```
+
+<details>
+<summary>知识库预览 + 溯源数据流</summary>
+
+```
+KnowledgeFile → fetchFilePreview(fileId) → preview_url + render_as
+  ↓
+DocumentView: isPdfPreviewableFile(file)?
+  ├─ react-pdf 渲染 /raw?token=… (Word/PPT 默认取转换 PDF)
+  └─ highlightChunkId → fetchChunkPosition(chunkId)
+        → elements[].page_position (bbox, 0~coord_range)
+        → ElementBBoxOverlay 按 canvas 实际尺寸换算并叠加高亮
+```
+
+</details>
+
+---
+
+# ⚙️ Quick Start
+
+### 1. 安装依赖
+
+```bash
 npm install
-\`\`\`
+```
 
-### 开发模式
+### 2. 配置环境
 
-\`\`\`bash
-npm run dev
-\`\`\`
+```bash
+cp .env.example .env.local
+# 必填：NEXT_PUBLIC_API_URL（AKS 后端地址，默认 http://localhost:8000）
+# 可选：Logto / Skill Service 相关变量
+```
 
-打开 [http://localhost:4000](http://localhost:4000) 查看应用。
+<details>
+<summary>环境变量一览</summary>
 
-### Logto 前端接入配置
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:8000     # AKS 后端
+NEXT_PUBLIC_API_VERSION=api/v1                # API 版本前缀
+NEXT_PUBLIC_MOCK_USER_ID=user_demo_001         # 未登录时的 mock 用户
 
-在 `.env.local` 中补充以下环境变量：
-
-\`\`\`bash
+# Logto（认证）
 NEXT_PUBLIC_APP_URL=http://localhost:4000
 NEXT_PUBLIC_LOGTO_ENDPOINT=http://localhost:3001
-NEXT_PUBLIC_LOGTO_APP_ID=your_logto_spa_app_id
+NEXT_PUBLIC_LOGTO_APP_ID=your_logto_app_id
 NEXT_PUBLIC_LOGTO_REDIRECT_URI=http://localhost:4000/callback
 NEXT_PUBLIC_LOGTO_POST_LOGOUT_REDIRECT_URI=http://localhost:4000
-NEXT_PUBLIC_LOGTO_SCOPES=openid profile email offline_access read:profile
-NEXT_PUBLIC_LOGTO_RESOURCE=https://api.local
-\`\`\`
+NEXT_PUBLIC_LOGTO_SCOPES=openid profile email offline_access
 
-Logto Console 中需要同步配置：
+# Skill Service（默认走同源 /skill-api 代理，一般无需改）
+SKILL_SERVICE_URL=http://localhost:8001
+```
 
-- `Applications` 里创建 `SPA` 应用
-- `Redirect URI` 配置为前端 `/callback`
-- `Post logout redirect URI` 配置为前端首页
-- `API resources` 中创建你的后端 API resource，并把对应 scope 写入 `NEXT_PUBLIC_LOGTO_SCOPES`
+</details>
 
-### 构建生产版本
+### 3. 启动开发服务器
 
-\`\`\`bash
+```bash
+npm run dev
+# 打开 http://localhost:4001
+```
+
+### 4. 构建生产版本
+
+```bash
 npm run build
 npm start
-\`\`\`
+```
 
-## 项目结构
+> 前端依赖 AKS 后端提供数据与转换 PDF；请先启动 [agentic_knowledge_system](https://github.com/JarsonCai/agentic_knowledge_system) 的 API 与 Workers。
 
-\`\`\`
-├── app/                      # Next.js App Router 页面
-│   ├── page.tsx             # 首页
-│   ├── agents/              # Agent 相关页面
-│   ├── knowledge/           # 知识库页面
-│   └── layout.tsx           # 根布局
-├── components/              # React 组件
-│   ├── layout/             # 布局组件（侧边栏等）
-│   ├── home/               # 首页组件
-│   ├── agents/             # Agent 组件
-│   └── knowledge/          # 知识库组件
-├── lib/                     # 工具函数和类型
-│   ├── utils.ts            # 工具函数
-│   ├── types.ts            # TypeScript 类型
-│   └── mock-data.ts        # Mock 数据
-└── public/                  # 静态资源
-\`\`\`
+---
 
-## 设计系统
+# 🚀 Knowledge Base Q&A: An Example
 
-### 颜色主题
-- 背景色: `#1A1A1A`
-- 卡片背景: `#252526`
-- 主题色: `#00B36B` → `#00D980`
-- 边框色: `#333`
+1. 在 `/knowledge` 创建知识库 → 上传 PDF / Word / PPT → 触发索引构建（进度条实时刷新）。
+2. 索引完成后打开文件 → 中栏 `react-pdf` 渲染，Word/PPT 自动走转换 PDF。
+3. 右栏 `KnowledgeChatPanel` 提问 → WebSocket 流式返回答案 + 引用 chip。
+4. 点击引用 → 跳转到对应页，按 MinerU bbox 叠加高亮框（源溯源）。
 
-### 字体
-- 系统字体: `-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC'`
+---
 
-### 图标风格
-- 使用 Lucide React
-- 简洁、线性风格
+# 🧭 Tech Stack
 
-## 后续计划
+| 层 | 选型 |
+|---|---|
+| 框架 | Next.js 16（App Router · Turbopack）· React 19 |
+| 语言 | TypeScript（严格模式） |
+| 样式 | Tailwind CSS 3 · tailwind-merge · clsx |
+| 图标 | Lucide React |
+| PDF | react-pdf（PDF.js） |
+| Markdown | react-markdown · remark-gfm · remark-math · rehype-katex |
+| 认证 | Logto（PKCE） |
+| 后端 | agentic_knowledge_system（FastAPI :8000） |
+| 通信 | REST + WebSocket（流式对话） |
 
-- [ ] 接入真实后端 API
-- [ ] 实现用户认证功能
-- [ ] 流式对话响应
-- [ ] Markdown 内容渲染优化
-- [ ] 文件上传功能
-- [ ] 知识库管理功能
+---
 
 ## 作者
 
-蔡雄江 - 全栈开发工程师 · AI产品设计师
+蔡雄江 - 全栈开发工程师 · AI 产品设计师
 
 ## 许可证
 
