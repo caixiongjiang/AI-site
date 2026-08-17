@@ -15,14 +15,17 @@ import {
   RotateCcw,
   Search,
   Trash2,
+  UploadCloud,
   X,
 } from "lucide-react";
 import { FileIcon } from "@/components/knowledge/FileIcon";
+import type { UploadTaskItem } from "@/components/knowledge/UploadProgressCard";
 
 interface FolderTreeProps {
   knowledgeBase?: KnowledgeBaseInfo | null;
   folders: FolderInfo[];
   files: KnowledgeFile[];
+  uploadTasks?: UploadTaskItem[];
   selectedFolderId?: string | null;
   searchTerm?: string;
   canMoveFiles?: boolean;
@@ -47,6 +50,7 @@ export const FolderTree = ({
   knowledgeBase,
   folders,
   files,
+  uploadTasks = [],
   selectedFolderId,
   searchTerm = "",
   canMoveFiles = false,
@@ -82,6 +86,27 @@ export const FolderTree = ({
     });
   }, [folders]);
 
+  // 当有上传任务分配到某个文件夹时，自动展开该文件夹及其各级父文件夹，便于即时看到占位项
+  useEffect(() => {
+    if (!uploadTasks || uploadTasks.length === 0) return;
+    const folderLookup = new Map(folders.map((f) => [f.folder_id, f]));
+    setExpandedFolders((current) => {
+      let changed = false;
+      const next = { ...current };
+      uploadTasks.forEach((task) => {
+        let fid = task.folderId;
+        while (fid) {
+          if (!next[fid]) {
+            next[fid] = true;
+            changed = true;
+          }
+          fid = folderLookup.get(fid)?.parent_folder_id ?? null;
+        }
+      });
+      return changed ? next : current;
+    });
+  }, [uploadTasks, folders]);
+
   const normalizedSearch = searchTerm.trim().toLowerCase();
 
   const filesByFolder = useMemo(() => {
@@ -95,6 +120,24 @@ export const FolderTree = ({
     next.forEach((list) => list.sort((a, b) => a.file_name.localeCompare(b.file_name)));
     return next;
   }, [files]);
+
+  const tasksByFolder = useMemo(() => {
+    const next = new Map<string | null, UploadTaskItem[]>();
+    const existingFileIds = new Set(files.map((f) => f.file_id));
+
+    (uploadTasks || []).forEach((task) => {
+      if (task.knowledgeBaseId !== knowledgeBase?.knowledge_base_id) return;
+      if (task.fileId && existingFileIds.has(task.fileId)) {
+        return;
+      }
+      const key = task.folderId ?? null;
+      const list = next.get(key) ?? [];
+      list.push(task);
+      next.set(key, list);
+    });
+
+    return next;
+  }, [uploadTasks, knowledgeBase?.knowledge_base_id, files]);
 
   const childrenByParent = useMemo(() => {
     const next = new Map<string | null, FolderInfo[]>();
@@ -157,6 +200,67 @@ export const FolderTree = ({
       ...current,
       [folderId]: !current[folderId],
     }));
+  };
+
+  const renderUploadingPlaceholder = (task: UploadTaskItem, depth: number) => {
+    if (
+      normalizedSearch &&
+      !task.fileName.toLowerCase().includes(normalizedSearch)
+    ) {
+      return null;
+    }
+
+    const pct = Math.round(Math.max(0, Math.min(1, task.progress || 0)) * 100);
+
+    return (
+      <div
+        key={`placeholder-${task.id}`}
+        className="group relative flex h-8 items-center gap-2 rounded-md px-2 text-sm text-foreground/75 bg-primary/[0.04] border border-dashed border-primary/30 transition-all mb-0.5 overflow-hidden animate-in fade-in duration-200"
+        style={{ paddingLeft: 10 + depth * 20 }}
+      >
+        {/* 占位行底部的动态轻量进度条 */}
+        {task.status === "uploading" && (
+          <div
+            className="absolute left-0 bottom-0 top-0 bg-primary/10 transition-all duration-200 pointer-events-none"
+            style={{ width: `${Math.max(4, pct)}%` }}
+          />
+        )}
+
+        <div className="relative flex min-w-0 flex-1 items-center gap-2">
+          <FileIcon fileName={task.fileName} className="h-5 w-5 shrink-0 opacity-70" />
+          <span className="min-w-0 flex-1 truncate font-normal text-foreground/80">
+            {task.fileName}
+          </span>
+        </div>
+
+        {/* 状态徽标与指示 */}
+        <div className="relative flex shrink-0 items-center gap-1.5 text-[11px]">
+          {task.status === "waiting" && (
+            <span className="text-amber-600/90 font-medium">排队中</span>
+          )}
+          {task.status === "uploading" && (
+            <span className="flex items-center gap-1 text-primary font-medium">
+              <UploadCloud className="h-3 w-3 animate-pulse" />
+              {pct}%
+            </span>
+          )}
+          {task.status === "indexing" && (
+            <span className="flex items-center gap-1 text-blue-600 font-medium">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              解析中
+            </span>
+          )}
+          {task.status === "error" && (
+            <span
+              className="text-red-500 font-medium truncate max-w-[70px]"
+              title={task.errorMessage}
+            >
+              上传失败
+            </span>
+          )}
+        </div>
+      </div>
+    );
   };
 
   const renderFile = (file: KnowledgeFile, depth: number) => {
@@ -253,6 +357,7 @@ export const FolderTree = ({
 
     const childFolders = childrenByParent.get(folder.folder_id) ?? [];
     const childFiles = filesByFolder.get(folder.folder_id) ?? [];
+    const childTasks = tasksByFolder.get(folder.folder_id) ?? [];
     const isExpanded = expandedFolders[folder.folder_id] ?? depth < 1;
     const isDragOver = dragOverFolderId === folder.folder_id && !!draggingFileId;
 
@@ -338,6 +443,7 @@ export const FolderTree = ({
         {isExpanded ? (
           <>
             {childFolders.map((child) => renderFolder(child, depth + 1))}
+            {childTasks.map((task) => renderUploadingPlaceholder(task, depth + 1))}
             {childFiles.map((file) => renderFile(file, depth + 1))}
           </>
         ) : null}
@@ -346,6 +452,7 @@ export const FolderTree = ({
   };
 
   const rootFolders = childrenByParent.get(null) ?? [];
+  const rootTasks = tasksByFolder.get(null) ?? [];
 
   return (
     <div className="flex h-full min-h-0 flex-col border-r border-gray-200 bg-white">
@@ -454,9 +561,10 @@ export const FolderTree = ({
             className="flex-1 overflow-y-auto py-1"
           >
             {rootFolders.map((folder) => renderFolder(folder, 0))}
+            {rootTasks.map((task) => renderUploadingPlaceholder(task, 0))}
             {filteredRootFiles.map((file) => renderFile(file, 0))}
 
-            {rootFolders.length === 0 && filteredRootFiles.length === 0 ? (
+            {rootFolders.length === 0 && filteredRootFiles.length === 0 && rootTasks.length === 0 ? (
               <div className="px-3 py-4 text-center text-xs text-muted/50">
                 暂无内容
               </div>

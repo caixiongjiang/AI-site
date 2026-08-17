@@ -1,36 +1,54 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
-  Files,
+  Clock,
   Loader2,
-  Minimize2,
   Maximize2,
+  Minimize2,
+  RotateCcw,
+  Trash2,
   UploadCloud,
   X,
 } from "lucide-react";
 import { cn, formatBytes } from "@/lib/utils";
 import { FileIcon } from "@/components/knowledge/FileIcon";
 
-export interface UploadState {
-  totalFiles: number;
-  fileNames: string[];
-  progress: number; // 0 to 1
-  phase: "uploading" | "indexing" | "completed" | "error";
-  loaded?: number;
-  total?: number;
-  speed?: number; // bytes / s
-  estimatedSeconds?: number;
+export type TaskStatus =
+  | "waiting"
+  | "uploading"
+  | "indexing"
+  | "completed"
+  | "error";
+
+export interface UploadTaskItem {
+  id: string;
+  file: File;
+  fileName: string;
+  fileSize: number;
+  knowledgeBaseId: string;
+  folderId?: string | null;
+  status: TaskStatus;
+  progress: number; // 0 ~ 1
+  loaded: number;
+  speed: number; // bytes/s
+  estimatedSeconds: number;
   errorMessage?: string;
+  fileId?: string;
+  abortController?: AbortController;
 }
 
 interface UploadProgressCardProps {
-  uploadState: UploadState | null;
-  onClose: () => void;
+  tasks: UploadTaskItem[];
+  onCancelTask?: (taskId: string) => void;
+  onRetryTask?: (taskId: string) => void;
+  onRemoveTask?: (taskId: string) => void;
+  onClearCompleted?: () => void;
+  onCloseAll?: () => void;
 }
 
 function formatSpeed(bytesPerSec?: number): string {
@@ -45,73 +63,121 @@ function formatRemainingTime(seconds?: number): string {
     return "计算中…";
   }
   if (seconds < 60) {
-    return `剩余约 ${seconds} 秒`;
+    return `约 ${seconds} 秒`;
   }
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
   if (mins < 60) {
-    return secs > 0 ? `剩余约 ${mins} 分 ${secs} 秒` : `剩余约 ${mins} 分钟`;
+    return secs > 0 ? `约 ${mins} 分 ${secs} 秒` : `约 ${mins} 分钟`;
   }
   const hours = Math.floor(mins / 60);
   const remMins = mins % 60;
-  return `剩余约 ${hours} 小时 ${remMins} 分`;
+  return `约 ${hours} 小时 ${remMins} 分`;
 }
 
 export function UploadProgressCard({
-  uploadState,
-  onClose,
+  tasks,
+  onCancelTask,
+  onRetryTask,
+  onRemoveTask,
+  onClearCompleted,
+  onCloseAll,
 }: UploadProgressCardProps) {
   const [isMinimized, setIsMinimized] = useState(false);
-  const [showAllFiles, setShowAllFiles] = useState(false);
+  const [isListExpanded, setIsListExpanded] = useState(true);
 
-  if (!uploadState) return null;
+  const summary = useMemo(() => {
+    const totalCount = tasks.length;
+    let waitingCount = 0;
+    let uploadingCount = 0;
+    let indexingCount = 0;
+    let completedCount = 0;
+    let errorCount = 0;
+    let totalBytes = 0;
+    let loadedBytes = 0;
+    let totalSpeed = 0;
 
-  const {
-    totalFiles,
-    fileNames,
-    progress,
-    phase,
-    loaded = 0,
-    total = 0,
-    speed = 0,
-    estimatedSeconds = 0,
-    errorMessage,
-  } = uploadState;
+    tasks.forEach((task) => {
+      totalBytes += task.fileSize || 0;
+      if (task.status === "waiting") {
+        waitingCount += 1;
+      } else if (task.status === "uploading") {
+        uploadingCount += 1;
+        loadedBytes += task.loaded || 0;
+        totalSpeed += task.speed || 0;
+      } else if (task.status === "indexing") {
+        indexingCount += 1;
+        loadedBytes += task.fileSize || 0;
+      } else if (task.status === "completed") {
+        completedCount += 1;
+        loadedBytes += task.fileSize || 0;
+      } else if (task.status === "error") {
+        errorCount += 1;
+        loadedBytes += task.loaded || 0;
+      }
+    });
 
-  const percent = Math.min(100, Math.max(0, Math.round(progress * 100)));
+    const isRunning = uploadingCount > 0 || indexingCount > 0 || waitingCount > 0;
+    const progress = totalBytes > 0 ? Math.min(1, loadedBytes / totalBytes) : 0;
+    const percent = Math.min(100, Math.max(0, Math.round(progress * 100)));
 
-  // 最小化状态展示精简浮窗
+    const remainingBytes = Math.max(0, totalBytes - loadedBytes);
+    const estimatedSeconds =
+      totalSpeed > 0 ? Math.round(remainingBytes / totalSpeed) : 0;
+
+    return {
+      totalCount,
+      waitingCount,
+      uploadingCount,
+      indexingCount,
+      completedCount,
+      errorCount,
+      totalBytes,
+      loadedBytes,
+      totalSpeed,
+      progress,
+      percent,
+      estimatedSeconds,
+      isRunning,
+    };
+  }, [tasks]);
+
+  if (tasks.length === 0) return null;
+
+  // 1. 胶囊最小化悬浮态
   if (isMinimized) {
     return (
-      <div className="fixed bottom-5 right-6 z-[95] flex items-center gap-2.5 rounded-full border border-gray-200 bg-white/95 px-4 py-2.5 shadow-xl backdrop-blur-md transition-all duration-300 hover:shadow-2xl">
-        {phase === "uploading" && (
+      <div className="fixed bottom-5 right-6 z-[95] flex items-center gap-2.5 rounded-full border border-gray-200/90 bg-white/95 px-4 py-2.5 shadow-xl backdrop-blur-md transition-all duration-300 hover:shadow-2xl">
+        {summary.uploadingCount > 0 && (
           <div className="flex items-center gap-2">
             <UploadCloud className="h-4 w-4 animate-bounce text-primary" />
             <span className="text-xs font-medium text-foreground">
-              上传中 ({percent}%)
+              正在上传 ({summary.completedCount}/{summary.totalCount}) · {summary.percent}%
             </span>
           </div>
         )}
-        {phase === "indexing" && (
+        {!summary.uploadingCount && summary.indexingCount > 0 && (
           <div className="flex items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
             <span className="text-xs font-medium text-foreground">
-              构建索引中…
+              索引构建中 ({summary.indexingCount} 个)
             </span>
           </div>
         )}
-        {phase === "completed" && (
+        {!summary.isRunning && summary.errorCount === 0 && (
           <div className="flex items-center gap-2">
             <CheckCircle2 className="h-4 w-4 text-emerald-500" />
             <span className="text-xs font-medium text-emerald-700">
-              上传完成
+              全部上传就绪 ({summary.completedCount})
             </span>
           </div>
         )}
-        {phase === "error" && (
+        {!summary.isRunning && summary.errorCount > 0 && (
           <div className="flex items-center gap-2">
             <AlertCircle className="h-4 w-4 text-red-500" />
-            <span className="text-xs font-medium text-red-600">上传失败</span>
+            <span className="text-xs font-medium text-red-600">
+              {summary.errorCount} 个文件失败
+            </span>
           </div>
         )}
 
@@ -124,10 +190,10 @@ export function UploadProgressCard({
           >
             <Maximize2 className="h-3.5 w-3.5" />
           </button>
-          {(phase === "completed" || phase === "error") && (
+          {!summary.isRunning && onCloseAll && (
             <button
               type="button"
-              onClick={onClose}
+              onClick={onCloseAll}
               className="rounded p-1 text-muted transition-colors hover:bg-gray-100 hover:text-foreground"
               title="关闭"
             >
@@ -139,62 +205,80 @@ export function UploadProgressCard({
     );
   }
 
+  // 2. 完整悬浮面板
   return (
-    <div className="fixed bottom-5 right-6 z-[95] w-96 max-w-[calc(100vw-2rem)] rounded-2xl border border-gray-200/90 bg-white/95 p-4 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-4 duration-300">
-      {/* 头部状态与操作 */}
+    <div className="fixed bottom-5 right-6 z-[95] w-[420px] max-w-[calc(100vw-2rem)] rounded-2xl border border-gray-200/90 bg-white/95 p-4 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-4 duration-300">
+      {/* 头部摘要 */}
       <div className="flex items-center justify-between pb-3 border-b border-gray-100">
-        <div className="flex items-center gap-2 min-w-0">
-          {phase === "uploading" && (
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <div className="flex items-center gap-2.5 min-w-0">
+          {summary.isRunning && (
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
               <UploadCloud className="h-4 w-4 animate-pulse" />
             </div>
           )}
-          {phase === "indexing" && (
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
-              <Loader2 className="h-4 w-4 animate-spin" />
-            </div>
-          )}
-          {phase === "completed" && (
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+          {!summary.isRunning && summary.errorCount === 0 && (
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
               <CheckCircle2 className="h-4 w-4" />
             </div>
           )}
-          {phase === "error" && (
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600">
+          {!summary.isRunning && summary.errorCount > 0 && (
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600">
               <AlertCircle className="h-4 w-4" />
             </div>
           )}
 
           <div className="min-w-0">
             <h4 className="truncate text-xs font-semibold text-foreground">
-              {phase === "uploading" && `正在上传文件 (${totalFiles} 个)`}
-              {phase === "indexing" && `正在初始化索引 (${totalFiles} 个)`}
-              {phase === "completed" && "上传并处理已就绪"}
-              {phase === "error" && "上传中断或失败"}
+              {summary.isRunning &&
+                `文件上传处理中 (${summary.completedCount}/${summary.totalCount} 已完成)`}
+              {!summary.isRunning &&
+                summary.errorCount === 0 &&
+                `全部 ${summary.totalCount} 个文件已就绪`}
+              {!summary.isRunning &&
+                summary.errorCount > 0 &&
+                `上传结束（${summary.completedCount} 成功，${summary.errorCount} 失败）`}
             </h4>
             <p className="text-[11px] text-muted truncate">
-              {phase === "uploading" && "数据传输中，可继续在当前页面浏览"}
-              {phase === "indexing" && "正在投递 AKS 节点生成向量分块"}
-              {phase === "completed" && "文件已成功录入知识库"}
-              {phase === "error" && "网络或服务端出现异常"}
+              {summary.uploadingCount > 0 &&
+                `总速度 ${formatSpeed(summary.totalSpeed)} · 剩余 ${formatRemainingTime(summary.estimatedSeconds)}`}
+              {summary.uploadingCount === 0 && summary.indexingCount > 0 &&
+                `上传已完成，正在投递后台生成向量索引…`}
+              {!summary.isRunning &&
+                summary.errorCount === 0 &&
+                `已成功录入知识库，可直接开启智能问答`}
+              {!summary.isRunning &&
+                summary.errorCount > 0 &&
+                `部分文件上传失败，可点击重试或查看错误`}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-0.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => setIsListExpanded(!isListExpanded)}
+            className="rounded-lg p-1.5 text-muted transition-colors hover:bg-gray-100 hover:text-foreground"
+            title={isListExpanded ? "收起列表" : "展开列表"}
+          >
+            {isListExpanded ? (
+              <ChevronUp className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5" />
+            )}
+          </button>
           <button
             type="button"
             onClick={() => setIsMinimized(true)}
-            className="rounded-lg p-1 text-muted transition-colors hover:bg-gray-100 hover:text-foreground"
+            className="rounded-lg p-1.5 text-muted transition-colors hover:bg-gray-100 hover:text-foreground"
             title="最小化"
           >
             <Minimize2 className="h-3.5 w-3.5" />
           </button>
-          {(phase === "completed" || phase === "error") && (
+          {!summary.isRunning && onCloseAll && (
             <button
               type="button"
-              onClick={onClose}
-              className="rounded-lg p-1 text-muted transition-colors hover:bg-gray-100 hover:text-foreground"
+              onClick={onCloseAll}
+              className="rounded-lg p-1.5 text-muted transition-colors hover:bg-gray-100 hover:text-foreground"
               title="关闭"
             >
               <X className="h-3.5 w-3.5" />
@@ -203,116 +287,174 @@ export function UploadProgressCard({
         </div>
       </div>
 
-      {/* 文件列表预览 */}
-      <div className="mt-3">
-        {fileNames.length === 1 ? (
-          <div className="flex items-center gap-2 rounded-lg bg-gray-50/80 px-2.5 py-1.5 text-xs text-foreground/90">
-            <FileIcon fileName={fileNames[0]} className="h-4 w-4 shrink-0" />
-            <span className="min-w-0 flex-1 truncate font-medium">
-              {fileNames[0]}
-            </span>
-            {total > 0 && (
-              <span className="shrink-0 text-[11px] text-muted">
-                {formatBytes(total)}
-              </span>
-            )}
-          </div>
-        ) : (
-          <div className="space-y-1">
-            <button
-              type="button"
-              onClick={() => setShowAllFiles(!showAllFiles)}
-              className="flex w-full items-center justify-between rounded-lg bg-gray-50/80 px-2.5 py-1.5 text-xs text-foreground/90 hover:bg-gray-100 transition-colors"
-            >
-              <div className="flex items-center gap-1.5 truncate">
-                <Files className="h-3.5 w-3.5 text-muted shrink-0" />
-                <span className="truncate font-medium">
-                  {fileNames[0]} 等 {fileNames.length} 个文件
-                </span>
-              </div>
-              {showAllFiles ? (
-                <ChevronUp className="h-3.5 w-3.5 text-muted shrink-0" />
-              ) : (
-                <ChevronDown className="h-3.5 w-3.5 text-muted shrink-0" />
-              )}
-            </button>
-            {showAllFiles && (
-              <div className="max-h-24 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50/50 p-1.5 space-y-1">
-                {fileNames.map((name, idx) => (
-                  <div
-                    key={`${name}-${idx}`}
-                    className="flex items-center gap-1.5 px-1 py-0.5 text-[11px] text-muted truncate"
-                  >
-                    <FileIcon fileName={name} className="h-3.5 w-3.5 shrink-0" />
-                    <span className="truncate">{name}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* 进度条与指标 */}
-      <div className="mt-3 space-y-2">
-        <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
+      {/* 总体进度条 */}
+      <div className="mt-3 space-y-1.5">
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
           <div
             className={cn(
               "h-full rounded-full transition-all duration-300 ease-out",
-              phase === "uploading" && "bg-gradient-to-r from-emerald-500 to-teal-500",
-              phase === "indexing" && "w-full bg-blue-500 animate-pulse",
-              phase === "completed" && "w-full bg-emerald-500",
-              phase === "error" && "w-full bg-red-500"
+              summary.isRunning && "bg-gradient-to-r from-emerald-500 to-teal-500",
+              !summary.isRunning && summary.errorCount === 0 && "bg-emerald-500",
+              !summary.isRunning && summary.errorCount > 0 && "bg-amber-500"
             )}
-            style={{
-              width:
-                phase === "uploading"
-                  ? `${Math.max(4, percent)}%`
-                  : undefined,
-            }}
+            style={{ width: `${Math.max(4, summary.percent)}%` }}
           />
         </div>
-
-        {/* 传输指标详情 */}
-        {phase === "uploading" && (
-          <div className="flex items-center justify-between text-[11px] text-muted">
-            <span className="font-semibold text-foreground/80">
-              {percent}% · {formatBytes(loaded)} / {formatBytes(total)}
+        <div className="flex items-center justify-between text-[11px] text-muted">
+          <span>
+            {formatBytes(summary.loadedBytes)} / {formatBytes(summary.totalBytes)} ({summary.percent}%)
+          </span>
+          {summary.isRunning && (
+            <span className="text-primary font-medium">
+              {summary.uploadingCount} 上传中 · {summary.indexingCount} 索引中 · {summary.waitingCount} 排队
             </span>
-            <div className="flex items-center gap-2">
-              <span className="text-primary font-medium">{formatSpeed(speed)}</span>
-              <span>{formatRemainingTime(estimatedSeconds)}</span>
-            </div>
-          </div>
-        )}
-
-        {phase === "indexing" && (
-          <div className="flex items-center justify-between text-[11px] text-blue-600 font-medium">
-            <span>文件已送达，后台解析中…</span>
-            <span>已完成 100% 上传</span>
-          </div>
-        )}
-
-        {phase === "completed" && (
-          <div className="flex items-center justify-between text-[11px] text-emerald-600 font-medium">
-            <span>已成功加入知识库</span>
-            <span>✓ 就绪</span>
-          </div>
-        )}
-
-        {phase === "error" && (
-          <div className="text-[11px] text-red-600">
-            {errorMessage || "上传过程中发生错误，请重试"}
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
-      {/* 底部贴心小提示 */}
-      {phase === "uploading" && (
-        <div className="mt-2.5 rounded-md bg-amber-50/80 px-2.5 py-1.5 text-[10px] text-amber-700/90 leading-tight">
-          💡 提示：大文件传输中，请勿手动刷新或关闭网页，以免中断上传连接。
+      {/* 独立文件列表明细 */}
+      {isListExpanded && (
+        <div className="mt-3 max-h-60 overflow-y-auto rounded-xl border border-gray-100 bg-gray-50/40 p-2 space-y-2">
+          {tasks.map((task) => {
+            const taskPercent = Math.min(
+              100,
+              Math.max(0, Math.round((task.progress || 0) * 100))
+            );
+
+            return (
+              <div
+                key={task.id}
+                className="group relative rounded-lg border border-gray-100 bg-white p-2.5 shadow-sm transition-all hover:border-gray-200"
+              >
+                <div className="flex items-center gap-2.5">
+                  <FileIcon fileName={task.fileName} className="h-4 w-4 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-xs font-medium text-foreground">
+                        {task.fileName}
+                      </span>
+                      <span className="shrink-0 text-[10px] text-muted">
+                        {formatBytes(task.fileSize)}
+                      </span>
+                    </div>
+
+                    {/* 单文件状态指示 */}
+                    <div className="mt-1 flex items-center justify-between text-[11px]">
+                      {task.status === "waiting" && (
+                        <div className="flex items-center gap-1 text-amber-600">
+                          <Clock className="h-3 w-3" />
+                          <span>排队等待中…</span>
+                        </div>
+                      )}
+
+                      {task.status === "uploading" && (
+                        <div className="flex items-center gap-2 text-primary font-medium">
+                          <span>上传中 {taskPercent}%</span>
+                          <span className="text-muted font-normal text-[10px]">
+                            {formatSpeed(task.speed)} · 剩 {formatRemainingTime(task.estimatedSeconds)}
+                          </span>
+                        </div>
+                      )}
+
+                      {task.status === "indexing" && (
+                        <div className="flex items-center gap-1.5 text-blue-600 font-medium">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          <span>已上传，后台构建索引中…</span>
+                        </div>
+                      )}
+
+                      {task.status === "completed" && (
+                        <div className="flex items-center gap-1 text-emerald-600 font-medium">
+                          <CheckCircle2 className="h-3 w-3" />
+                          <span>已就绪</span>
+                        </div>
+                      )}
+
+                      {task.status === "error" && (
+                        <div
+                          className="flex items-center gap-1 text-red-600 font-medium truncate"
+                          title={task.errorMessage}
+                        >
+                          <AlertCircle className="h-3 w-3 shrink-0" />
+                          <span className="truncate">
+                            {task.errorMessage || "上传失败"}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* 操作按钮 */}
+                      <div className="flex items-center gap-1">
+                        {task.status === "uploading" && onCancelTask && (
+                          <button
+                            type="button"
+                            onClick={() => onCancelTask(task.id)}
+                            className="rounded px-1.5 py-0.5 text-[10px] text-muted hover:bg-red-50 hover:text-red-600 transition-colors"
+                          >
+                            取消
+                          </button>
+                        )}
+                        {task.status === "error" && onRetryTask && (
+                          <button
+                            type="button"
+                            onClick={() => onRetryTask(task.id)}
+                            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-primary hover:bg-primary/10 transition-colors font-medium"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            重试
+                          </button>
+                        )}
+                        {(task.status === "completed" || task.status === "error") &&
+                          onRemoveTask && (
+                            <button
+                              type="button"
+                              onClick={() => onRemoveTask(task.id)}
+                              className="rounded p-0.5 text-muted hover:bg-gray-100 hover:text-foreground transition-colors opacity-0 group-hover:opacity-100"
+                              title="移除此项"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          )}
+                      </div>
+                    </div>
+
+                    {/* 单文件独立进度条 */}
+                    {task.status === "uploading" && (
+                      <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-gray-100">
+                        <div
+                          className="h-full bg-primary transition-all duration-200"
+                          style={{ width: `${Math.max(3, taskPercent)}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
+
+      {/* 底部操作与提示 */}
+      <div className="mt-3 flex items-center justify-between text-[10px] text-muted">
+        {summary.isRunning ? (
+          <span className="text-amber-600">
+            💡 上传过程中请勿刷新或关闭网页，以免中断连接
+          </span>
+        ) : (
+          <span>所有任务已结束</span>
+        )}
+
+        {summary.completedCount > 0 && onClearCompleted && (
+          <button
+            type="button"
+            onClick={onClearCompleted}
+            className="flex items-center gap-1 text-muted hover:text-foreground transition-colors"
+          >
+            <Trash2 className="h-3 w-3" />
+            清空已完成
+          </button>
+        )}
+      </div>
     </div>
   );
 }

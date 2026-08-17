@@ -94,6 +94,7 @@ async function requestJsonWithUploadProgress<T>(
     body: FormData;
     headers?: HeadersInit;
     onUploadProgress?: (event: UploadProgressEvent) => void;
+    signal?: AbortSignal;
   }
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -111,6 +112,22 @@ async function requestJsonWithUploadProgress<T>(
         xhr.setRequestHeader(key, value);
       }
     });
+
+    if (init.signal) {
+      if (init.signal.aborted) {
+        xhr.abort();
+        const err = new Error("上传已取消");
+        err.name = "AbortError";
+        reject(err);
+        return;
+      }
+      init.signal.addEventListener("abort", () => {
+        xhr.abort();
+        const err = new Error("上传已取消");
+        err.name = "AbortError";
+        reject(err);
+      });
+    }
 
     let startTime = 0;
     let lastTime = 0;
@@ -164,6 +181,12 @@ async function requestJsonWithUploadProgress<T>(
 
     xhr.onerror = () => {
       reject(new Error("知识库上传失败，请检查网络连接"));
+    };
+
+    xhr.onabort = () => {
+      const err = new Error("上传已取消");
+      err.name = "AbortError";
+      reject(err);
     };
 
     xhr.onload = () => {
@@ -375,6 +398,31 @@ export async function searchFiles(input: {
     ...file,
     ...mapFileStatus(file.status),
   }));
+}
+
+export async function uploadSingleKnowledgeFile(input: {
+  file: File;
+  knowledge_base_id: string;
+  folder_id?: string | null;
+  onUploadProgress?: (progress: UploadProgressEvent) => void;
+  signal?: AbortSignal;
+}): Promise<FileUploadResponse> {
+  const formData = new FormData();
+  formData.append("file", input.file);
+  formData.append("knowledge_base_id", input.knowledge_base_id);
+  if (input.folder_id) {
+    formData.append("folder_id", input.folder_id);
+  }
+
+  return await requestJsonWithUploadProgress<FileUploadResponse>(
+    "/api/knowledge/index/upload",
+    {
+      method: "POST",
+      body: formData,
+      onUploadProgress: input.onUploadProgress,
+      signal: input.signal,
+    }
+  );
 }
 
 export async function uploadKnowledgeFiles(input: {
