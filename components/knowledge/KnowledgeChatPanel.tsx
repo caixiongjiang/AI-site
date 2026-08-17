@@ -87,6 +87,11 @@ import {
   type InteractionMode,
   modeFromInteraction,
 } from "@/lib/chat/interaction-modes";
+import {
+  THINKING_LEVEL_LABELS,
+  THINKING_LEVEL_DESCS,
+  clampThinkingLevel,
+} from "@/lib/chat/thinking-levels";
 import { isAction } from "@/lib/actions/chat-actions";
 
 interface KnowledgeChatPanelProps {
@@ -128,7 +133,8 @@ const CHAT_CONTENT_CLASS = "mx-auto w-full max-w-[720px]";
 
 interface ChatSettings {
   interactionMode: InteractionMode;
-  enableThinking: boolean;
+  /** 思考强度档位（pi 标准 7 档之一）；模型不支持思考时为 "off" */
+  thinkingLevel: string;
   enableMultimodal: boolean;
   /**
    * 用户从 `/api/chat/models` 选定的 LiteLLM 模型字符串（如 `openai/gpt-4o-mini`）。
@@ -1928,94 +1934,458 @@ function ModelCapabilityIcons({ model }: { model: ChatModelItem }) {
   );
 }
 
+const LAST_THINKING_LEVEL_KEY = "knowledge-chat-last-thinking-level";
+const RECENT_MODELS_STORAGE_KEY = "knowledge-chat-recent-models";
+
+function getLastSelectedThinkingLevel(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(LAST_THINKING_LEVEL_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function setLastSelectedThinkingLevel(level: string): void {
+  if (typeof window === "undefined" || !level) return;
+  try {
+    window.localStorage.setItem(LAST_THINKING_LEVEL_KEY, level);
+  } catch {
+    // ignore
+  }
+}
+
+function getRecentModelIds(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(RECENT_MODELS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function recordRecentModelId(modelId: string): void {
+  if (typeof window === "undefined" || !modelId) return;
+  try {
+    const list = getRecentModelIds().filter((id) => id !== modelId);
+    list.unshift(modelId);
+    window.localStorage.setItem(
+      RECENT_MODELS_STORAGE_KEY,
+      JSON.stringify(list.slice(0, 20))
+    );
+  } catch {
+    // ignore
+  }
+}
+
 function applyModelSelection(
   settings: ChatSettings,
   model: ChatModelItem
 ): ChatSettings {
+  const lastLevel = getLastSelectedThinkingLevel();
+  let nextThinkingLevel = "off";
+  if (model.supports_thinking === true) {
+    const candidate =
+      (settings.thinkingLevel && settings.thinkingLevel !== "off" && model.thinking_levels?.includes(settings.thinkingLevel)
+        ? settings.thinkingLevel
+        : null) ??
+      (lastLevel && lastLevel !== "off" && model.thinking_levels?.includes(lastLevel)
+        ? lastLevel
+        : null) ??
+      (settings.thinkingLevel && settings.thinkingLevel !== "off"
+        ? clampThinkingLevel(model.thinking_levels, settings.thinkingLevel)
+        : null) ??
+      (lastLevel && lastLevel !== "off"
+        ? clampThinkingLevel(model.thinking_levels, lastLevel)
+        : null) ??
+      model.default_thinking_level ??
+      (model.thinking_levels?.find((l) => l !== "off") || "off");
+    nextThinkingLevel = candidate || "off";
+  }
+
   return {
     ...settings,
     model: model.id,
-    enableThinking: model.supports_thinking === true,
+    thinkingLevel: nextThinkingLevel,
     enableMultimodal: model.supports_multimodal === true,
   };
 }
 
+const EFFORT_LEVEL_TITLES: Record<string, string> = {
+  off: "Off",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "XHigh",
+  max: "Max",
+};
+
 /**
- * 输入栏右侧内联模型选择：hover 时在上方展开列表（与 Cursor 一致）
+ * 统一模型与思考强度选择器（Cursor 风格分步展开双卡片）
+ * 交互逻辑：
+ *   1. 触发按钮：点击时仅在正上方弹出当前模型信息主卡片（Effort 档位 + Model 项）。
+ *   2. 点击主卡片中的 Model 项后，才展开第二张卡片（展示所有模型信息，默认精简展示常用的 10 个模型）。
+ *   3. 思考强度记忆：默认思考强度根据用户上次选择的强度来定义（并在 localStorage 中持久化）。
+ *   4. 自适应方向：第二张卡片默认在右侧显示，若右侧屏幕空间不足则自动切换到左侧显示。
  */
-function InlineModelPicker({
-  value,
+function UnifiedModelPicker({
+  modelId,
+  thinkingLevel,
   models,
-  onChange,
+  onModelChange,
+  onThinkingLevelChange,
   disabled,
 }: {
-  value: string;
+  modelId: string;
+  thinkingLevel: string;
   models: ChatModelItem[];
-  onChange: (next: string) => void;
+  onModelChange: (modelId: string) => void;
+  onThinkingLevelChange: (level: string) => void;
   disabled?: boolean;
 }) {
-  const [hovered, setHovered] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [showAllModels, setShowAllModels] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [placement, setPlacement] = useState<"right" | "left">("right");
+  const containerRef = useRef<HTMLDivElement>(null);
+  const firstCardRef = useRef<HTMLDivElement>(null);
 
-  const display = useMemo(() => {
-    if (!value) return "选择模型";
-    const hit = models.find((m) => m.id === value);
-    if (hit) return hit.label;
-    const slash = value.lastIndexOf("/");
-    return slash >= 0 ? value.slice(slash + 1) : value;
-  }, [value, models]);
+  // 关闭主浮层时，同时重置子面板和搜索输入
+  useEffect(() => {
+    if (!open) {
+      setShowAllModels(false);
+      setSearchQuery("");
+    }
+  }, [open]);
+
+  // 点击外部区域或按 Esc 键安全收起
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  // 动态测量子卡片位置：默认在右边显示，若右边空间不够则放到左边
+  useLayoutEffect(() => {
+    if (!open || !showAllModels) return;
+    const updatePlacement = () => {
+      if (!firstCardRef.current) return;
+      const rect = firstCardRef.current.getBoundingClientRect();
+      const secondCardWidth = 288; // 子卡片宽度约 288px
+      const spaceOnRight = window.innerWidth - rect.right;
+      if (spaceOnRight < secondCardWidth + 16) {
+        setPlacement("left");
+      } else {
+        setPlacement("right");
+      }
+    };
+
+    updatePlacement();
+    window.addEventListener("resize", updatePlacement);
+    return () => window.removeEventListener("resize", updatePlacement);
+  }, [open, showAllModels]);
+
+  const currentModel = useMemo(() => {
+    return models.find((m) => m.id === modelId) ?? models[0];
+  }, [modelId, models]);
+
+  const displayModelLabel = useMemo(() => {
+    if (!modelId) return "选择模型";
+    if (currentModel) return currentModel.label;
+    const slash = modelId.lastIndexOf("/");
+    return slash >= 0 ? modelId.slice(slash + 1) : modelId;
+  }, [modelId, currentModel]);
+
+  const currentEffortLabel = useMemo(() => {
+    if (!currentModel?.supports_thinking || thinkingLevel === "off") return null;
+    return EFFORT_LEVEL_TITLES[thinkingLevel] ?? thinkingLevel;
+  }, [currentModel, thinkingLevel]);
+
+  // 当前模型支持的思考档位
+  const availableThinkingLevels = useMemo(() => {
+    if (!currentModel?.supports_thinking) return [];
+    return currentModel.thinking_levels?.length ? currentModel.thinking_levels : ["off"];
+  }, [currentModel]);
+
+  // 默认显示经常使用的 10 个模型；若有搜索词则全量搜索匹配
+  const displayedModels = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      return models.filter(
+        (m) =>
+          m.label.toLowerCase().includes(q) ||
+          m.id.toLowerCase().includes(q) ||
+          m.provider.toLowerCase().includes(q)
+      );
+    }
+    const recentIds = getRecentModelIds();
+    const result: ChatModelItem[] = [];
+    const added = new Set<string>();
+
+    // 1. 当前选中的模型优先展示
+    if (currentModel && !added.has(currentModel.id)) {
+      result.push(currentModel);
+      added.add(currentModel.id);
+    }
+
+    // 2. 常用/近期使用过的模型
+    for (const rid of recentIds) {
+      if (result.length >= 10) break;
+      const found = models.find((m) => m.id === rid);
+      if (found && !added.has(found.id)) {
+        result.push(found);
+        added.add(found.id);
+      }
+    }
+
+    // 3. 用可用模型列表按顺序补齐至 10 个
+    for (const m of models) {
+      if (result.length >= 10) break;
+      if (!added.has(m.id)) {
+        result.push(m);
+        added.add(m.id);
+      }
+    }
+
+    return result;
+  }, [models, searchQuery, currentModel]);
 
   return (
-    <div
-      className="relative shrink-0"
-      onMouseEnter={() => {
-        if (!disabled) setHovered(true);
-      }}
-      onMouseLeave={() => setHovered(false)}
-    >
+    <div className="relative shrink-0" ref={containerRef}>
+      {/* 底部触发按钮 */}
       <button
         type="button"
         disabled={disabled}
+        onClick={() => {
+          if (!disabled) setOpen((v) => !v);
+        }}
         className={cn(
-          "flex h-7 shrink-0 items-center gap-0.5 whitespace-nowrap rounded-full px-2 text-[11px] text-muted transition-colors hover:text-foreground",
+          "flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-xs text-neutral-700 transition-colors hover:bg-neutral-100/80 hover:text-neutral-900",
+          open && "bg-neutral-100 text-neutral-900",
           disabled && "cursor-not-allowed opacity-60"
         )}
+        title={
+          currentModel?.supports_thinking && thinkingLevel !== "off"
+            ? `${displayModelLabel} · 思考: ${THINKING_LEVEL_LABELS[thinkingLevel] ?? thinkingLevel}`
+            : displayModelLabel
+        }
       >
-        <span>{display}</span>
-        <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
+        <span className="font-normal">{displayModelLabel}</span>
+        {currentEffortLabel ? (
+          <span className="text-neutral-400 font-normal">{currentEffortLabel}</span>
+        ) : null}
+        <ChevronDown className="h-3 w-3 shrink-0 text-neutral-400 opacity-80" />
       </button>
-      {hovered ? (
-        <div className="absolute bottom-full right-0 z-50 mb-1 min-w-[11rem] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
-          <div className="max-h-56 overflow-y-auto p-1">
-            {models.length === 0 ? (
-              <div className="flex items-center gap-1 px-2.5 py-2 text-[11px] text-muted">
-                <Loader2 className="h-3 w-3 animate-spin" /> 加载模型中…
+
+      {/* 弹出浮层：主卡片弹出在正上方 */}
+      {open ? (
+        <div
+          className="absolute bottom-full right-0 z-50 mb-2 select-none"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* 主卡片（正上方）：Effort 思考强度选择 + Model 切换入口 */}
+          <div
+            ref={firstCardRef}
+            className="w-40 sm:w-44 shrink-0 rounded-2xl border border-neutral-200/90 bg-white p-1.5 shadow-2xl animate-in fade-in zoom-in-95 duration-100 relative"
+          >
+            {/* Effort 思考强度选择 */}
+            <div className="px-2 py-1 text-[10px] font-semibold tracking-wider text-neutral-400 uppercase">
+              Effort
+            </div>
+            {currentModel?.supports_thinking && availableThinkingLevels.length > 0 ? (
+              <div className="space-y-0.5">
+                {availableThinkingLevels.map((lvl) => {
+                  const isSelected = thinkingLevel === lvl;
+                  const label = EFFORT_LEVEL_TITLES[lvl] ?? lvl;
+                  return (
+                    <button
+                      key={lvl}
+                      type="button"
+                      onClick={() => {
+                        setLastSelectedThinkingLevel(lvl);
+                        onThinkingLevelChange(lvl);
+                      }}
+                      title={THINKING_LEVEL_DESCS[lvl]}
+                      className={cn(
+                        "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-neutral-100",
+                        isSelected
+                          ? "bg-neutral-100/90 font-medium text-neutral-900"
+                          : "text-neutral-700"
+                      )}
+                    >
+                      <span>{label}</span>
+                      {isSelected ? (
+                        <Check className="h-3.5 w-3.5 text-neutral-900 shrink-0 ml-1" />
+                      ) : null}
+                    </button>
+                  );
+                })}
               </div>
             ) : (
-              models.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => onChange(m.id)}
-                  className={cn(
-                    "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-gray-50",
-                    m.id === value && "bg-primary/5"
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "min-w-0 flex-1 truncate text-xs",
-                      m.id === value ? "text-primary" : "text-foreground"
-                    )}
-                  >
-                    {m.label}
-                  </span>
-                  <ModelCapabilityIcons model={m} />
-                  {m.id === value ? (
-                    <Check className="h-3 w-3 shrink-0 text-primary" />
-                  ) : null}
-                </button>
-              ))
+              <div className="px-2.5 py-1.5 text-xs text-neutral-400">
+                不支持思考
+              </div>
             )}
+
+            <div className="my-1.5 h-px bg-neutral-100" />
+
+            {/* Model 展开按钮：点击后才显示所有模型的卡片 */}
+            <div className="px-2 py-1 text-[10px] font-semibold tracking-wider text-neutral-400 uppercase">
+              Model
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowAllModels((v) => !v)}
+              className={cn(
+                "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs font-medium transition-colors hover:bg-neutral-100",
+                showAllModels
+                  ? "bg-neutral-100 text-neutral-900"
+                  : "bg-neutral-50/70 text-neutral-800"
+              )}
+            >
+              <span className="truncate">{displayModelLabel}</span>
+              <ChevronRight
+                className={cn(
+                  "h-3.5 w-3.5 shrink-0 text-neutral-400 transition-transform",
+                  showAllModels && (placement === "left" ? "-translate-x-0.5 text-neutral-700" : "translate-x-0.5 text-neutral-700")
+                )}
+              />
+            </button>
+
+            {/* 第二张卡片：所有模型具体信息（点击 Model 后展开；根据屏幕空间动态在右边或左边显示） */}
+            {showAllModels ? (
+              <div
+                className={cn(
+                  "w-64 sm:w-72 rounded-2xl border border-neutral-200/90 bg-white shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-100",
+                  placement === "right"
+                    ? "absolute bottom-0 left-full ml-1.5 z-50"
+                    : "absolute bottom-0 right-full mr-1.5 z-50"
+                )}
+              >
+                {/* 顶部搜索框 */}
+                <div className="flex items-center gap-2 border-b border-neutral-100 px-3 py-2 bg-neutral-50/50">
+                  <Search className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
+                  <input
+                    autoFocus
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search models"
+                    className="min-w-0 flex-1 bg-transparent text-xs text-neutral-900 outline-none placeholder:text-neutral-400"
+                  />
+                  {searchQuery ? (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery("")}
+                      className="text-neutral-400 hover:text-neutral-600"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  ) : null}
+                </div>
+
+                {/* 模型列表 */}
+                <div className="max-h-72 overflow-y-auto p-1.5 space-y-0.5">
+                  {models.length === 0 ? (
+                    <div className="flex items-center justify-center gap-2 py-8 text-xs text-neutral-400">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>加载模型中…</span>
+                    </div>
+                  ) : displayedModels.length === 0 ? (
+                    <div className="py-8 text-center text-xs text-neutral-400">
+                      未找到匹配模型
+                    </div>
+                  ) : (
+                    displayedModels.map((m) => {
+                      const isSelected = m.id === modelId;
+                      const effortText = m.supports_thinking
+                        ? EFFORT_LEVEL_TITLES[
+                            m.id === modelId
+                              ? thinkingLevel
+                              : m.default_thinking_level || "medium"
+                          ] ?? (m.id === modelId ? thinkingLevel : "Medium")
+                        : null;
+
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => {
+                            recordRecentModelId(m.id);
+                            onModelChange(m.id);
+                            setShowAllModels(false);
+                          }}
+                          className={cn(
+                            "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-neutral-100",
+                            isSelected
+                              ? "bg-neutral-100/90 font-medium text-neutral-900"
+                              : "text-neutral-700"
+                          )}
+                        >
+                          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                            <span
+                              className={cn(
+                                "truncate",
+                                isSelected
+                                  ? "font-medium text-neutral-900"
+                                  : "text-neutral-700"
+                              )}
+                            >
+                              {m.label}
+                            </span>
+                            {effortText && effortText !== "Off" ? (
+                              <span className="shrink-0 text-[11px] text-neutral-400 font-normal">
+                                {effortText}
+                              </span>
+                            ) : null}
+                          </div>
+
+                          <div className="flex shrink-0 items-center gap-1.5 ml-1.5">
+                            <ModelCapabilityIcons model={m} />
+                            {isSelected ? (
+                              <Check className="h-3.5 w-3.5 text-neutral-900 shrink-0" />
+                            ) : null}
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* 底部信息条 */}
+                <div className="border-t border-neutral-100 px-3 py-1.5 bg-neutral-50/50 flex items-center justify-between text-[10px] text-neutral-400">
+                  <span>
+                    {searchQuery
+                      ? `${displayedModels.length} 个结果`
+                      : `常用 ${displayedModels.length} 个模型 (共 ${models.length} 个)`}
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-0.5">
+                      <Brain className="h-2.5 w-2.5 text-primary" /> 思考
+                    </span>
+                    <span className="inline-flex items-center gap-0.5">
+                      <Eye className="h-2.5 w-2.5 text-primary" /> 视觉
+                    </span>
+                  </span>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -2093,7 +2463,7 @@ function PlusConfigMenu({
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const [hoveredSub, setHoveredSub] = useState<null | "models" | "skills" | "tools">(null);
+  const [hoveredSub, setHoveredSub] = useState<null | "models" | "skills" | "tools" | "thinking">(null);
 
   const q = query.trim().toLowerCase();
   const match = (text: string) => !q || text.toLowerCase().includes(q);
@@ -2121,10 +2491,24 @@ function PlusConfigMenu({
       ? `${selectedSkills.length} 已选`
       : `${skills.length} 可用`;
 
+  // 当前选中模型的思考档位选项（pi 标准 7 档子集）；仅当模型支持思考且不止 off 时展示
+  const resolvedMenuModel = models.find((m) => m.id === settings.model) ?? models[0];
+  const thinkingLevels = resolvedMenuModel?.thinking_levels?.length
+    ? resolvedMenuModel.thinking_levels
+    : ["off"];
+  const thinkingAvailable = (resolvedMenuModel?.supports_thinking ?? false) && thinkingLevels.length > 1;
+  const thinkingValue = thinkingAvailable
+    ? THINKING_LEVEL_LABELS[settings.thinkingLevel] ?? settings.thinkingLevel
+    : "不支持";
+
   const subItems = [
     { key: "models" as const, icon: Cpu, label: "模型", value: currentModelLabel },
+    thinkingAvailable
+      ? { key: "thinking" as const, icon: Brain, label: "思考强度", value: thinkingValue }
+      : null,
     { key: "skills" as const, icon: Sparkle, label: "技能", value: skillsValue },
-  ].filter((it) => {
+  ].filter((it): it is NonNullable<typeof it> => {
+    if (it === null) return false;
     if (it.key === "skills") {
       return match(it.label) || match(it.value) || filteredMenuSkills.length > 0;
     }
@@ -2244,7 +2628,7 @@ function PlusConfigMenu({
                     </div>
 
                     {isHovered && it.key === "models" ? (
-                      <div className="absolute bottom-0 left-full z-10 pl-1">
+                      <div className="absolute bottom-0 left-full z-10 -ml-1 pl-2">
                         <div className="w-48 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
                           <div className="max-h-56 overflow-y-auto p-1">
                           {models.length === 0 ? (
@@ -2282,8 +2666,52 @@ function PlusConfigMenu({
                       </div>
                     ) : null}
 
+                    {isHovered && it.key === "thinking" ? (
+                      <div className="absolute bottom-0 left-full z-10 -ml-1 pl-2">
+                        <div className="w-44 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
+                          <div className="max-h-56 overflow-y-auto p-1">
+                            {thinkingLevels.map((lvl) => {
+                              const selected = settings.thinkingLevel === lvl;
+                              return (
+                                <button
+                                  key={lvl}
+                                  type="button"
+                                  onClick={() => {
+                                    onChange({ ...settings, thinkingLevel: lvl });
+                                  }}
+                                  title={THINKING_LEVEL_DESCS[lvl]}
+                                  className={cn(
+                                    "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-gray-50",
+                                    selected && "bg-primary/5"
+                                  )}
+                                >
+                                  <Brain
+                                    className={cn(
+                                      "h-3.5 w-3.5 shrink-0",
+                                      lvl === "off" ? "text-gray-300" : "text-primary"
+                                    )}
+                                  />
+                                  <span
+                                    className={cn(
+                                      "min-w-0 flex-1 truncate text-xs",
+                                      selected ? "text-primary" : "text-foreground"
+                                    )}
+                                  >
+                                    {THINKING_LEVEL_LABELS[lvl] ?? lvl}
+                                  </span>
+                                  {selected ? (
+                                    <Check className="h-3 w-3 shrink-0 text-primary" />
+                                  ) : null}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+
                     {isHovered && it.key === "skills" ? (
-                      <div className="absolute bottom-0 left-full z-10 pl-1">
+                      <div className="absolute bottom-0 left-full z-10 -ml-1 pl-2">
                         <div className="w-48 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
                           <div className="max-h-56 overflow-y-auto p-1">
                             {filteredMenuSkills.length === 0 ? (
@@ -2404,7 +2832,7 @@ export const KnowledgeChatPanel = ({
   }, []);
   const [settings, setSettings] = useState<ChatSettings>({
     interactionMode: "agent",
-    enableThinking: false,
+    thinkingLevel: "off",
     enableMultimodal: false,
     model: "",
   });
@@ -2518,7 +2946,9 @@ export const KnowledgeChatPanel = ({
       prevSessionIdRef.current = activeSession.session_id;
       setSettings((prev) => ({
         ...prev,
-        enableThinking: activeSession.enable_thinking,
+        thinkingLevel:
+          activeSession.thinking_level ??
+          (activeSession.enable_thinking ? "medium" : "off"),
         enableMultimodal: false,
         model: switchedNow ? "" : prev.model,
       }));
@@ -2547,13 +2977,26 @@ export const KnowledgeChatPanel = ({
           nextModel = firstAvailable;
         }
       }
-      // 思考和多模态自动跟随模型能力开启
+      // 思考档位跟随模型：切换 session 时优先使用 activeSession.thinking_level；切换模型时根据模型支持情况决定
       const resolvedModel = models.find((m) => m.id === nextModel);
-      const modelSupportsThinking = resolvedModel?.supports_thinking === true;
       const modelSupportsMultimodal = resolvedModel?.supports_multimodal === true;
+      const sessionThinkingLevel =
+        activeSession.thinking_level ??
+        (activeSession.enable_thinking ? "medium" : "off");
+      const lastLevel = getLastSelectedThinkingLevel();
+      const targetThinkingLevel = switchedSession
+        ? (sessionThinkingLevel !== "off" ? sessionThinkingLevel : (lastLevel ?? "off"))
+        : (prev.thinkingLevel !== "off" ? prev.thinkingLevel : (lastLevel ?? "off"));
+      const prevStillValid =
+        resolvedModel?.thinking_levels?.includes(targetThinkingLevel) ?? false;
+      const nextThinkingLevel = prevStillValid
+        ? targetThinkingLevel
+        : resolvedModel?.supports_thinking
+          ? clampThinkingLevel(resolvedModel.thinking_levels, targetThinkingLevel)
+          : "off";
       return {
         ...prev,
-        enableThinking: modelSupportsThinking,
+        thinkingLevel: nextThinkingLevel,
         enableMultimodal: modelSupportsMultimodal,
         model: nextModel,
       };
@@ -2737,13 +3180,17 @@ export const KnowledgeChatPanel = ({
     // 新一轮：发出后把这条用户消息滚动到视口顶部，而不是贴底
     isAtBottomRef.current = false;
     pendingPinRef.current = true;
-    // 思考和多模态自动跟随模型能力
-    const resolvedModel = models.find((m) => m.id === settings.model);
-    const effectiveThinking = resolvedModel?.supports_thinking === true;
+    // 思考档位：settings.thinkingLevel 已在选模型时按 thinking_levels 钳位；
+    // 这里再兜底一次——若当前模型不支持该档位则降级为 "off"。
+    const resolvedModel = models.find((m) => m.id === settings.model) ?? models[0];
+    const effectiveThinkingLevel =
+      resolvedModel?.thinking_levels?.includes(settings.thinkingLevel)
+        ? settings.thinkingLevel
+        : "off";
     const effectiveMultimodal = resolvedModel?.supports_multimodal === true;
     await send(content, {
       mode: modeFromInteraction(settings.interactionMode),
-      enableThinking: effectiveThinking,
+      thinkingLevel: effectiveThinkingLevel,
       enableMultimodal: effectiveMultimodal,
       // 用户选了具体 model 才透传；空字符串 → 沿用 session 当前偏好。
       // 注意：这里不再传 modelPreset——preset 是后端事项，前端只表达"我要这个具体模型"。
@@ -2787,13 +3234,16 @@ export const KnowledgeChatPanel = ({
   const handleNewSession = useCallback(async () => {
     // 新会话固定默认 Agent 模式
     setSettings((prev) => ({ ...prev, interactionMode: "agent" }));
-    // 思考和多模态自动跟随模型能力
-    const resolvedModel = models.find((m) => m.id === settings.model);
-    const effectiveThinking = resolvedModel?.supports_thinking === true;
+    // 思考档位：把当前选择带去新会话（同模型沿用；模型不支持则 "off"）
+    const resolvedModel = models.find((m) => m.id === settings.model) ?? models[0];
+    const effectiveThinkingLevel =
+      resolvedModel?.thinking_levels?.includes(settings.thinkingLevel)
+        ? settings.thinkingLevel
+        : "off";
     const effectiveMultimodal = resolvedModel?.supports_multimodal === true;
     await newSession({
       mode: "agent",
-      enableThinking: effectiveThinking,
+      thinkingLevel: effectiveThinkingLevel,
       enableMultimodal: effectiveMultimodal,
       // 空字符串 → 显式置空 model，让后端用 model_preset 默认（不是"不传"）
       model: settings.model || null,
@@ -3263,11 +3713,12 @@ export const KnowledgeChatPanel = ({
                       />
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
-                      <InlineModelPicker
-                        value={settings.model}
+                      <UnifiedModelPicker
+                        modelId={settings.model}
+                        thinkingLevel={settings.thinkingLevel}
                         models={models}
                         disabled={effectiveDisabled || isStreaming || summarizing}
-                        onChange={(model) => {
+                        onModelChange={(model) => {
                           const resolved = models.find((m) => m.id === model);
                           if (resolved) {
                             setSettings(applyModelSelection(settings, resolved));
@@ -3275,6 +3726,9 @@ export const KnowledgeChatPanel = ({
                             setSettings({ ...settings, model });
                           }
                         }}
+                        onThinkingLevelChange={(lvl) =>
+                          setSettings((prev) => ({ ...prev, thinkingLevel: lvl }))
+                        }
                       />
                       {isStreaming ? (
                         <button
@@ -3314,12 +3768,13 @@ export const KnowledgeChatPanel = ({
                   </div>
                 ) : (
                   <>
-                    <div className="shrink-0">
-                      <InlineModelPicker
-                        value={settings.model}
+                    <div className="shrink-0 flex items-center gap-1.5">
+                      <UnifiedModelPicker
+                        modelId={settings.model}
+                        thinkingLevel={settings.thinkingLevel}
                         models={models}
                         disabled={effectiveDisabled || isStreaming || summarizing}
-                        onChange={(model) => {
+                        onModelChange={(model) => {
                           const resolved = models.find((m) => m.id === model);
                           if (resolved) {
                             setSettings(applyModelSelection(settings, resolved));
@@ -3327,6 +3782,9 @@ export const KnowledgeChatPanel = ({
                             setSettings({ ...settings, model });
                           }
                         }}
+                        onThinkingLevelChange={(lvl) =>
+                          setSettings((prev) => ({ ...prev, thinkingLevel: lvl }))
+                        }
                       />
                     </div>
                     {isStreaming ? (

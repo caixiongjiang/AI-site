@@ -103,13 +103,14 @@ export interface UseKnowledgeChatOptions {
 /**
  * 新建会话时可选的初始偏好。所有字段均为 optional：缺省时由后端默认值决定。
  *
- * 典型用途：用户在 ChatPanel 上已经选了某个模型 / 思考链开关，"新会话" 按钮
+ * 典型用途：用户在 ChatPanel 上已经选了某个模型 / 思考强度档位，"新会话" 按钮
  * 应当把当前选择带过去，避免新会话回到 fast preset 的默认值。
  */
 export interface NewSessionInit {
   modelPreset?: string;
   model?: string | null;
-  enableThinking?: boolean;
+  /** 思考强度档位（off/minimal/low/medium/high/xhigh/max）；默认 off */
+  thinkingLevel?: string;
   enableMultimodal?: boolean;
   /** 会话交互模式（agent / plan 等）；默认 agent */
   mode?: string;
@@ -125,8 +126,8 @@ export interface NewSessionInit {
 export interface SendOptions {
   /** 覆盖 session 默认 mode */
   mode?: string;
-  /** 覆盖 session 默认 enable_thinking */
-  enableThinking?: boolean;
+  /** 覆盖 session 默认 thinking_level（pi 标准 7 档之一） */
+  thinkingLevel?: string;
   /** 覆盖 session 默认 enable_multimodal */
   enableMultimodal?: boolean;
   /** 覆盖 session 默认 model_preset（采样参数模板，如 "fast" / "deep_thinking"） */
@@ -139,6 +140,7 @@ export interface SendOptions {
    *   modelPreset 仅作为 temperature / max_tokens / thinking_budget 等
    *   采样参数的模板。
    * - 不传或传空字符串 → 沿用 session 当前的 model（或 model_preset）。
+   *   modelPreset 仅作为 temperature / max_tokens 等采样参数的模板（思考强度由 thinking_level 逐轮传入）。
    */
   model?: string;
   /** 覆盖 session 默认 retrieve_top_k */
@@ -1138,8 +1140,8 @@ export function useKnowledgeChat(
           // model 允许为空字符串（前端清除选择 → 让后端走 model_preset），
           // 所以用 ?? 而不是 ||
           ...(init?.model !== undefined ? { model: init.model ?? null } : {}),
-          ...(init?.enableThinking !== undefined
-            ? { enable_thinking: init.enableThinking }
+          ...(init?.thinkingLevel !== undefined
+            ? { thinking_level: init.thinkingLevel }
             : {}),
           ...(init?.enableMultimodal !== undefined
             ? { enable_multimodal: init.enableMultimodal }
@@ -1305,8 +1307,8 @@ export function useKnowledgeChat(
         query: trimmed,
       };
       if (opts.mode !== undefined) payload.mode = opts.mode;
-      if (opts.enableThinking !== undefined) {
-        payload.enable_thinking = opts.enableThinking;
+      if (opts.thinkingLevel !== undefined) {
+        payload.thinking_level = opts.thinkingLevel;
       }
       if (opts.enableMultimodal !== undefined) {
         payload.enable_multimodal = opts.enableMultimodal;

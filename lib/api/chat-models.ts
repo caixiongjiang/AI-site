@@ -24,8 +24,13 @@ export interface ChatModelItem {
   label: string;
   /** Provider 名（用于按 provider 分组） */
   provider: string;
-  /** 模型是否支持思考链 / reasoning（前端据此控制 ThinkingChip 显隐） */
+  /** 模型是否支持思考链 / reasoning（前端据此控制思考档位下拉显隐） */
   supports_thinking?: boolean;
+  /** 该模型支持的思考强度档位（pi 标准 7 档子集，保持顺序：off/minimal/low/medium/high/xhigh/max）。
+   *  supports_thinking=false 时为 ['off']；前端据此渲染档位下拉。 */
+  thinking_levels?: string[];
+  /** 新建会话时默认选中的档位（必须在 thinking_levels 内）；supports_thinking=false 时为 null */
+  default_thinking_level?: string | null;
   /** 模型是否支持多模态读图（前端据此控制多模态 Chip 显隐） */
   supports_multimodal?: boolean;
   /** 模型最大上下文长度（tokens，来自后端 config/long_context_models.json）；null 表示未声明 */
@@ -102,12 +107,14 @@ export const fallbackChatModels: ChatModelItem[] = [
     label: "deepseek-reasoner",
     provider: "deepseek",
     supports_thinking: true,
+    thinking_levels: ["off", "low", "medium", "high"],
+    default_thinking_level: "medium",
   },
   { id: "anthropic/claude-3-5-sonnet", label: "claude-3-5-sonnet", provider: "anthropic" },
   { id: "qwen/qwen-plus", label: "qwen-plus", provider: "qwen" },
   {
-    id: "litellm_proxy/qwen3.6-flash",
-    label: "qwen3.6-flash",
+    id: "litellm_proxy/qwen3.7-flash",
+    label: "qwen3.7-flash",
     provider: "litellm_proxy",
     supports_multimodal: true,
   },

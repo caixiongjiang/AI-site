@@ -121,6 +121,9 @@ export interface ChatSessionInfo {
    */
   model?: string | null;
   mode: string;
+  /** 思考强度档位（pi 标准 7 档：off/minimal/low/medium/high/xhigh/max） */
+  thinking_level?: string | null;
+  /** [兼容] 是否启用思考链；由 thinking_level 派生（!= "off"），旧客户端读它 */
   enable_thinking: boolean;
   enable_multimodal?: boolean;
   system_prompt?: string | null;
@@ -153,7 +156,8 @@ export interface ChatSessionCreateRequest {
   model?: string | null;
   /** 会话交互模式（agent / plan 等）；默认 agent */
   mode?: string;
-  enable_thinking?: boolean;
+  /** 思考强度档位（off/minimal/low/medium/high/xhigh/max）；默认 off；不支持思考的模型忽略 */
+  thinking_level?: string;
   system_prompt?: string | null;
 }
 
@@ -190,7 +194,8 @@ export interface ChatRequestPayload {
   query: string;
   /** 会话交互模式（agent / plan 等）；不传/null 表示沿用 session 默认 */
   mode?: string | null;
-  enable_thinking?: boolean | null;
+  /** 思考强度档位（off/minimal/low/medium/high/xhigh/max）；不传/null 沿用 session 默认 */
+  thinking_level?: string | null;
   enable_multimodal?: boolean | null;
   model_preset?: string | null;
   /**
