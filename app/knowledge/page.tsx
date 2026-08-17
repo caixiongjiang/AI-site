@@ -28,6 +28,10 @@ import { KnowledgeChatPanel } from "@/components/knowledge/KnowledgeChatPanel";
 import { FolderTree } from "@/components/knowledge/FolderTree";
 import { FileIcon } from "@/components/knowledge/FileIcon";
 import {
+  UploadProgressCard,
+  type UploadState,
+} from "@/components/knowledge/UploadProgressCard";
+import {
   FolderInfo,
   KnowledgeBaseInfo,
   KnowledgeFile,
@@ -78,13 +82,6 @@ type ConfirmAction =
 interface KnowledgeMetric {
   fileCount: number;
   lastUpdated?: string;
-}
-
-interface UploadState {
-  totalFiles: number;
-  fileNames: string[];
-  progress: number;
-  phase: "uploading" | "indexing";
 }
 
 function buildMetrics(files: KnowledgeFile[]): KnowledgeMetric {
@@ -908,8 +905,35 @@ function KnowledgeWorkspace() {
     if (!uploadState || uploadState.phase !== "indexing") return;
     if (files.length === 0) return;
     if (files.some(isFileIndexing)) return;
-    setUploadState(null);
-  }, [files, uploadState]);
+    setUploadState((current) =>
+      current ? { ...current, phase: "completed" } : null
+    );
+    const timer = setTimeout(() => {
+      setUploadState(null);
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [files, uploadState?.phase]);
+
+  useEffect(() => {
+    if (
+      !uploadState ||
+      (uploadState.phase !== "uploading" && uploadState.phase !== "indexing")
+    ) {
+      return;
+    }
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue =
+        "文件正在上传或构建中，离开页面将导致传输中断。确认离开吗？";
+      return event.returnValue;
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [uploadState]);
 
   const handleUploadClick = (targetFolderId: string | null = null) => {
     if (!selectedKbId) return;
@@ -926,24 +950,34 @@ function KnowledgeWorkspace() {
     const targetFolderId = uploadTargetFolderRef.current;
     uploadTargetFolderRef.current = null;
 
+    const totalBytes = fileList.reduce((sum, file) => sum + file.size, 0);
+
     try {
-      setIsBusy("upload");
       setUploadState({
         totalFiles: fileList.length,
         fileNames: fileList.map((file) => file.name),
         progress: 0,
         phase: "uploading",
+        loaded: 0,
+        total: totalBytes,
+        speed: 0,
+        estimatedSeconds: 0,
       });
+
       const uploaded = await uploadKnowledgeFiles({
         files: fileList,
         knowledge_base_id: selectedKbId,
         folder_id: targetFolderId,
-        onUploadProgress: (progress) => {
+        onUploadProgress: (progressEvent) => {
           setUploadState((current) =>
             current
               ? {
                   ...current,
-                  progress,
+                  progress: progressEvent.progress,
+                  loaded: progressEvent.loaded,
+                  total: progressEvent.total,
+                  speed: progressEvent.speed,
+                  estimatedSeconds: progressEvent.estimatedSeconds,
                   phase: "uploading",
                 }
               : current
@@ -952,29 +986,55 @@ function KnowledgeWorkspace() {
       });
 
       if (uploaded.length > 0) {
-        setUploadState({
-          totalFiles: uploaded.length,
-          fileNames: uploaded.map((file) => file.file_name),
-          progress: 1,
-          phase: "indexing",
-        });
+        setUploadState((current) =>
+          current
+            ? {
+                ...current,
+                totalFiles: uploaded.length,
+                fileNames: uploaded.map((file) => file.file_name),
+                progress: 1,
+                phase: "indexing",
+              }
+            : {
+                totalFiles: uploaded.length,
+                fileNames: uploaded.map((file) => file.file_name),
+                progress: 1,
+                phase: "indexing",
+              }
+        );
+
         await buildKnowledgeIndex({
           knowledge_base_id: selectedKbId,
           file_ids: uploaded.map((file) => file.file_id),
         });
+
+        await loadKnowledgeBaseWorkspace(selectedKbId);
+        setNotice(`已上传 ${uploaded.length} 个文件，后台正在处理中。`);
       } else {
         setUploadState(null);
       }
-
-      await loadKnowledgeBaseWorkspace(selectedKbId);
-      setNotice(`已上传 ${uploaded.length} 个文件，系统正在处理。`);
     } catch (error) {
-      setUploadState(null);
+      setUploadState((current) =>
+        current
+          ? {
+              ...current,
+              phase: "error",
+              errorMessage:
+                error instanceof Error ? error.message : "上传失败",
+            }
+          : {
+              totalFiles: fileList.length,
+              fileNames: fileList.map((file) => file.name),
+              progress: 0,
+              phase: "error",
+              errorMessage:
+                error instanceof Error ? error.message : "上传失败",
+            }
+      );
       setNotice(
         error instanceof Error ? `上传失败：${error.message}` : "上传失败"
       );
     } finally {
-      setIsBusy(null);
       event.target.value = "";
     }
   };
@@ -1591,6 +1651,11 @@ function KnowledgeWorkspace() {
           </div>
         </div>
       ) : null}
+
+      <UploadProgressCard
+        uploadState={uploadState}
+        onClose={() => setUploadState(null)}
+      />
     </>
   );
 }

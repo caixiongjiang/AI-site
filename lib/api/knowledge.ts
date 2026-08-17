@@ -79,13 +79,21 @@ function buildHeaders(init?: RequestInit): HeadersInit {
   };
 }
 
+export interface UploadProgressEvent {
+  progress: number;
+  loaded: number;
+  total: number;
+  speed: number;
+  estimatedSeconds: number;
+}
+
 async function requestJsonWithUploadProgress<T>(
   path: string,
   init: {
     method: string;
     body: FormData;
     headers?: HeadersInit;
-    onUploadProgress?: (progress: number) => void;
+    onUploadProgress?: (event: UploadProgressEvent) => void;
   }
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -104,13 +112,58 @@ async function requestJsonWithUploadProgress<T>(
       }
     });
 
+    let startTime = 0;
+    let lastTime = 0;
+    let lastLoaded = 0;
+    let smoothedSpeed = 0;
+    let totalBytes = 0;
+
+    xhr.upload.onloadstart = () => {
+      startTime = performance.now();
+      lastTime = startTime;
+      lastLoaded = 0;
+      smoothedSpeed = 0;
+    };
+
     xhr.upload.onprogress = (event) => {
-      if (!init.onUploadProgress || !event.lengthComputable) return;
-      init.onUploadProgress(event.total > 0 ? event.loaded / event.total : 0);
+      if (!init.onUploadProgress) return;
+
+      const now = performance.now();
+      if (!startTime) {
+        startTime = now;
+        lastTime = now;
+      }
+
+      const loaded = event.loaded;
+      const total = event.lengthComputable ? event.total : loaded;
+      totalBytes = total;
+      const progress = total > 0 ? Math.min(1, loaded / total) : 0;
+
+      const timeDelta = (now - lastTime) / 1000;
+      if (timeDelta >= 0.25) {
+        const loadedDelta = loaded - lastLoaded;
+        const currentSpeed = timeDelta > 0 ? loadedDelta / timeDelta : 0;
+        smoothedSpeed = smoothedSpeed === 0 ? currentSpeed : smoothedSpeed * 0.7 + currentSpeed * 0.3;
+        lastTime = now;
+        lastLoaded = loaded;
+      }
+
+      const totalElapsed = (now - startTime) / 1000;
+      const effectiveSpeed = smoothedSpeed > 0 ? smoothedSpeed : (totalElapsed > 0 ? loaded / totalElapsed : 0);
+      const remainingBytes = Math.max(0, total - loaded);
+      const estimatedSeconds = effectiveSpeed > 0 ? Math.round(remainingBytes / effectiveSpeed) : 0;
+
+      init.onUploadProgress({
+        progress,
+        loaded,
+        total,
+        speed: effectiveSpeed,
+        estimatedSeconds,
+      });
     };
 
     xhr.onerror = () => {
-      reject(new Error("知识库上传失败"));
+      reject(new Error("知识库上传失败，请检查网络连接"));
     };
 
     xhr.onload = () => {
@@ -132,7 +185,13 @@ async function requestJsonWithUploadProgress<T>(
           return;
         }
 
-        init.onUploadProgress?.(1);
+        init.onUploadProgress?.({
+          progress: 1,
+          loaded: totalBytes || 1,
+          total: totalBytes || 1,
+          speed: 0,
+          estimatedSeconds: 0,
+        });
         resolve(payload?.data as T);
       } catch (error) {
         reject(
@@ -322,7 +381,7 @@ export async function uploadKnowledgeFiles(input: {
   files: File[];
   knowledge_base_id: string;
   folder_id?: string | null;
-  onUploadProgress?: (progress: number) => void;
+  onUploadProgress?: (progress: UploadProgressEvent) => void;
 }): Promise<FileUploadResponse[]> {
   if (input.files.length === 1) {
     const formData = new FormData();
