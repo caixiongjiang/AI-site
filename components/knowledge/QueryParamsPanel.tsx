@@ -81,6 +81,7 @@ const HANDLED_TOP_LEVEL = new Set([
   "chunk_type",
   "route_plan",
   "direct_answer",
+  "qa_pinned",
 ]);
 
 function paramLabel(key: string): string {

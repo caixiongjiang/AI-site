@@ -384,8 +384,7 @@ function ToolCallRow({ tc, onViewSearchResults }: { tc: ToolCallRecord; onViewSe
     // 完成态：显示命中数量 + 查看按钮
     if (!inflight && tc.result_brief) {
       const hasChunks = tc.retrieval_chunks && tc.retrieval_chunks.length > 0;
-      // 直答短路场景下 chunks 为空，但 route_plan / recall_stats 仍有展示价值，
-      // 此时也允许打开「全部来源」侧栏查看路由计划与召回链路。
+      // 无 chunk 预览时，只要有路由计划或召回统计，仍允许打开「全部来源」。
       const hasRoutePlan = !!(
         tc.retrieval_params && (tc.retrieval_params as Record<string, unknown>).route_plan
       );
@@ -736,25 +735,41 @@ function RetrievalChip({
   );
 }
 
-/** 直答短路来源块：展示 qa_dense 高置信命中的 atomic_qa 来源信息 */
+/** 置顶问答：展示 qa_dense 高置信命中的 atomic_qa（不短路其它路） */
 function DirectAnswerBlock({ direct }: { direct: Record<string, unknown> }) {
   const qaId = typeof direct.qa_id === "string" ? direct.qa_id : null;
   const score = typeof direct.score === "number" ? direct.score : null;
+  const question = typeof direct.question === "string" ? direct.question.trim() : "";
+  const answer = typeof direct.answer === "string" ? direct.answer.trim() : "";
   const sourceChunkIds = Array.isArray(direct.source_chunk_ids)
     ? (direct.source_chunk_ids as unknown[]).filter(
         (id): id is string => typeof id === "string",
       )
     : [];
-  if (!qaId && score === null && sourceChunkIds.length === 0) return null;
+  if (!qaId && score === null && sourceChunkIds.length === 0 && !question && !answer) {
+    return null;
+  }
   return (
-    <div className="border-b border-amber-100 bg-amber-50/50 px-4 py-3 text-[12px]">
-      <div className="mb-1.5 flex items-center gap-1.5 text-amber-800">
+    <div className="border-b border-emerald-100 bg-emerald-50/50 px-4 py-3 text-[12px]">
+      <div className="mb-1.5 flex items-center gap-1.5 text-emerald-800">
         <Sparkles className="h-3.5 w-3.5 shrink-0" />
-        <span className="font-medium">直答来源</span>
-        <span className="text-[11px] text-amber-700/80">qa_dense 高置信命中</span>
+        <span className="font-medium">置顶问答</span>
+        <span className="text-[11px] text-emerald-700/80">
+          qa_dense 高置信命中，对齐 / 融合 / rerank 仍已执行
+        </span>
       </div>
-      {qaId ? (
+      {question ? (
         <div className="text-muted-foreground">
+          Q: <span className="text-foreground">{question}</span>
+        </div>
+      ) : null}
+      {answer ? (
+        <div className="mt-0.5 text-muted-foreground">
+          A: <span className="text-foreground">{answer}</span>
+        </div>
+      ) : null}
+      {qaId ? (
+        <div className="mt-1 text-muted-foreground">
           atomic_qa: <span className="font-mono text-foreground">{qaId}</span>
         </div>
       ) : null}
@@ -770,7 +785,7 @@ function DirectAnswerBlock({ direct }: { direct: Record<string, unknown> }) {
             {sourceChunkIds.map((id) => (
               <span
                 key={id}
-                className="rounded bg-white px-1.5 py-0.5 font-mono text-[10px] text-gray-600 ring-1 ring-amber-200"
+                className="rounded bg-white px-1.5 py-0.5 font-mono text-[10px] text-gray-600 ring-1 ring-emerald-200"
                 title={id}
               >
                 {id.length > 16 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id}

@@ -31,16 +31,18 @@ function bezier(x1: number, y1: number, x2: number, y2: number): string {
   return `M ${x1},${y1} C ${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`;
 }
 
+function isQaPinned(stats: RecallStats): boolean {
+  return Boolean(stats.qa_pinned);
+}
+
+function recallPathBadge(stats: RecallStats): string {
+  const n = `${stats.routes.length} 路`;
+  return isQaPinned(stats) ? `QA 置顶 · ${n}` : n;
+}
+
 export function RecallFlowChart({ stats, magnified = false }: { stats: RecallStats; magnified?: boolean }) {
   const [selected, setSelected] = useState<string | null>(null);
-
-  if (stats.short_circuited) {
-    return (
-      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-amber-700">
-        命中直答短路：qa_dense 高置信命中，已跳过对齐 / 融合 / rerank，直接返回答案。
-      </div>
-    );
-  }
+  const qaPinned = isQaPinned(stats);
 
   const routes = stats.routes;
   const n = routes.length;
@@ -103,9 +105,14 @@ export function RecallFlowChart({ stats, magnified = false }: { stats: RecallSta
         {renderNodes(
           routes, recallNodes, fuseNode, rerankNode, dedupNode, dropNode,
           dedupCount, thresholdDropped, stats.fused_count, stats.rerank_count,
-          selected, setSelected,
+          selected, setSelected, qaPinned,
         )}
       </svg>
+      {qaPinned ? (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-[11px] leading-relaxed text-emerald-800">
+          QA 置顶：qa_dense 高置信命中，已把问答与依据原文钉在结果最前；对齐 / 融合 / rerank 仍已执行，依据 chunk 未进精排。
+        </div>
+      ) : null}
       <RerankAttributionPanel stats={stats} selected={selected} setSelected={setSelected} />
       <ChunkListPanel selected={selected} chunks={chunkList} stats={stats} magnified={magnified} />
     </div>
@@ -275,6 +282,7 @@ function renderNodes(
   rerankCount: number,
   selected: string | null,
   setSelected: (s: string | null) => void,
+  qaPinned: boolean,
 ) {
   const nodes: ReactNode[] = [];
   const sel = (k: string) => selected === k;
@@ -285,13 +293,14 @@ function renderNodes(
     const rn = recallNodes[i];
     const ry = rn.y + rn.h / 2;
     const isSel = sel(rk);
+    const isPinnedRoute = qaPinned && r.route === "qa_dense";
     nodes.push(
       <g key={`rn-${i}`} onClick={() => setSelected(isSel ? null : rk)} style={{ cursor: "pointer" }}>
         <rect
           x={rn.x} y={rn.y} width={rn.w} height={rn.h} rx={9}
           fill={isSel ? "#ecfdf5" : "#ffffff"}
-          stroke={isSel ? COLOR_PRIMARY : "#e5e7eb"}
-          strokeWidth={isSel ? 1.8 : 1}
+          stroke={isSel || isPinnedRoute ? COLOR_PRIMARY : "#e5e7eb"}
+          strokeWidth={isSel || isPinnedRoute ? 1.8 : 1}
           filter={isSel ? "url(#nodeGlow)" : undefined}
         />
         <text x={rn.x + 10} y={ry - 7} fontSize={11} fontWeight={600} fill="#1A1A1A" className="font-mono">
@@ -299,6 +308,7 @@ function renderNodes(
         </text>
         <text x={rn.x + 10} y={ry + 9} fontSize={10} fill="#6B7280">
           {r.execution_time_ms ? `${Math.round(r.execution_time_ms)}ms · ` : ""}召回 {r.recalled_count}
+          {isPinnedRoute ? " · 置顶" : ""}
         </text>
       </g>,
     );
@@ -477,7 +487,7 @@ function RecallFlowModal({
             <Workflow className="h-4 w-4 text-primary" />
             <span className="text-sm font-semibold text-foreground">召回链路</span>
             <span className="text-[11px] text-muted-foreground">
-              {stats.short_circuited ? "直答短路" : `${stats.routes.length} 路`}
+              {recallPathBadge(stats)}
             </span>
           </div>
           <button
@@ -514,7 +524,7 @@ export function RecallPathSection({ stats }: { stats: RecallStats }) {
           <Workflow className="h-3.5 w-3.5 shrink-0 text-primary" />
           <span className="text-[13px] font-medium text-foreground">召回链路</span>
           <span className="ml-auto text-[11px] text-muted-foreground">
-            {stats.short_circuited ? "直答短路" : `${stats.routes.length} 路`}
+            {recallPathBadge(stats)}
           </span>
         </button>
         <button
