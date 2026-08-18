@@ -64,6 +64,10 @@ export function ContextIndicator({
     ];
   }, [report]);
 
+  const visibleSegments = useMemo(() => {
+    return segments.filter((s) => s.value > 0);
+  }, [segments]);
+
   const nearLimit =
     !!report && report.will_compact_at > 0 && report.used_tokens >= report.will_compact_at;
 
@@ -130,19 +134,17 @@ export function ContextIndicator({
 
           {/* 分段用量条：段序与下方图例一致 */}
           <div className="mb-3 flex h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
-            {segments
-              .filter((s) => s.value > 0)
-              .map((s) => (
-                <span
-                  key={s.key}
-                  style={{ width: `${(s.value / denom) * 100}%`, backgroundColor: s.color }}
-                  title={`${s.label} ${formatTokens(s.value)}`}
-                />
-              ))}
+            {visibleSegments.map((s) => (
+              <span
+                key={s.key}
+                style={{ width: `${(s.value / denom) * 100}%`, backgroundColor: s.color }}
+                title={`${s.label} ${formatTokens(s.value)}`}
+              />
+            ))}
           </div>
 
           <div className="space-y-1">
-            {segments.map((s) => (
+            {visibleSegments.map((s) => (
               <div key={s.key} className="flex items-center justify-between">
                 <span className="flex items-center gap-1.5 text-foreground">
                   <span
