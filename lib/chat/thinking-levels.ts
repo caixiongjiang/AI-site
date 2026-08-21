@@ -42,6 +42,24 @@ export const THINKING_LEVEL_DESCS: Record<string, string> = {
   max: "最高强度思考（最耗时）",
 };
 
+/** 模型只支持思考开关（off + 恰好一个开档，通常是 medium）。 */
+export function isSwitchOnlyThinking(levels?: string[] | null): boolean {
+  const list = levels ?? [];
+  const onLevels = list.filter((l) => l && l !== "off");
+  return list.includes("off") && onLevels.length === 1;
+}
+
+/** 模型支持思考强度（至少两个非 off 档）。 */
+export function isEffortThinking(levels?: string[] | null): boolean {
+  const list = levels ?? [];
+  return list.filter((l) => l && l !== "off").length > 1;
+}
+
+/** 开关模型的「开」档；强度模型返回第一个非 off 档。 */
+export function getOnThinkingLevel(levels?: string[] | null): string {
+  return (levels ?? []).find((l) => l && l !== "off") || "medium";
+}
+
 /** 给定模型支持的档位列表与当前档位，返回归位后的合法档位（与后端 clamp 一致）。 */
 export function clampThinkingLevel(
   supported: string[] | undefined,
