@@ -3463,15 +3463,18 @@ export const KnowledgeChatPanel = ({
     // 新一轮：发出后把这条用户消息滚动到视口顶部，而不是贴底
     isAtBottomRef.current = false;
     pendingPinRef.current = true;
-    // 思考档位：settings.thinkingLevel 已在选模型时按 thinking_levels 钳位；
-    // 这里再兜底一次——若当前模型不支持该档位则降级为 "off"。
+    // 思考档位：按模型支持列表归位（medium → DeepSeek 的 high），
+    // 不要因为 includes 没命中就硬降成 off，否则 Model Lake 下开关/强度会失效。
     const resolvedModel =
       models.find((m) => m.id === settings.model) ?? models[0];
-    const effectiveThinkingLevel = resolvedModel?.thinking_levels?.includes(
+    const clampedThinkingLevel = clampThinkingLevel(
+      resolvedModel?.thinking_levels,
       settings.thinkingLevel,
-    )
-      ? settings.thinkingLevel
-      : "off";
+    );
+    const effectiveThinkingLevel =
+      clampedThinkingLevel === "off" && settings.thinkingLevel !== "off"
+        ? settings.thinkingLevel
+        : clampedThinkingLevel;
     const effectiveMultimodal = resolvedModel?.supports_multimodal === true;
     await send(content, {
       mode: modeFromInteraction(settings.interactionMode),
