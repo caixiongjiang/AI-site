@@ -1,9 +1,11 @@
 FROM node:22-alpine AS base
+RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 FROM base AS deps
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm config set registry https://registry.npmmirror.com \
+  && (npm ci --prefer-offline --no-audit || npm install --registry=https://registry.npmmirror.com)
 
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
