@@ -4,6 +4,7 @@ const skillServiceUrl =
 
 const nextConfig = {
   reactStrictMode: true,
+  output: "standalone",
   turbopack: {},
   allowedDevOrigins: ["192.168.35.11"],
   async rewrites() {

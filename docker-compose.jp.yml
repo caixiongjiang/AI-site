@@ -1,0 +1,11 @@
+services:
+  ai-site:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-site-jp
+    restart: unless-stopped
+    ports:
+      - "4001:3000"
+    env_file:
+      - .env.jp

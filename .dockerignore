@@ -1,0 +1,10 @@
+node_modules
+.next
+.git
+.cursor
+.idea
+.vscode
+*.md
+.env.local
+.env.production
+.env*.local
