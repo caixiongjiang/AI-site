@@ -1,0 +1,104 @@
+name: Bug
+description: 页面展示、交互、路由或前端请求异常
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请尽量带上页面路径、截图和 Network 里的接口信息。若接口本身返回错误，请改到 AKS 或 skill_service 提。
+
+  - type: textarea
+    id: what
+    attributes:
+      label: 现象
+      description: 实际看到了什么
+      placeholder: 例如：对话引用 chip 点击后 PDF 没有跳页，也没有高亮框
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期
+      description: 应该怎样
+      placeholder: 例如：跳转到对应页，并按 bbox 叠加高亮框
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 涉及页面 / 能力
+      options:
+        - 知识库工作区
+        - 文件预览 / PDF 渲染
+        - bbox 溯源高亮
+        - 知识库对话
+        - 技能管理
+        - 登录 / Logto
+        - 布局 / 导航
+        - 其它
+    validations:
+      required: true
+
+  - type: input
+    id: page
+    attributes:
+      label: 页面路径
+      description: 浏览器地址栏路径
+      placeholder: /knowledge/file/abc123
+
+  - type: input
+    id: endpoint
+    attributes:
+      label: 相关接口
+      description: 若有失败请求，填写 METHOD + path
+      placeholder: GET /api/v1/knowledge/chunk/xxx/position
+
+  - type: input
+    id: status
+    attributes:
+      label: HTTP 状态码
+      placeholder: 200（数据对，但前端画错）
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 证据
+      description: 截图、响应摘要或浏览器控制台报错
+      placeholder: |
+        截图：
+        响应：
+        控制台：
+
+  - type: input
+    id: env
+    attributes:
+      label: 环境
+      description: 分支、浏览器、本地或部署环境
+      placeholder: 分支 main，Chrome，本地 :4001，AKS :8000
+
+  - type: dropdown
+    id: repo
+    attributes:
+      label: 初步判断仓库
+      options:
+        - AI-site（本仓库）
+        - agentic_knowledge_system
+        - skill_service
+        - 尚未确认
+      default: 0
+    validations:
+      required: true

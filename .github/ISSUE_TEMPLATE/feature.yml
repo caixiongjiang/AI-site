@@ -1,0 +1,61 @@
+name: 功能需求
+description: 新增或增强前端页面与交互
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        说清要解决的问题和不做什么。若能力主要在 AKS 或 skill_service，请改到对应仓库提。
+
+  - type: textarea
+    id: background
+    attributes:
+      label: 背景
+      description: 为什么需要这个能力
+    validations:
+      required: true
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: 目标
+      description: 做完之后应该能怎样
+    validations:
+      required: true
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: 不做什么
+      description: 明确排除的范围，避免范围蔓延
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 涉及页面 / 能力
+      options:
+        - 知识库工作区
+        - 文件预览 / PDF 渲染
+        - bbox 溯源高亮
+        - 知识库对话
+        - 技能管理
+        - 登录 / Logto
+        - 布局 / 导航
+        - 其它
+    validations:
+      required: true
+
+  - type: dropdown
+    id: repo
+    attributes:
+      label: 涉及仓库
+      options:
+        - AI-site（本仓库）
+        - agentic_knowledge_system
+        - skill_service
+        - 多个仓库
+        - 尚未确认
+      default: 0
+    validations:
+      required: true
