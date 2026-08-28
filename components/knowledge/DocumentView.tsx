@@ -28,6 +28,14 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 
 const DEFAULT_MINERU_COORD_RANGE = 1000;
 
+/** 稳定引用，避免 Document 因 options 新对象而反复 getDocument */
+const PDF_DOCUMENT_OPTIONS = {
+  disableRange: false,
+  disableStream: false,
+  // 打开时不要在后台把剩余字节预取完；按页 Range 即可
+  disableAutoFetch: true,
+} as const;
+
 interface DocumentViewProps {
   file: KnowledgeFile;
   kbName: string;
@@ -229,11 +237,12 @@ export const DocumentView = ({
         ) : previewUrl ? (
           <Document
             file={previewUrl}
+            options={PDF_DOCUMENT_OPTIONS}
             onLoadSuccess={onDocumentLoadSuccess}
             loading={
               <div className="flex h-full items-center justify-center">
                 <Loader2 className="h-5 w-5 animate-spin text-muted" />
-                <span className="ml-2 text-sm text-muted">正在解析文档...</span>
+                <span className="ml-2 text-sm text-muted">正在加载文档...</span>
               </div>
             }
             error={
