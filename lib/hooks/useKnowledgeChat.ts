@@ -82,7 +82,7 @@ export interface UseKnowledgeChatOptions {
   /** 用户登录态（未登录时不做任何后端调用） */
   enabled: boolean;
   /**
-   * 当前用户在 FolderTree 上选中的文件夹 ID（v0.8.0 文件夹问答）。
+   * 当前用户通过文件夹「对话」按钮进入的文件夹 ID（v0.8.0 文件夹问答）。
    *
    * 切换 folder / KB 时会自动加载对应 scope 的 session 列表并恢复最近一条
    * 对话历史；不同 folder 的 session 列表彼此独立。
