@@ -110,6 +110,8 @@ interface KnowledgeChatPanelProps {
   /** 仍然兼容外层禁用 */
   disabled?: boolean;
   disabledReason?: string;
+  /** 提示横幅文案（非阻塞，仅作为状态或进度说明） */
+  noticeBanner?: string;
   /** 用户登录态（未登录时不发任何后端请求） */
   enabled?: boolean;
   /**
@@ -3022,6 +3024,7 @@ export const KnowledgeChatPanel = ({
   selectedFolderName,
   disabled = false,
   disabledReason,
+  noticeBanner,
   enabled = true,
   compact = false,
   className,
@@ -3883,6 +3886,11 @@ export const KnowledgeChatPanel = ({
                 {disabledReason ? (
                   <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
                     {disabledReason}
+                  </div>
+                ) : noticeBanner ? (
+                  <div className="mb-3 flex items-center gap-2 rounded-xl bg-blue-50/70 px-3 py-2 text-xs leading-5 text-blue-700">
+                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-500" />
+                    <span>{noticeBanner}</span>
                   </div>
                 ) : null}
 
