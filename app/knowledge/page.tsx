@@ -621,40 +621,49 @@ function KnowledgeWorkspace() {
       return "回收站内容不可直接问答，请先恢复文件或文件夹。";
     }
 
+    if (visibleFiles.length === 0) {
+      return selectedFolder
+        ? "当前文件夹下还没有文件，请先上传资料。"
+        : "当前知识库还没有文件，请先上传资料。";
+    }
+
+    return null;
+  }, [
+    activeView,
+    selectedFolder,
+    selectedKbId,
+    visibleFiles.length,
+  ]);
+
+  const chatNoticeBanner = useMemo(() => {
+    if (chatDisabledReason) return null;
+
     const hasUploadingTasks = uploadTasks.some(
       (t) => t.status === "uploading" || t.status === "waiting"
     );
     const hasIndexingTasks = uploadTasks.some((t) => t.status === "indexing");
 
     if (hasUploadingTasks) {
-      return "有文件正在上传中，上传完成并进入处理后才能开始问答。";
+      return "部分文件正在上传中，你仍可基于现有已索引文件提问；上传并索引完成后问答将更完整。";
     }
 
     if (hasIndexingTasks && indexingSummary.total === 0) {
-      return "文件已上传，正在初始化索引，请稍等再开始问答。";
+      return "新文件已上传，正在初始化索引，你仍可基于已有文件提问。";
     }
 
     if (indexingSummary.total > 0) {
-      return `当前有 ${indexingSummary.total} 个文件仍在处理中，等进度结束后再开始问答，结果会更完整。`;
+      return `当前有 ${indexingSummary.total} 个文件正在构建索引中，你可正常提问，处理完成后问答将更准确完整。`;
     }
 
-    if (visibleFiles.length === 0) {
-      return selectedFolder
-        ? "当前文件夹下还没有可问答文件，请先上传资料。"
-        : "当前知识库还没有可问答文件，请先上传资料。";
-    }
-
-    if (fileStats.indexedCount === 0) {
-      return "当前范围内还没有处理完成的文件，请等待处理结束或重新上传失败文件。";
+    if (fileStats.indexedCount === 0 && visibleFiles.length > 0) {
+      return "文件正在解析中，你可先提问，索引构建完成后结果会更丰富。";
     }
 
     return null;
   }, [
-    activeView,
+    chatDisabledReason,
     fileStats.indexedCount,
     indexingSummary.total,
-    selectedFolder,
-    selectedKbId,
     uploadTasks,
     visibleFiles.length,
   ]);
@@ -1694,6 +1703,7 @@ function KnowledgeWorkspace() {
             selectedFolderName={selectedFolder?.folder_name ?? null}
             disabled={Boolean(chatDisabledReason)}
             disabledReason={chatDisabledReason ?? undefined}
+            noticeBanner={chatNoticeBanner ?? undefined}
             enabled
             className="h-full w-full"
           />
