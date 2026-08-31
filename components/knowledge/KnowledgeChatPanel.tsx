@@ -98,11 +98,11 @@ interface KnowledgeChatPanelProps {
   knowledgeBaseId: string | null;
   knowledgeBaseName?: string;
   /**
-   * 用户在 FolderTree 上选中的文件夹 ID（v0.8.0 文件夹问答）。
+   * 用户通过文件夹行「对话」按钮进入的文件夹 ID（v0.8.0 文件夹问答）。
    * 传入后：
    *   - 「新建会话」按钮会自动用此 folder 创建 folder scope session；
    *   - active session 的 folder_id 会与之比对，决定 banner 文案。
-   * 不传 / null → 走 KB scope（与 v0.7.0 行为一致）。
+   * 不传 / null → 走 KB scope（与 v0.7.0 行为一致）。点文件夹展开不会写入此值。
    */
   selectedFolderId?: string | null;
   /** 文件夹的可读名称，仅用于 banner / 按钮文案 */

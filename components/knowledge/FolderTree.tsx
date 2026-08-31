@@ -10,6 +10,7 @@ import {
   Folder,
   FolderPlus,
   Loader2,
+  MessageSquare,
   PanelLeftOpen,
   Plus,
   RotateCcw,
@@ -30,6 +31,7 @@ interface FolderTreeProps {
   searchTerm?: string;
   canMoveFiles?: boolean;
   activeView?: "files" | "trash";
+  /** 进入该文件夹的问答会话；点文件夹行本身只展开/折叠，不切会话 */
   onSelectFolder: (id: string | null) => void;
   onOpenFile?: (file: KnowledgeFile) => void;
   onCreateFolder?: (parentFolderId: string | null) => void;
@@ -360,6 +362,7 @@ export const FolderTree = ({
     const childTasks = tasksByFolder.get(folder.folder_id) ?? [];
     const isExpanded = expandedFolders[folder.folder_id] ?? depth < 1;
     const isDragOver = dragOverFolderId === folder.folder_id && !!draggingFileId;
+    const isChatTarget = selectedFolderId === folder.folder_id;
 
     return (
       <div key={folder.folder_id}>
@@ -386,7 +389,7 @@ export const FolderTree = ({
           }}
           className={cn(
             "group flex h-8 items-center gap-2 rounded-md px-2 text-sm transition-colors",
-            isDragOver
+            isDragOver || isChatTarget
               ? "bg-primary/10 text-foreground"
               : "text-foreground/80 hover:bg-gray-100"
           )}
@@ -394,10 +397,7 @@ export const FolderTree = ({
         >
           <button
             type="button"
-            onClick={() => {
-              toggleFolder(folder.folder_id);
-              onSelectFolder(folder.folder_id);
-            }}
+            onClick={() => toggleFolder(folder.folder_id)}
             className="flex min-w-0 flex-1 items-center gap-2"
           >
             {isExpanded ? (
@@ -408,7 +408,29 @@ export const FolderTree = ({
             <Folder className="h-4 w-4 shrink-0 text-muted/60" />
             <span className="min-w-0 flex-1 truncate text-left">{folder.folder_name}</span>
           </button>
-          <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
+          <div
+            className={cn(
+              "shrink-0 items-center gap-0.5",
+              isChatTarget ? "flex" : "hidden group-hover:flex"
+            )}
+          >
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectFolder(folder.folder_id);
+              }}
+              className={cn(
+                "flex h-6 w-6 items-center justify-center rounded",
+                isChatTarget
+                  ? "text-primary"
+                  : "text-muted hover:text-foreground"
+              )}
+              title="围绕此文件夹问答"
+              aria-label="围绕此文件夹问答"
+            >
+              <MessageSquare className="h-3.5 w-3.5" />
+            </button>
             {onUploadFile ? (
               <button
                 type="button"
