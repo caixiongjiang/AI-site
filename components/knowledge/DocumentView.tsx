@@ -233,7 +233,7 @@ export const DocumentView = ({
             loading={
               <div className="flex h-full items-center justify-center">
                 <Loader2 className="h-5 w-5 animate-spin text-muted" />
-                <span className="ml-2 text-sm text-muted">正在解析文档...</span>
+                <span className="ml-2 text-sm text-muted">正在加载文档...</span>
               </div>
             }
             error={
