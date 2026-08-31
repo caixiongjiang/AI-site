@@ -198,7 +198,7 @@ function ThinkingBlock({
   if (!thinking) return null;
 
   return (
-    <div className="mb-2 rounded-xl border border-amber-200 bg-amber-50/60">
+    <div className="mb-2 rounded-xl bg-amber-50/60">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -215,7 +215,7 @@ function ThinkingBlock({
         )}
       </button>
       {open ? (
-        <div className="border-t border-amber-200/70 px-3 py-2 text-xs leading-6 text-amber-900">
+        <div className="px-3 pb-2 pt-1 text-xs leading-6 text-amber-900">
           <CitationPreviewMarkdown content={thinking} />
         </div>
       ) : null}
@@ -415,7 +415,7 @@ function ToolCallRow({
       const hasRecallStats = !!tc.recall_stats;
       const canOpenSources = hasChunks || hasRoutePlan || hasRecallStats;
       return (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 px-3 py-2 text-xs">
+        <div className="rounded-xl bg-emerald-50/50 px-3 py-2 text-xs">
           {/* 整行可点击展开/折叠（"查看"按钮除外） */}
           <div
             className="flex cursor-pointer items-center justify-between gap-2"
@@ -482,7 +482,7 @@ function ToolCallRow({
 
     // 进行中：显示检索进度
     return (
-      <div className="rounded-xl border border-emerald-300 bg-emerald-50/70 px-3 py-2 text-xs ring-1 ring-emerald-200/70">
+      <div className="rounded-xl bg-emerald-50/70 px-3 py-2 text-xs">
         <div className="flex items-center gap-1.5 text-emerald-900">
           <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-emerald-600" />
           <span className="truncate font-medium">search_knowledge_base</span>
@@ -503,10 +503,8 @@ function ToolCallRow({
     return (
       <div
         className={cn(
-          "rounded-xl border px-3 py-2 text-xs transition-colors",
-          inflight
-            ? "border-violet-300 bg-violet-50/70 ring-1 ring-violet-200/70"
-            : "border-violet-200 bg-violet-50/40",
+          "rounded-xl px-3 py-2 text-xs transition-colors",
+          inflight ? "bg-violet-50/80" : "bg-violet-50/50",
         )}
       >
         <button
@@ -578,10 +576,8 @@ function ToolCallRow({
   return (
     <div
       className={cn(
-        "rounded-xl border px-3 py-2 text-xs transition-colors",
-        inflight
-          ? "border-blue-300 bg-blue-50/70 ring-1 ring-blue-200/70"
-          : "border-blue-200 bg-blue-50/40",
+        "rounded-xl px-3 py-2 text-xs transition-colors",
+        inflight ? "bg-blue-50/80" : "bg-blue-50/50",
       )}
     >
       <button
@@ -661,12 +657,12 @@ function ReferencedDocumentsBlock({
   const docCount = new Set(citations.map(docGroupKey)).size;
 
   return (
-    <div className="mt-3 border-t border-gray-100 pt-3">
+    <div className="mt-3 pt-1">
       {onOpenAllSources ? (
         <button
           type="button"
           onClick={() => onOpenAllSources(citations)}
-          className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/5 px-3 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/10"
+          className="inline-flex items-center gap-1.5 rounded-full bg-primary/5 px-3 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/10"
         >
           <Database className="h-3 w-3" />
           全部来源 · {docCount} 篇文档 · {citations.length} 段引用
@@ -782,7 +778,7 @@ function DirectAnswerBlock({ direct }: { direct: Record<string, unknown> }) {
     return null;
   }
   return (
-    <div className="border-b border-emerald-100 bg-emerald-50/50 px-4 py-3 text-[12px]">
+    <div className="bg-emerald-50/50 px-4 py-3 text-[12px]">
       <div className="mb-1.5 flex items-center gap-1.5 text-emerald-800">
         <Sparkles className="h-3.5 w-3.5 shrink-0" />
         <span className="font-medium">置顶问答</span>
@@ -893,10 +889,10 @@ function ReferencesSidePanel({
 
   return (
     <aside
-      className="flex min-h-0 w-[min(320px,35vw)] max-w-[100vw] shrink-0 flex-col border-l border-gray-200 bg-white"
+      className="flex min-h-0 w-[min(320px,35vw)] max-w-[100vw] shrink-0 flex-col bg-gray-50/50"
       aria-label="全部来源"
     >
-      <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-4 py-3">
+      <div className="flex shrink-0 items-center justify-between px-4 py-3">
         <span className="text-sm font-semibold text-foreground">
           全部来源 · {docGroups.length} 篇文档
         </span>
@@ -1532,11 +1528,7 @@ function AssistantRoundBlock({
           </div>
         ) : (
           <div
-            className={cn(
-              "rounded-2xl bg-gray-50 px-4 py-3 text-sm leading-7 text-foreground",
-              // 中间轮样式区分：加一条左边框标识
-              isIntermediate && "border-l-2 border-primary/20 rounded-l-lg",
-            )}
+            className="rounded-2xl bg-gray-50 px-4 py-3 text-sm leading-7 text-foreground"
           >
             <div className="markdown-body prose prose-sm max-w-none text-foreground prose-pre:bg-gray-900 prose-pre:text-gray-100">
               <MarkdownAnswer content={m.content} citations={allCitations} />
@@ -1546,7 +1538,7 @@ function AssistantRoundBlock({
       ) : hasContent && collapsed ? (
         /* 折叠态：显示简短摘要 */
         <div
-          className="cursor-pointer rounded-lg border-l-2 border-gray-200 bg-gray-50/50 px-3 py-2 text-[11px] text-muted-foreground transition-colors hover:bg-gray-100"
+          className="cursor-pointer rounded-lg bg-gray-50/50 px-3 py-2 text-[11px] text-muted-foreground transition-colors hover:bg-gray-100"
           onClick={() => setCollapsed(false)}
         >
           <span className="line-clamp-1">
@@ -1915,7 +1907,7 @@ function SessionIconRail({
   onNew: () => void;
 }) {
   return (
-    <div className="hidden w-11 shrink-0 flex-col items-center gap-2 border-r border-gray-100 bg-gray-50/40 py-3 lg:flex">
+    <div className="hidden w-11 shrink-0 flex-col items-center gap-2 bg-gray-50/60 py-3 lg:flex">
       <button
         type="button"
         onClick={onNew}
@@ -1956,7 +1948,7 @@ function SessionDrawer({
   onClose: () => void;
 }) {
   return (
-    <aside className="hidden w-60 shrink-0 flex-col border-r border-gray-100 bg-gray-50/40 lg:flex">
+    <aside className="hidden w-60 shrink-0 flex-col bg-gray-50/60 lg:flex">
       <div className="flex items-center justify-between px-4 py-3">
         <span className="text-xs font-medium text-foreground">
           {scopeLabel ?? "历史会话"}
@@ -3623,7 +3615,7 @@ export const KnowledgeChatPanel = ({
   return (
     <section
       className={cn(
-        "relative flex h-full min-h-0 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm",
+        "relative flex h-full min-h-0 overflow-hidden bg-white",
         className,
       )}
     >
@@ -3656,7 +3648,7 @@ export const KnowledgeChatPanel = ({
         {/* 主体（顶栏 + 通知 + 消息流 + 输入区） */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {/* 顶部 */}
-          <div className="border-b border-gray-100">
+          <div className="bg-white">
             <div className={cn(CHAT_CONTENT_CLASS, "px-4 py-3 sm:px-5")}>
               <div className="flex items-start gap-3">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
