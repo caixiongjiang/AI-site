@@ -1549,6 +1549,7 @@ function KnowledgeWorkspace() {
                 kbListCollapsed={kbListCollapsed}
                 onExpandKbList={() => setKbListCollapsed(false)}
                 onSelectFolder={(id) => {
+                  // 仅由文件夹行上的「对话」按钮触发，展开/折叠不会切会话
                   setSelectedFolderId(id);
                 }}
                 onOpenFile={handleOpenFile}
