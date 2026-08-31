@@ -1686,7 +1686,7 @@ function KnowledgeWorkspace() {
           </div>
         </div>
 
-        <div className="relative flex min-h-0 min-w-0 overflow-hidden p-4">
+        <div className="relative flex min-h-0 min-w-0 overflow-hidden">
           <KnowledgeChatPanel
             knowledgeBaseId={selectedKbId || null}
             knowledgeBaseName={selectedKb?.knowledge_base_name}
