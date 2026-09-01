@@ -1,33 +1,29 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildKnowledgeIndex,
   createFolder,
   createKnowledgeBase,
+  deleteFile,
   deleteFolder,
   deleteKnowledgeBase,
-  emptyTrash,
   fetchFolderFiles,
   fetchFolders,
   fetchIndexProgress,
   fetchRootFiles,
   fetchKnowledgeBaseChildren,
   fetchKnowledgeBases,
-  fetchTrashFolderChildren,
-  fetchTrashFolderFiles,
-  fetchTrashItems,
   moveFile,
-  permanentlyDeleteTrashItem,
-  restoreTrashItem,
-  softDeleteFile,
   uploadSingleKnowledgeFile,
   uploadKnowledgeFiles,
 } from "@/lib/api/knowledge";
-import { KnowledgeList } from "@/components/knowledge/KnowledgeList";
+import {
+  ConfirmModal,
+  type ConfirmAction,
+} from "@/components/knowledge/ConfirmModal";
 import { KnowledgeChatPanel } from "@/components/knowledge/KnowledgeChatPanel";
-import { FolderTree } from "@/components/knowledge/FolderTree";
-import { FileIcon } from "@/components/knowledge/FileIcon";
+import { KnowledgeTree } from "@/components/knowledge/KnowledgeTree";
 import {
   UploadProgressCard,
   type UploadTaskItem,
@@ -36,49 +32,27 @@ import {
   FolderInfo,
   KnowledgeBaseInfo,
   KnowledgeFile,
-  TrashFolderChildItem,
-  TrashFolderFileItem,
-  TrashItem,
 } from "@/lib/knowledge-types";
 import { cacheKnowledgeFileView } from "@/lib/knowledge-viewer";
 import {
   AlertTriangle,
   CheckCircle2,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Folder,
   Loader2,
   LockKeyhole,
   LogIn,
-  PanelLeftOpen,
-  Trash2,
-  Undo2,
   X,
 } from "lucide-react";
-import { cn, formatBytes, formatDate } from "@/lib/utils";
+import { cn, formatDate } from "@/lib/utils";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { useAuthModal } from "@/components/auth/AuthModalProvider";
 
-type ActiveView = "files" | "trash";
-type ConfirmAction =
-  | {
-      kind: "knowledge-base";
-      title: string;
-      description: string;
-      confirmLabel: string;
-      confirmText: string;
-      dangerNote?: string;
-      onConfirm: () => Promise<void>;
-    }
-  | {
-      kind: "danger";
-      title: string;
-      description: string;
-      confirmLabel: string;
-      dangerNote?: string;
-      onConfirm: () => Promise<void>;
-    };
+/** 问答作用域：锁定到某个知识库，或该知识库下的某个文件夹 */
+interface ChatScope {
+  kbId: string;
+  kbName?: string;
+  folderId: string | null;
+  folderName?: string | null;
+}
 
 interface KnowledgeMetric {
   fileCount: number;
@@ -129,6 +103,27 @@ function isFileIndexing(file: KnowledgeFile): boolean {
   return file.index_status === "pending" || file.index_status === "processing";
 }
 
+/** 文件夹自身 + 全部后代文件夹的 id */
+function collectFolderSubtreeIds(
+  folders: FolderInfo[],
+  rootFolderId: string
+): Set<string> {
+  const ids = new Set<string>([rootFolderId]);
+  const queue = [rootFolderId];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    folders.forEach((folder) => {
+      if (folder.parent_folder_id === current && !ids.has(folder.folder_id)) {
+        ids.add(folder.folder_id);
+        queue.push(folder.folder_id);
+      }
+    });
+  }
+
+  return ids;
+}
+
 function getAverageProgress(files: KnowledgeFile[]): number {
   if (files.length === 0) return 1;
 
@@ -160,93 +155,6 @@ async function fetchKnowledgeBaseTree(): Promise<KnowledgeBaseInfo[]> {
   }
 
   return all;
-}
-
-function ConfirmModal({
-  action,
-  busy,
-  onCancel,
-}: {
-  action: ConfirmAction | null;
-  busy: boolean;
-  onCancel: () => void;
-}) {
-  const [input, setInput] = useState("");
-
-  useEffect(() => {
-    setInput("");
-  }, [action]);
-
-  if (!action) return null;
-
-  const requiresTypedConfirm = action.kind === "knowledge-base";
-  const canConfirm = requiresTypedConfirm
-    ? input.trim() === action.confirmText
-    : true;
-
-  return (
-    <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/30 px-4 backdrop-blur-sm">
-      <div className="w-full max-w-xl rounded-2xl border border-gray-200 bg-white p-6 shadow-xl">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-red-50 text-red-500">
-              <AlertTriangle className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="text-lg text-foreground">{action.title}</h2>
-              <p className="mt-2 text-sm leading-6 text-muted">{action.description}</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onCancel}
-            className="flex h-9 w-9 items-center justify-center rounded-xl border border-gray-200 text-muted transition-colors hover:text-foreground"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {action.dangerNote ? (
-          <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-            {action.dangerNote}
-          </div>
-        ) : null}
-
-        {requiresTypedConfirm ? (
-          <div className="mt-5">
-            <div className="text-xs text-muted">
-              请输入 <span className="font-medium text-foreground">{action.confirmText}</span>{" "}
-              以确认删除。
-            </div>
-            <input
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              placeholder={action.confirmText}
-              className="mt-3 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary"
-            />
-          </div>
-        ) : null}
-
-        <div className="mt-6 flex items-center justify-end gap-3">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-full border border-gray-200 px-4 py-2 text-sm text-foreground transition-colors hover:border-primary"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            disabled={!canConfirm || busy}
-            onClick={() => void action.onConfirm()}
-            className="rounded-full bg-red-500 px-4 py-2 text-sm text-white transition-colors hover:bg-red-400 disabled:cursor-not-allowed disabled:bg-red-500/40"
-          >
-            {busy ? "处理中..." : action.confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 interface InputPromptAction {
@@ -390,139 +298,28 @@ function KnowledgeGuestView() {
   );
 }
 
-function TrashItemRow({
-  item,
-  isExpanded,
-  childFolders,
-  childFiles,
-  onToggleExpand,
-  onRestore,
-  onDelete,
-}: {
-  item: TrashItem;
-  isExpanded: boolean;
-  childFolders?: TrashFolderChildItem[];
-  childFiles?: TrashFolderFileItem[];
-  onToggleExpand: (folderId: string) => void;
-  onRestore: () => void;
-  onDelete: () => void;
-}) {
-  const isFolder = item.item_type === "folder";
-
-  return (
-    <div>
-      <div
-        className="group flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted transition-colors hover:bg-gray-100 hover:text-foreground"
-        style={{ paddingLeft: 10 }}
-      >
-        {isFolder ? (
-          <button
-            type="button"
-            onClick={() => onToggleExpand(item.item_id)}
-            className="flex shrink-0 items-center"
-          >
-            {isExpanded ? (
-              <ChevronDown className="h-3.5 w-3.5 text-muted" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5 text-muted" />
-            )}
-          </button>
-        ) : null}
-        {isFolder ? (
-          <Folder className="h-4 w-4 shrink-0 text-muted/60" />
-        ) : (
-          <FileIcon fileName={item.item_name} className="h-5 w-5 shrink-0" />
-        )}
-        <span className="min-w-0 flex-1 truncate">{item.item_name}</span>
-
-        <span className="shrink-0 text-[11px] text-muted/40 group-hover:hidden">
-          {item.file_size ? formatBytes(item.file_size) : ""}
-        </span>
-        <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
-          <button
-            type="button"
-            onClick={onRestore}
-            className="flex h-6 w-6 items-center justify-center rounded text-muted hover:text-primary"
-            title="恢复"
-          >
-            <Undo2 className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            className="flex h-6 w-6 items-center justify-center rounded text-muted hover:text-red-500"
-            title="永久删除"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      </div>
-
-      {isFolder && isExpanded ? (
-        <div>
-          {!childFolders && !childFiles ? (
-            <div className="px-3 py-2 text-xs text-muted/50" style={{ paddingLeft: 30 }}>
-              加载中...
-            </div>
-          ) : (
-            <>
-              {childFolders?.map((folder) => (
-                <div
-                  key={folder.folder_id}
-                  className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted"
-                  style={{ paddingLeft: 30 }}
-                >
-                  <Folder className="h-4 w-4 shrink-0 text-muted/60" />
-                  <span className="truncate">{folder.folder_name}</span>
-                </div>
-              ))}
-              {childFiles?.map((file) => (
-                <div
-                  key={file.file_id}
-                  className="flex h-8 items-center gap-2 rounded-md px-2 text-sm text-muted"
-                  style={{ paddingLeft: 30 }}
-                >
-                  <FileIcon fileName={file.file_name} className="h-5 w-5 shrink-0" />
-                  <span className="min-w-0 flex-1 truncate">{file.file_name}</span>
-                  {file.file_size ? (
-                    <span className="shrink-0 text-[11px] text-muted/40">{formatBytes(file.file_size)}</span>
-                  ) : null}
-                </div>
-              ))}
-              {childFolders?.length === 0 && childFiles?.length === 0 ? (
-                <div className="px-3 py-2 text-xs text-muted/50" style={{ paddingLeft: 30 }}>
-                  该文件夹内没有内容
-                </div>
-              ) : null}
-            </>
-          )}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 // ---- 左侧栏可拖拽分割条 ----
-// 写入 localStorage 并在双击时回到 DEFAULT；min/max 是为了避免拖到无法操作。
-const SPLIT_STORAGE_KEY = "knowledge-workspace-left-width";
-/** 左侧管理区「知识库列表」折叠状态持久化 key（不含文件夹/文件树） */
-const KB_LIST_COLLAPSE_STORAGE_KEY = "knowledge-workspace-kb-list-collapsed";
-/** @deprecated 旧 key，读取后迁移到 KB_LIST_COLLAPSE_STORAGE_KEY */
-const COLLAPSE_STORAGE_KEY = "knowledge-workspace-left-collapsed";
-/** 默认更宽，便于文件名与列表可读（仍可拖拽 / 双击分割条恢复此默认） */
-const SPLIT_DEFAULT = 460;
-const SPLIT_MIN = 260;
-const SPLIT_MAX = 800;
-/** 收起知识库列表后，文件夹/文件树区域固定宽度（不再随分割条变化） */
-const FOLDER_TREE_ONLY_WIDTH = 300;
+// 宽度按视口比例存储：固定像素在 1280 与 2560 上的占屏差一倍，比例才稳定。
+// 未自定义时走 DEFAULT_RATIO 并封顶 DEFAULT_MAX；拖过一次后放开到 SPLIT_MAX。
+// 双击分割条清除自定义值，回到默认比例。
+const SPLIT_RATIO_STORAGE_KEY = "knowledge-workspace-left-ratio";
+/** 默认占屏 1/4 */
+const SPLIT_RATIO_DEFAULT = 0.25;
+const SPLIT_MIN = 240;
+const SPLIT_MAX = 560;
+/** 默认宽度封顶：25vw 在大屏上过宽，超过即压住，多出的宽度留给对话区 */
+const SPLIT_DEFAULT_MAX = 420;
+/** SSR / 首帧拿不到 window.innerWidth 时的兜底宽度 */
+const SPLIT_FALLBACK_WIDTH = 360;
 /** 当前选中的知识库 ID 持久化 key（刷新后保持在原知识库，而非跳回第一个） */
 const SELECTED_KB_STORAGE_KEY = "knowledge-workspace-selected-kb";
 
 function KnowledgeWorkspace() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetFolderRef = useRef<string | null>(null);
-  const [leftWidth, setLeftWidth] = useState<number>(SPLIT_DEFAULT);
-  const [kbListCollapsed, setKbListCollapsed] = useState<boolean>(false);
+  /** null = 未自定义，按 SPLIT_RATIO_DEFAULT 计算 */
+  const [leftRatio, setLeftRatio] = useState<number | null>(null);
+  const [viewportWidth, setViewportWidth] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState<string | null>(null);
@@ -531,49 +328,83 @@ function KnowledgeWorkspace() {
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseInfo[]>([]);
   const [knowledgeMetrics, setKnowledgeMetrics] = useState<Record<string, KnowledgeMetric>>({});
   const [selectedKbId, setSelectedKbId] = useState("");
-  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  /**
+   * 问答作用域，与左侧浏览位置解耦：只有知识库/文件夹行上的「对话」按钮会改变它，
+   * 点击行本身仅展开或切换浏览目标，不会打断当前会话。
+   * 自带名称，这样浏览到别的知识库后作用域标题依然正确。
+   */
+  const [chatScope, setChatScope] = useState<ChatScope | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [activeView, setActiveView] = useState<ActiveView>("files");
   const [folders, setFolders] = useState<FolderInfo[]>([]);
   const [files, setFiles] = useState<KnowledgeFile[]>([]);
-  const [trashItems, setTrashItems] = useState<TrashItem[]>([]);
   const [uploadTasks, setUploadTasks] = useState<UploadTaskItem[]>([]);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
-  const [expandedTrashFolders, setExpandedTrashFolders] = useState<Record<string, boolean>>({});
-  const [trashFolderChildren, setTrashFolderChildren] = useState<Record<string, TrashFolderChildItem[]>>({});
-  const [trashFolderFiles, setTrashFolderFiles] = useState<Record<string, TrashFolderFileItem[]>>({});
 
   const selectedKb = knowledgeBases.find(
     (kb) => kb.knowledge_base_id === selectedKbId
   );
+  /** 问答锁定的知识库与当前浏览的是同一个时，才能用已加载的文件夹/文件推导统计与禁用态 */
+  const chatScopeIsBrowsed = Boolean(chatScope) && chatScope?.kbId === selectedKbId;
+  /** 树上的「问答目标」高亮只在浏览其所属知识库时出现 */
+  const selectedFolderId = chatScopeIsBrowsed ? (chatScope?.folderId ?? null) : null;
   const selectedFolder = folders.find((folder) => folder.folder_id === selectedFolderId);
   const canMoveFiles = true;
 
-  /** 左侧总宽：展开知识库列表时用可拖拽宽度；收起后仅保留文件夹树固定宽 */
-  const effectiveLeftWidth = kbListCollapsed
-    ? FOLDER_TREE_ONLY_WIDTH
-    : leftWidth;
+  /** 把问答锁定到某个知识库（由知识库行的「对话」按钮触发） */
+  const startKbChat = useCallback((kb: KnowledgeBaseInfo) => {
+    setChatScope({
+      kbId: kb.knowledge_base_id,
+      kbName: kb.knowledge_base_name,
+      folderId: null,
+      folderName: null,
+    });
+  }, []);
+
+  /** 把问答锁定到当前浏览知识库下的某个文件夹（null 表示回到整库） */
+  const startFolderChat = useCallback(
+    (folderId: string | null) => {
+      if (!selectedKb) return;
+      const folder = folderId
+        ? folders.find((item) => item.folder_id === folderId)
+        : undefined;
+      setChatScope({
+        kbId: selectedKb.knowledge_base_id,
+        kbName: selectedKb.knowledge_base_name,
+        folderId,
+        folderName: folder?.folder_name ?? null,
+      });
+    },
+    [folders, selectedKb]
+  );
+
+  /**
+   * 删除文件夹后若问答正锁定在它（或其子孙）上，回退到整库问答。
+   * 子树在删除前算好，避免依赖删除后异步重载的 folders 造成误清。
+   */
+  const clearChatFolderIfRemoved = useCallback((removedFolderIds: Set<string>) => {
+    setChatScope((current) =>
+      current && current.folderId && removedFolderIds.has(current.folderId)
+        ? { ...current, folderId: null, folderName: null }
+        : current
+    );
+  }, []);
+
+  /** 左侧宽度：默认占屏 1/4 并封顶，用户拖过之后按其比例（上限放宽） */
+  const effectiveLeftWidth = useMemo(() => {
+    const vw = viewportWidth || 0;
+    if (!vw) return SPLIT_FALLBACK_WIDTH;
+    const cap = leftRatio === null ? SPLIT_DEFAULT_MAX : SPLIT_MAX;
+    const raw = vw * (leftRatio ?? SPLIT_RATIO_DEFAULT);
+    return Math.round(Math.min(cap, Math.max(SPLIT_MIN, raw)));
+  }, [leftRatio, viewportWidth]);
 
   const visibleFiles = useMemo(() => {
     if (!selectedFolderId) return files;
 
-    const folderIds = new Set<string>([selectedFolderId]);
-    const queue = [selectedFolderId];
-
-    while (queue.length > 0) {
-      const current = queue.shift();
-      folders.forEach((folder) => {
-        if (folder.parent_folder_id === current && !folderIds.has(folder.folder_id)) {
-          folderIds.add(folder.folder_id);
-          queue.push(folder.folder_id);
-        }
-      });
-    }
-
-    return files.filter((file) => {
-      if (!file.folder_id) return false;
-      return folderIds.has(file.folder_id);
-    });
+    const folderIds = collectFolderSubtreeIds(folders, selectedFolderId);
+    return files.filter(
+      (file) => file.folder_id && folderIds.has(file.folder_id)
+    );
   }, [files, folders, selectedFolderId]);
 
   const fileStats = useMemo(() => {
@@ -613,15 +444,12 @@ function KnowledgeWorkspace() {
   }, [indexingFiles]);
 
   const chatDisabledReason = useMemo(() => {
-    if (!selectedKbId) {
+    if (!chatScope) {
       return "先选择一个知识库，再围绕文件内容开始问答。";
     }
 
-    if (activeView === "trash") {
-      return "回收站内容不可直接问答，请先恢复文件或文件夹。";
-    }
-
-    if (visibleFiles.length === 0) {
+    // 问答锁定在别的知识库时，其文件列表尚未加载，无法判断是否为空，不做拦截
+    if (chatScopeIsBrowsed && visibleFiles.length === 0) {
       return selectedFolder
         ? "当前文件夹下还没有文件，请先上传资料。"
         : "当前知识库还没有文件，请先上传资料。";
@@ -629,9 +457,9 @@ function KnowledgeWorkspace() {
 
     return null;
   }, [
-    activeView,
+    chatScope,
+    chatScopeIsBrowsed,
     selectedFolder,
-    selectedKbId,
     visibleFiles.length,
   ]);
 
@@ -710,7 +538,6 @@ function KnowledgeWorkspace() {
       setSelectedKbId("");
       setFolders([]);
       setFiles([]);
-      setTrashItems([]);
       setNotice(
         error instanceof Error
           ? `加载知识库失败：${error.message}`
@@ -728,10 +555,6 @@ function KnowledgeWorkspace() {
       setIsBusy("sync");
       setFolders([]);
       setFiles([]);
-      setTrashItems([]);
-      setExpandedTrashFolders({});
-      setTrashFolderChildren({});
-      setTrashFolderFiles({});
 
       const nextFolders = await fetchFolders(knowledgeBaseId);
       const [rootFiles, ...filesByFolder] = await Promise.all([
@@ -748,11 +571,9 @@ function KnowledgeWorkspace() {
           )
         : [];
       const nextFiles = mergeProgress(flatFiles, progress);
-      const nextTrash = await fetchTrashItems(knowledgeBaseId);
 
       setFolders(nextFolders);
       setFiles(nextFiles);
-      setTrashItems(nextTrash);
       setKnowledgeMetrics((prev) => ({
         ...prev,
         [knowledgeBaseId]: buildMetrics(nextFiles),
@@ -761,7 +582,6 @@ function KnowledgeWorkspace() {
     } catch (error) {
       setFolders([]);
       setFiles([]);
-      setTrashItems([]);
       setKnowledgeMetrics((prev) => ({
         ...prev,
         [knowledgeBaseId]: { fileCount: 0 },
@@ -780,49 +600,30 @@ function KnowledgeWorkspace() {
     void loadKnowledgeBasesData();
   }, []);
 
-  // 启动时从 localStorage 还原左侧栏宽度（SSR 阶段保留默认值，避免 hydration warning）
+  // 视口宽度用于把比例换算成像素；SSR 阶段不读，避免 hydration warning
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sync = () => setViewportWidth(window.innerWidth);
+    sync();
+    window.addEventListener("resize", sync);
+    return () => window.removeEventListener("resize", sync);
+  }, []);
+
+  // 启动时还原用户自定义的左栏占比（没有则保持 null，走默认比例）
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      const raw = window.localStorage.getItem(SPLIT_STORAGE_KEY);
+      const raw = window.localStorage.getItem(SPLIT_RATIO_STORAGE_KEY);
       if (!raw) return;
       const value = Number(raw);
-      if (Number.isFinite(value)) {
-        setLeftWidth(Math.max(SPLIT_MIN, Math.min(SPLIT_MAX, value)));
+      if (Number.isFinite(value) && value > 0 && value < 1) {
+        setLeftRatio(value);
       }
     } catch {
-      // localStorage 不可用（隐私模式 / 配额满）→ 用默认值即可
+      // localStorage 不可用（隐私模式 / 配额满）→ 用默认比例即可
     }
   }, []);
 
-  // 启动时还原知识库列表折叠状态（兼容旧 key）
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const legacy = window.localStorage.getItem(COLLAPSE_STORAGE_KEY);
-      const current = window.localStorage.getItem(KB_LIST_COLLAPSE_STORAGE_KEY);
-      if (current !== null) {
-        setKbListCollapsed(current === "1");
-      } else if (legacy !== null) {
-        setKbListCollapsed(legacy === "1");
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  // 知识库列表折叠状态持久化
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(
-        KB_LIST_COLLAPSE_STORAGE_KEY,
-        kbListCollapsed ? "1" : "0"
-      );
-    } catch {
-      // ignore
-    }
-  }, [kbListCollapsed]);
   // 当前选中知识库持久化（刷新后保持在原知识库，而非跳回第一个）
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -839,11 +640,9 @@ function KnowledgeWorkspace() {
   useEffect(() => {
     if (!dragging) return;
     const onMove = (event: MouseEvent) => {
-      const next = Math.max(
-        SPLIT_MIN,
-        Math.min(SPLIT_MAX, event.clientX),
-      );
-      setLeftWidth(next);
+      const vw = window.innerWidth || 1;
+      const next = Math.max(SPLIT_MIN, Math.min(SPLIT_MAX, event.clientX));
+      setLeftRatio(next / vw);
     };
     const onUp = () => setDragging(false);
     document.addEventListener("mousemove", onMove);
@@ -860,15 +659,19 @@ function KnowledgeWorkspace() {
     };
   }, [dragging]);
 
-  // 宽度变化即时持久化（debounce 没必要，写入很快）
+  // 占比变化即时持久化；回到默认（null）时清掉记录
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem(SPLIT_STORAGE_KEY, String(leftWidth));
+      if (leftRatio === null) {
+        window.localStorage.removeItem(SPLIT_RATIO_STORAGE_KEY);
+      } else {
+        window.localStorage.setItem(SPLIT_RATIO_STORAGE_KEY, String(leftRatio));
+      }
     } catch {
       // ignore quota / private-mode 错误
     }
-  }, [leftWidth]);
+  }, [leftRatio]);
 
   useEffect(() => {
     if (!notice) return;
@@ -876,18 +679,40 @@ function KnowledgeWorkspace() {
     return () => clearTimeout(timer);
   }, [notice]);
 
+  // 切换浏览的知识库只重新加载目录，不动问答作用域（否则又会打断当前会话）
   useEffect(() => {
     if (!selectedKbId) {
-      setSelectedFolderId(null);
       setFolders([]);
       setFiles([]);
-      setTrashItems([]);
       return;
     }
 
-    setSelectedFolderId(null);
     void loadKnowledgeBaseWorkspace(selectedKbId);
   }, [selectedKbId]);
+
+  // 首次进入时问答默认锁定当前知识库；知识库被删除后丢弃失效的作用域
+  useEffect(() => {
+    if (knowledgeBases.length === 0) {
+      setChatScope(null);
+      return;
+    }
+    setChatScope((current) => {
+      if (
+        current &&
+        knowledgeBases.some((kb) => kb.knowledge_base_id === current.kbId)
+      ) {
+        return current;
+      }
+      if (!selectedKb) return null;
+      return {
+        kbId: selectedKb.knowledge_base_id,
+        kbName: selectedKb.knowledge_base_name,
+        folderId: null,
+        folderName: null,
+      };
+    });
+  }, [knowledgeBases, selectedKb]);
+
 
   useEffect(() => {
     if (!selectedKbId) return;
@@ -1155,9 +980,10 @@ function KnowledgeWorkspace() {
     }
   };
 
-  const handleCreateKnowledgeBase = (parentKnowledgeBaseId?: string | null) => {
+  /** 只创建顶层知识库：子知识库入口已下线，层级改由文件夹表达 */
+  const handleCreateKnowledgeBase = () => {
     setInputPrompt({
-      title: parentKnowledgeBaseId ? "新建子知识库" : "新建知识库",
+      title: "新建知识库",
       placeholder: "请输入知识库名称",
       confirmLabel: "创建",
       onConfirm: async (name) => {
@@ -1165,12 +991,11 @@ function KnowledgeWorkspace() {
           setIsBusy("kb");
           const item = await createKnowledgeBase({
             knowledge_base_name: name,
-            parent_knowledge_base_id: parentKnowledgeBaseId ?? null,
+            parent_knowledge_base_id: null,
           });
           await loadKnowledgeBasesData();
           setSelectedKbId(item.knowledge_base_id);
-          setActiveView("files");
-          setNotice(parentKnowledgeBaseId ? "子知识库已创建。" : "知识库已创建。");
+          setNotice("知识库已创建。");
         } catch (error) {
           setNotice(
             error instanceof Error ? `创建知识库失败：${error.message}` : "创建知识库失败"
@@ -1252,18 +1077,11 @@ function KnowledgeWorkspace() {
   const handleDeleteFile = async (file: KnowledgeFile) => {
     if (!selectedKbId) return;
 
-    const isFailed = file.index_status === "failed";
-
-    if (isFailed) {
+    // 索引失败的文件没有可用内容，不值得再拦一次确认
+    if (file.index_status === "failed") {
       try {
         setIsBusy("delete-file");
-        await softDeleteFile(file.file_id);
-        await permanentlyDeleteTrashItem({
-          item_type: "file",
-          item_id: file.file_id,
-          item_name: file.file_name,
-          knowledge_base_id: file.knowledge_base_id ?? selectedKbId,
-        });
+        await deleteFile(file.file_id);
         await loadKnowledgeBaseWorkspace(selectedKbId);
       } catch (error) {
         setNotice(
@@ -1277,15 +1095,16 @@ function KnowledgeWorkspace() {
 
     setConfirmAction({
       kind: "danger",
-      title: `删除文件「${file.file_name}」`,
-      description: "文件会被移入回收站，你可以稍后恢复。",
-      confirmLabel: "移入回收站",
+      title: `永久删除文件「${file.file_name}」`,
+      description:
+        "文件及其索引数据会被永久删除，无法恢复，问答将不再引用该文件的内容。",
+      confirmLabel: "永久删除",
       onConfirm: async () => {
         try {
           setIsBusy("delete-file");
-          await softDeleteFile(file.file_id);
+          await deleteFile(file.file_id);
           await loadKnowledgeBaseWorkspace(selectedKbId);
-          setNotice("文件已移入回收站，可在回收站恢复。");
+          setNotice(`文件「${file.file_name}」已永久删除。`);
         } catch (error) {
           setNotice(
             error instanceof Error ? `删除失败：${error.message}` : "删除失败"
@@ -1304,15 +1123,15 @@ function KnowledgeWorkspace() {
     const childFolders = folders.filter((f) => f.parent_folder_id === folder.folder_id);
     const childFiles = files.filter((f) => f.folder_id === folder.folder_id);
     const isEmpty = childFolders.length === 0 && childFiles.length === 0;
+    // 删除前算好子树，删除后据此判断是否要撤掉问答锁定
+    const removedFolderIds = collectFolderSubtreeIds(folders, folder.folder_id);
 
     if (isEmpty) {
       try {
         setIsBusy("delete-folder");
         await deleteFolder(folder.folder_id);
         await loadKnowledgeBaseWorkspace(selectedKbId);
-        if (selectedFolderId === folder.folder_id) {
-          setSelectedFolderId(null);
-        }
+        clearChatFolderIfRemoved(removedFolderIds);
       } catch (error) {
         setNotice(
           error instanceof Error ? `删除文件夹失败：${error.message}` : "删除文件夹失败"
@@ -1325,24 +1144,24 @@ function KnowledgeWorkspace() {
 
     setConfirmAction({
       kind: "danger",
-      title: `删除文件夹「${folder.folder_name}」`,
+      title: `永久删除文件夹「${folder.folder_name}」`,
       description:
-        "该文件夹及其子文件夹中的文件会一起移入回收站。",
-      confirmLabel: "移入回收站",
+        "该文件夹及其子文件夹中的文件会被永久删除，无法恢复，问答将不再引用这些文件的内容。",
+      confirmLabel: "永久删除",
       onConfirm: async () => {
         try {
           setIsBusy("delete-folder");
           const result = await deleteFolder(folder.folder_id);
           await loadKnowledgeBaseWorkspace(selectedKbId);
-          if (selectedFolderId === folder.folder_id) {
-            setSelectedFolderId(null);
-          }
+          clearChatFolderIfRemoved(removedFolderIds);
           setNotice(
-            `文件夹已移入回收站，共处理 ${result.deleted_folder_count} 个文件夹、${result.deleted_file_count} 个文件。`
+            `已永久删除 ${result.deleted_folder_count} 个文件夹、${result.deleted_file_count} 个文件。`
           );
         } catch (error) {
           setNotice(
-            error instanceof Error ? `删除文件夹失败：${error.message}` : "删除文件夹失败"
+            error instanceof Error
+              ? `删除文件夹失败：${error.message}`
+              : "删除文件夹失败"
           );
         } finally {
           setIsBusy(null);
@@ -1367,8 +1186,8 @@ function KnowledgeWorkspace() {
 
     const description =
       descendantIds.length > 0
-        ? `此操作不可撤销，将同时删除 ${descendantIds.length} 个子知识库。请确保所有知识库及回收站内已无文件，否则无法删除。`
-        : "此操作不可撤销。请确保知识库及回收站内已无文件，否则无法删除。";
+        ? `此操作不可撤销，将同时删除 ${descendantIds.length} 个子知识库。请确保所有知识库内已无文件，否则无法删除。`
+        : "此操作不可撤销。请确保知识库内已无文件，否则无法删除。";
 
     setConfirmAction({
       kind: "knowledge-base",
@@ -1388,84 +1207,12 @@ function KnowledgeWorkspace() {
             setFolders([]);
             setFiles([]);
           }
-          setActiveView("files");
           setNotice("知识库已删除。");
         } catch (error) {
           setNotice(
             error instanceof Error
               ? `删除知识库失败：${error.message}`
               : "删除知识库失败"
-          );
-        } finally {
-          setIsBusy(null);
-          setConfirmAction(null);
-        }
-      },
-    });
-  };
-
-  const handleRestoreTrash = async (item: TrashItem) => {
-    if (!selectedKbId) return;
-
-    try {
-      setIsBusy("restore");
-      await restoreTrashItem(item);
-      setNotice(`已恢复「${item.item_name}」。`);
-      await loadKnowledgeBaseWorkspace(selectedKbId);
-    } catch (error) {
-      setNotice(
-        error instanceof Error ? `恢复失败：${error.message}` : "恢复失败"
-      );
-    } finally {
-      setIsBusy(null);
-    }
-  };
-
-  const handleDeleteTrashItem = (item: TrashItem) => {
-    if (!selectedKbId) return;
-
-    setConfirmAction({
-      kind: "danger",
-      title: `彻底删除「${item.item_name}」`,
-      description: "该内容会从回收站永久移除，之后无法恢复。",
-      confirmLabel: "永久删除",
-      dangerNote: "请确认这个文件或文件夹已经不再需要。",
-      onConfirm: async () => {
-        try {
-          setIsBusy("delete-trash-item");
-          await permanentlyDeleteTrashItem(item);
-          await loadKnowledgeBaseWorkspace(selectedKbId);
-          setNotice(`已永久删除「${item.item_name}」。`);
-        } catch (error) {
-          setNotice(
-            error instanceof Error ? `永久删除失败：${error.message}` : "永久删除失败"
-          );
-        } finally {
-          setIsBusy(null);
-          setConfirmAction(null);
-        }
-      },
-    });
-  };
-
-  const handleEmptyTrash = () => {
-    if (!selectedKbId) return;
-
-    setConfirmAction({
-      kind: "danger",
-      title: "清空回收站",
-      description: "回收站中的所有内容都会被永久删除，之后无法恢复。",
-      confirmLabel: "清空回收站",
-      dangerNote: "建议确认没有需要恢复的文件后再执行。",
-      onConfirm: async () => {
-        try {
-          setIsBusy("empty-trash");
-          await emptyTrash();
-          await loadKnowledgeBaseWorkspace(selectedKbId);
-          setNotice("回收站已清空。");
-        } catch (error) {
-          setNotice(
-            error instanceof Error ? `清空回收站失败：${error.message}` : "清空回收站失败"
           );
         } finally {
           setIsBusy(null);
@@ -1494,150 +1241,53 @@ function KnowledgeWorkspace() {
         }
       >
         <div className="flex min-w-0 overflow-hidden">
-          <KnowledgeList
-            knowledgeBases={knowledgeBasesView}
-            selectedId={selectedKbId}
-            collapsed={kbListCollapsed}
-            onCollapse={() => setKbListCollapsed(true)}
-            onSelect={(id) => {
-              setSelectedKbId(id);
-              setSelectedFolderId(null);
-              setSearchTerm("");
-              setActiveView("files");
-            }}
-            onCreate={() => void handleCreateKnowledgeBase(null)}
-            onCreateChild={(kb) => void handleCreateKnowledgeBase(kb.knowledge_base_id)}
-            onDelete={(kb) => handleDeleteKnowledgeBase(kb)}
-          />
-
-          <div
-            className={cn(
-              "overflow-hidden",
-              kbListCollapsed ? "shrink-0" : "min-w-0 flex-1"
-            )}
-            style={
-              kbListCollapsed
-                ? { width: FOLDER_TREE_ONLY_WIDTH }
-                : undefined
-            }
-          >
-            {!selectedKbId ? (
-              <div className="relative flex h-full flex-col items-center justify-center bg-white text-sm text-muted">
-                {kbListCollapsed ? (
-                  <button
-                    type="button"
-                    onClick={() => setKbListCollapsed(false)}
-                    className="absolute left-2 top-2.5 flex h-6 w-6 items-center justify-center rounded-md text-muted transition-colors hover:bg-gray-100 hover:text-foreground"
-                    title="展开知识库管理"
-                    aria-label="展开知识库管理"
-                  >
-                    <PanelLeftOpen className="h-3.5 w-3.5" strokeWidth={1.5} />
-                  </button>
-                ) : null}
-                选择一个知识库
-              </div>
-            ) : (
-              <FolderTree
-                knowledgeBase={selectedKb}
-                folders={folders}
-                files={files}
-                uploadTasks={uploadTasks}
-                selectedFolderId={selectedFolderId}
-                searchTerm={searchTerm}
-                canMoveFiles={canMoveFiles}
-                activeView={activeView}
-                kbListCollapsed={kbListCollapsed}
-                onExpandKbList={() => setKbListCollapsed(false)}
-                onSelectFolder={(id) => {
-                  // 仅由文件夹行上的「对话」按钮触发，展开/折叠不会切会话
-                  setSelectedFolderId(id);
-                }}
-                onOpenFile={handleOpenFile}
-                onCreateFolder={handleCreateFolder}
-                onUploadFile={handleUploadClick}
-                onDeleteFolder={handleDeleteFolder}
-                onDeleteFile={handleDeleteFile}
-                onRetryFile={handleRetryFile}
-                onSearchChange={setSearchTerm}
-                onMoveFileToFolder={async (file, targetFolderId) => {
-                  try {
-                    setIsBusy("move");
-                    await moveFile(file.file_id, targetFolderId);
-                    await loadKnowledgeBaseWorkspace(selectedKbId);
-                    setNotice(`文件「${file.file_name}」已移动。`);
-                  } catch (error) {
-                    setNotice(
-                      error instanceof Error ? `移动失败：${error.message}` : "移动失败"
-                    );
-                  } finally {
-                    setIsBusy(null);
-                  }
-                }}
-                onSelectTrash={() => setActiveView("trash")}
-                trashContent={
-                  <>
-                    <div className="flex items-center justify-between border-b border-gray-200 px-3 py-2">
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setActiveView("files")}
-                          className="flex items-center gap-1 text-xs text-muted transition-colors hover:text-foreground"
-                        >
-                          <ChevronLeft className="h-3.5 w-3.5" />
-                          返回
-                        </button>
-                        <span className="text-xs font-medium text-foreground/70">回收站</span>
-                      </div>
-                      <button
-                        onClick={handleEmptyTrash}
-                        disabled={trashItems.length === 0}
-                        className="text-xs text-red-500 transition-colors hover:text-red-600 disabled:opacity-40"
-                      >
-                        清空
-                      </button>
-                    </div>
-                    <div className="flex-1 overflow-y-auto py-1">
-                      <div>
-                        {trashItems.length === 0 ? (
-                          <div className="px-3 py-4 text-center text-xs text-muted/50">暂无内容</div>
-                        ) : (
-                          trashItems.map((item) => (
-                            <TrashItemRow
-                              key={item.item_id}
-                              item={item}
-                              isExpanded={expandedTrashFolders[item.item_id] ?? false}
-                              childFolders={trashFolderChildren[item.item_id]}
-                              childFiles={trashFolderFiles[item.item_id]}
-                              onToggleExpand={async (folderId) => {
-                                const wasExpanded = expandedTrashFolders[folderId];
-                                setExpandedTrashFolders((prev) => ({
-                                  ...prev,
-                                  [folderId]: !wasExpanded,
-                                }));
-                                if (!wasExpanded && !trashFolderChildren[folderId]) {
-                                  try {
-                                    const [children, filesData] = await Promise.all([
-                                      fetchTrashFolderChildren(folderId),
-                                      fetchTrashFolderFiles(folderId),
-                                    ]);
-                                    setTrashFolderChildren((prev) => ({ ...prev, [folderId]: children }));
-                                    setTrashFolderFiles((prev) => ({ ...prev, [folderId]: filesData }));
-                                  } catch {
-                                    setNotice("加载回收站文件夹内容失败。");
-                                  }
-                                }
-                              }}
-                              onRestore={() => void handleRestoreTrash(item)}
-                              onDelete={() => handleDeleteTrashItem(item)}
-                            />
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </>
+          <div className="min-w-0 flex-1 overflow-hidden">
+            <KnowledgeTree
+              knowledgeBases={knowledgeBasesView}
+              selectedKbId={selectedKbId}
+              folders={folders}
+              files={files}
+              uploadTasks={uploadTasks}
+              selectedFolderId={selectedFolderId}
+              searchTerm={searchTerm}
+              canMoveFiles={canMoveFiles}
+              onSelectKb={(id) => {
+                // 只切换浏览目标，问答会话保持不变
+                setSelectedKbId(id);
+              }}
+              chatKbId={chatScope?.kbId ?? null}
+              onChatWithKb={(kb) => {
+                setSelectedKbId(kb.knowledge_base_id);
+                startKbChat(kb);
+              }}
+              onCreateKb={handleCreateKnowledgeBase}
+              onDeleteKb={(kb) => handleDeleteKnowledgeBase(kb)}
+              onSelectFolder={(id) => {
+                // 仅由文件夹行上的「对话」按钮触发，展开/折叠不会切会话
+                startFolderChat(id);
+              }}
+              onOpenFile={handleOpenFile}
+              onCreateFolder={handleCreateFolder}
+              onUploadFile={handleUploadClick}
+              onDeleteFolder={handleDeleteFolder}
+              onDeleteFile={handleDeleteFile}
+              onRetryFile={handleRetryFile}
+              onSearchChange={setSearchTerm}
+              onMoveFileToFolder={async (file, targetFolderId) => {
+                try {
+                  setIsBusy("move");
+                  await moveFile(file.file_id, targetFolderId);
+                  await loadKnowledgeBaseWorkspace(selectedKbId);
+                  setNotice(`文件「${file.file_name}」已移动。`);
+                } catch (error) {
+                  setNotice(
+                    error instanceof Error ? `移动失败：${error.message}` : "移动失败"
+                  );
+                } finally {
+                  setIsBusy(null);
                 }
-              />
-            )}
+              }}
+            />
           </div>
 
           <input
@@ -1650,40 +1300,24 @@ function KnowledgeWorkspace() {
           />
         </div>
 
-        {/* 可拖拽分割条：仅在 xl 及以上、且知识库列表未折叠时可用。
-            收起知识库列表时左侧为固定宽度，分割条仅作视觉分隔。 */}
+        {/* 可拖拽分割条：仅在 xl 及以上可用 */}
         <div
           className={cn(
             "group relative hidden h-full w-full xl:flex xl:items-center xl:justify-center",
-            dragging && !kbListCollapsed && "bg-primary/10"
+            dragging && "bg-primary/10"
           )}
         >
           <div
             role="separator"
             aria-orientation="vertical"
-            aria-label={
-              kbListCollapsed
-                ? "文件夹区域固定宽度"
-                : "拖动调整左侧宽度"
-            }
+            aria-label="拖动调整左侧宽度"
             onMouseDown={(event) => {
-              if (kbListCollapsed) return;
               event.preventDefault();
               setDragging(true);
             }}
-            onDoubleClick={() => {
-              if (kbListCollapsed) return;
-              setLeftWidth(SPLIT_DEFAULT);
-            }}
-            className={cn(
-              "h-full w-full",
-              kbListCollapsed ? "cursor-default" : "cursor-col-resize"
-            )}
-            title={
-              kbListCollapsed
-                ? "收起知识库时文件夹区域为固定宽度"
-                : "拖动调整宽度（双击恢复默认）"
-            }
+            onDoubleClick={() => setLeftRatio(null)}
+            className="h-full w-full cursor-col-resize"
+            title="拖动调整宽度（双击恢复默认 1/4 屏宽）"
           >
             <div
               className={cn(
@@ -1698,10 +1332,10 @@ function KnowledgeWorkspace() {
 
         <div className="relative flex min-h-0 min-w-0 overflow-hidden">
           <KnowledgeChatPanel
-            knowledgeBaseId={selectedKbId || null}
-            knowledgeBaseName={selectedKb?.knowledge_base_name}
-            selectedFolderId={selectedFolder?.folder_id ?? null}
-            selectedFolderName={selectedFolder?.folder_name ?? null}
+            knowledgeBaseId={chatScope?.kbId ?? null}
+            knowledgeBaseName={chatScope?.kbName}
+            selectedFolderId={chatScope?.folderId ?? null}
+            selectedFolderName={chatScope?.folderName ?? null}
             disabled={Boolean(chatDisabledReason)}
             disabledReason={chatDisabledReason ?? undefined}
             noticeBanner={chatNoticeBanner ?? undefined}
@@ -1733,12 +1367,10 @@ function KnowledgeWorkspace() {
           <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-5 py-3.5 shadow-xl">
             <Loader2 className="h-5 w-5 animate-spin text-primary" />
             <span className="text-sm text-foreground">
-              {isBusy === "delete-file" && "正在删除文件…"}
-              {isBusy === "delete-folder" && "正在删除文件夹…"}
+              {isBusy === "delete-file" && "正在删除文件，清理关联数据…"}
+              {isBusy === "delete-folder" && "正在删除文件夹，清理关联数据…"}
               {isBusy === "delete-kb" && "正在删除知识库…"}
-              {isBusy === "delete-trash-item" && "正在永久删除，清理关联数据…"}
-              {isBusy === "empty-trash" && "正在清空回收站，清理关联数据…"}
-              {!["delete-file", "delete-folder", "delete-kb", "delete-trash-item", "empty-trash"].includes(isBusy) && "处理中…"}
+              {!["delete-file", "delete-folder", "delete-kb"].includes(isBusy) && "处理中…"}
             </span>
           </div>
         </div>

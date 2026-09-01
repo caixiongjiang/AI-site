@@ -77,10 +77,10 @@
   - 左：知识库列表（280px）
   - 中：文件网格/文档详情
   - 右：聊天侧边栏（420px，可收起）
-- ✅ **KnowledgeList** - 知识库列表
-  - 搜索功能
-  - 选中状态
-  - 文件数量显示
+- ✅ **KnowledgeTree** - 知识库/文件夹/文件单列树
+  - 统一搜索（知识库名 + 文件夹名 + 文件名）
+  - 选中状态与文件数量显示
+  - 行内悬浮操作：上传 / 新建文件夹 / 删除
 - ✅ **FileGrid** - 文件网格视图
   - 响应式网格
   - 文件卡片（图标+名称+元信息）
@@ -167,7 +167,7 @@ AI-site/
 │   │   ├── ChatPanel.tsx       # 对话面板
 │   │   └── MountModal.tsx      # 挂载模态框
 │   └── knowledge/
-│       ├── KnowledgeList.tsx   # 知识库列表
+│       ├── KnowledgeTree.tsx   # 知识库/文件夹/文件单列树
 │       ├── FileGrid.tsx        # 文件网格
 │       ├── DocumentView.tsx    # 文档视图
 │       └── ChatSidebar.tsx     # 聊天侧边栏
