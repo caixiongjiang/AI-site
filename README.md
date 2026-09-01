@@ -25,7 +25,7 @@
 
 > 一个把 AKS 的“检索—对话—溯源”串成完整体验的 Next.js 前端。
 
-- **知识库工作区**：知识库 / 文件夹 / 文件三级管理，网格 + 详情视图，回收站恢复 / 永久删除，索引进度实时刷新。
+- **知识库工作区**：知识库 / 文件夹 / 文件单列树管理，网格 + 详情视图，删除即永久删除（同时清理索引数据），索引进度实时刷新。
 - **多格式预览**：PDF 原生渲染；Word / PPT 经后端转换 PDF 后同样用 `react-pdf` 渲染（`isPdfPreviewableFile` 统一判定），非可渲染格式降级占位。
 - **bbox 源溯源**：对话引用 → `chunk/{id}/position` 取元素 bbox → 按 0~1000 归一化坐标在对应页 canvas 上叠加高亮框，并自动跳页。
 - **流式对话**：WebSocket 流式输出，支持工具调用、引用、图片 chunk 预览、Markdown + KaTeX 渲染；带 `@文件` 提及与召回流程图。
@@ -56,7 +56,7 @@ AI-site/
 │   └── layout.tsx              # 根布局
 ├── components/
 │   ├── knowledge/              # DocumentView / KnowledgeChatPanel / RecallFlowChart /
-│   │                           # FileGrid / FolderTree / CitationChip / MarkdownAnswer / MentionComposer …
+│   │                           # FileGrid / KnowledgeTree / CitationChip / MarkdownAnswer / MentionComposer …
 │   ├── agents/                 # AgentCard / ChatPanel / document-compliance …
 │   ├── skills/                 # SkillList / SkillDetail / SkillEditor / SlashSkillMenu
 │   ├── layout/                 # AppShell / Sidebar / ProfileDrawer

@@ -3,7 +3,6 @@ import {
   ApiResponse,
   ChunkImagePreviewResponse,
   ChunkPositionResponse,
-  FileDeleteResponse,
   FileIndexStatus,
   FilePreviewResponse,
   FileProgress,
@@ -11,9 +10,6 @@ import {
   FolderInfo,
   KnowledgeBaseInfo,
   KnowledgeFile,
-  TrashFolderChildItem,
-  TrashFolderFileItem,
-  TrashItem,
 } from "@/lib/knowledge-types";
 
 interface KnowledgeBaseListResponse {
@@ -28,11 +24,6 @@ interface FolderListResponse {
 
 interface FileListResponse {
   files: KnowledgeFile[];
-  total: number;
-}
-
-interface TrashListResponse {
-  items: TrashItem[];
   total: number;
 }
 
@@ -491,50 +482,17 @@ export async function fetchIndexProgress(fileIds: string[]): Promise<FileProgres
   return data.files ?? [];
 }
 
-export async function fetchTrashItems(
-  knowledgeBaseId?: string
-): Promise<TrashItem[]> {
-  const suffix = knowledgeBaseId
-    ? `?knowledge_base_id=${encodeURIComponent(knowledgeBaseId)}`
-    : "";
-  const data = await requestJson<TrashListResponse>(
-    `/api/knowledge/trash/list${suffix}`,
-    {
-      method: "GET",
-    }
-  );
-  return data.items ?? [];
-}
-
-export async function restoreTrashItem(item: TrashItem): Promise<void> {
-  const path =
-    item.item_type === "folder"
-      ? `/api/knowledge/trash/restore/folder/${encodeURIComponent(item.item_id)}`
-      : `/api/knowledge/trash/restore/file/${encodeURIComponent(item.item_id)}`;
-  await requestJson<void>(path, { method: "POST" });
-}
-
-export async function permanentlyDeleteTrashItem(item: TrashItem): Promise<void> {
-  const path =
-    item.item_type === "folder"
-      ? `/api/knowledge/trash/folder/${encodeURIComponent(item.item_id)}`
-      : `/api/knowledge/trash/file/${encodeURIComponent(item.item_id)}`;
-  await requestJson<void>(path, { method: "DELETE" });
-}
-
-export async function emptyTrash(): Promise<void> {
-  await requestJson<void>("/api/knowledge/trash/empty", {
+/**
+ * 删除文件，不可恢复。
+ *
+ * 后端在请求内只标记删除并投递清理任务，O(1) 返回；向量 / 分块 / 对象存储
+ * 由 CleanupWorker 异步清掉，清理完成前检索侧按 document_id 排除，
+ * 所以文件对问答是立即消失的。
+ */
+export async function deleteFile(fileId: string): Promise<void> {
+  await requestJson<void>(`/api/knowledge/file/${encodeURIComponent(fileId)}`, {
     method: "DELETE",
   });
-}
-
-export async function softDeleteFile(fileId: string): Promise<FileDeleteResponse> {
-  return requestJson<FileDeleteResponse>(
-    `/api/knowledge/file/${encodeURIComponent(fileId)}`,
-    {
-      method: "DELETE",
-    }
-  );
 }
 
 export async function fetchFilePreview(
@@ -628,34 +586,3 @@ export async function renameFolder(
   );
 }
 
-interface TrashFolderChildrenResponse {
-  folder_id: string;
-  children: TrashFolderChildItem[];
-  total: number;
-}
-
-interface TrashFolderFilesResponse {
-  folder_id: string;
-  files: TrashFolderFileItem[];
-  total: number;
-}
-
-export async function fetchTrashFolderChildren(
-  folderId: string
-): Promise<TrashFolderChildItem[]> {
-  const data = await requestJson<TrashFolderChildrenResponse>(
-    `/api/knowledge/trash/folder/${encodeURIComponent(folderId)}/children`,
-    { method: "GET" }
-  );
-  return data.children ?? [];
-}
-
-export async function fetchTrashFolderFiles(
-  folderId: string
-): Promise<TrashFolderFileItem[]> {
-  const data = await requestJson<TrashFolderFilesResponse>(
-    `/api/knowledge/trash/folder/${encodeURIComponent(folderId)}/files`,
-    { method: "GET" }
-  );
-  return data.files ?? [];
-}
