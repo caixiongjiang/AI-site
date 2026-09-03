@@ -6,7 +6,8 @@
     "dev": "next dev -p 4001",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "check:tokens": "node scripts/check-tokens.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

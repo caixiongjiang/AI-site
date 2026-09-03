@@ -190,7 +190,7 @@ export const MountModal = ({ isOpen, onClose, onConfirm }: MountModalProps) => {
                       "flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded border-2 transition-all",
                       isSelected
                         ? "border-primary bg-primary"
-                        : "border-muted"
+                        : "border-muted-subtle"
                     )}
                   >
                     {isSelected && (

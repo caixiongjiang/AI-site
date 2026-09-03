@@ -40,6 +40,7 @@ import {
   Loader2,
   LockKeyhole,
   LogIn,
+  PanelLeftOpen,
   X,
 } from "lucide-react";
 import { cn, formatDate } from "@/lib/utils";
@@ -212,7 +213,7 @@ function InputModal({
               void action.onConfirm(value.trim());
             }
           }}
-          className="mt-4 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted/50 focus:border-primary focus:bg-white"
+          className="mt-4 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-subtle focus:border-primary focus:bg-white"
         />
 
         <div className="mt-5 flex items-center justify-end gap-3">
@@ -313,12 +314,21 @@ const SPLIT_DEFAULT_MAX = 420;
 const SPLIT_FALLBACK_WIDTH = 360;
 /** 当前选中的知识库 ID 持久化 key（刷新后保持在原知识库，而非跳回第一个） */
 const SELECTED_KB_STORAGE_KEY = "knowledge-workspace-selected-kb";
+/** 左栏收/展状态持久化 key */
+const LEFT_COLLAPSED_STORAGE_KEY = "knowledge-workspace-left-collapsed";
+/**
+ * 收起后保留的导轨宽度。
+ * 不收到 0：那样展开按钮只能浮在对话区上方，既要避让对话区自己的顶栏，
+ * 也让人以为面板被删掉了。留一条 44px 的轨道，收起是可逆的、位置是固定的。
+ */
+const SPLIT_RAIL_WIDTH = 44;
 
 function KnowledgeWorkspace() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetFolderRef = useRef<string | null>(null);
   /** null = 未自定义，按 SPLIT_RATIO_DEFAULT 计算 */
   const [leftRatio, setLeftRatio] = useState<number | null>(null);
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -335,10 +345,45 @@ function KnowledgeWorkspace() {
    */
   const [chatScope, setChatScope] = useState<ChatScope | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [folders, setFolders] = useState<FolderInfo[]>([]);
-  const [files, setFiles] = useState<KnowledgeFile[]>([]);
+  /**
+   * 目录内容按知识库分桶缓存。
+   *
+   * 以前只存「当前选中库」的一份，切库即整体清空——于是别的库即使还展开着，也没
+   * 有任何数据可渲染，看起来就是被强行收起了。按 kbId 分桶后，展开过的库各自留着
+   * 自己的内容，切库不再互相清除。
+   *
+   * 桶里有 key 就表示该库已加载完成，据此才能把「空库」和「还没加载」区分开。
+   */
+  const [foldersByKb, setFoldersByKb] = useState<Record<string, FolderInfo[]>>(
+    {},
+  );
+  const [filesByKb, setFilesByKb] = useState<Record<string, KnowledgeFile[]>>(
+    {},
+  );
+  /** 正在拉取目录的知识库，仅用于渲染行内的载入提示 */
+  const [loadingKbIds, setLoadingKbIds] = useState<Record<string, boolean>>({});
+  /**
+   * 同一个库的并发加载去重。
+   * 用 ref 而不是上面那份 state：切换选中库和展开库这两条触发路径可能落在同一个
+   * 提交里，此时双方读到的 state 还是旧值，只有 ref 能立即生效。
+   */
+  const loadingKbIdsRef = useRef<Set<string>>(new Set());
   const [uploadTasks, setUploadTasks] = useState<UploadTaskItem[]>([]);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
+
+  /**
+   * 当前浏览库的扁平视图。
+   * 页面级的统计、问答可用性校验、删除逻辑都只关心当前浏览的库，让它们继续读这两
+   * 个数组，就不必跟着分桶改造一遍。
+   */
+  const folders = useMemo(
+    () => foldersByKb[selectedKbId] ?? [],
+    [foldersByKb, selectedKbId],
+  );
+  const files = useMemo(
+    () => filesByKb[selectedKbId] ?? [],
+    [filesByKb, selectedKbId],
+  );
 
   const selectedKb = knowledgeBases.find(
     (kb) => kb.knowledge_base_id === selectedKbId
@@ -360,21 +405,36 @@ function KnowledgeWorkspace() {
     });
   }, []);
 
-  /** 把问答锁定到当前浏览知识库下的某个文件夹（null 表示回到整库） */
+  /** folder_id → 所属知识库；树里可以同时展开多个库，操作必须落到文件夹自己的库上 */
+  const kbIdByFolderId = useMemo(() => {
+    const next = new Map<string, string>();
+    for (const [kbId, list] of Object.entries(foldersByKb)) {
+      for (const folder of list) next.set(folder.folder_id, kbId);
+    }
+    return next;
+  }, [foldersByKb]);
+
+  /** 把问答锁定到某个文件夹（null 表示回到当前浏览知识库的整库问答） */
   const startFolderChat = useCallback(
     (folderId: string | null) => {
-      if (!selectedKb) return;
+      // 文件夹行可能来自任意一个展开着的库，作用域要跟着它的归属走，
+      // 否则会拿另一个库的 folder_id 去问答当前库
+      const kbId = folderId
+        ? (kbIdByFolderId.get(folderId) ?? selectedKbId)
+        : selectedKbId;
+      const kb = knowledgeBases.find((item) => item.knowledge_base_id === kbId);
+      if (!kb) return;
       const folder = folderId
-        ? folders.find((item) => item.folder_id === folderId)
+        ? (foldersByKb[kbId] ?? []).find((item) => item.folder_id === folderId)
         : undefined;
       setChatScope({
-        kbId: selectedKb.knowledge_base_id,
-        kbName: selectedKb.knowledge_base_name,
+        kbId: kb.knowledge_base_id,
+        kbName: kb.knowledge_base_name,
         folderId,
         folderName: folder?.folder_name ?? null,
       });
     },
-    [folders, selectedKb]
+    [foldersByKb, kbIdByFolderId, knowledgeBases, selectedKbId]
   );
 
   /**
@@ -536,8 +596,8 @@ function KnowledgeWorkspace() {
       setKnowledgeBases([]);
       setKnowledgeMetrics({});
       setSelectedKbId("");
-      setFolders([]);
-      setFiles([]);
+      setFoldersByKb({});
+      setFilesByKb({});
       setNotice(
         error instanceof Error
           ? `加载知识库失败：${error.message}`
@@ -548,19 +608,27 @@ function KnowledgeWorkspace() {
     }
   };
 
+  /**
+   * 拉取某个知识库的目录内容并写入缓存。
+   *
+   * 这里不再动 isBusy：以前每次切库都弹一层全屏遮罩，而现在切库不清空旧内容、
+   * 展开别的库也会触发加载，全屏阻塞就纯粹是噪音了。加载反馈改由 loadingKbIds
+   * 落到对应那一行上。
+   */
   const loadKnowledgeBaseWorkspace = async (knowledgeBaseId: string) => {
     if (!knowledgeBaseId) return;
+    if (loadingKbIdsRef.current.has(knowledgeBaseId)) return;
 
+    loadingKbIdsRef.current.add(knowledgeBaseId);
+    setLoadingKbIds((prev) => ({ ...prev, [knowledgeBaseId]: true }));
     try {
-      setIsBusy("sync");
-      setFolders([]);
-      setFiles([]);
-
       const nextFolders = await fetchFolders(knowledgeBaseId);
       const [rootFiles, ...filesByFolder] = await Promise.all([
         fetchRootFiles(knowledgeBaseId),
         ...nextFolders.map((folder) => fetchFolderFiles(folder.folder_id)),
       ]);
+      // knowledge_base_id 兜底补齐：多库同时可见后，文件的归属决定了它能被拖到
+      // 哪些文件夹，缺这个字段会让跨库校验失效。
       const flatFiles = [...rootFiles, ...filesByFolder.flat()].map((file) => ({
         ...file,
         knowledge_base_id: file.knowledge_base_id || knowledgeBaseId,
@@ -572,29 +640,42 @@ function KnowledgeWorkspace() {
         : [];
       const nextFiles = mergeProgress(flatFiles, progress);
 
-      setFolders(nextFolders);
-      setFiles(nextFiles);
-      setKnowledgeMetrics((prev) => ({
+      setFoldersByKb((prev) => ({
         ...prev,
-        [knowledgeBaseId]: buildMetrics(nextFiles),
+        [knowledgeBaseId]: nextFolders,
       }));
+      setFilesByKb((prev) => ({ ...prev, [knowledgeBaseId]: nextFiles }));
       setNotice(null);
     } catch (error) {
-      setFolders([]);
-      setFiles([]);
-      setKnowledgeMetrics((prev) => ({
-        ...prev,
-        [knowledgeBaseId]: { fileCount: 0 },
-      }));
+      // 写入空桶而不是留空：否则这个库会一直被当成「未加载」而反复重试
+      setFoldersByKb((prev) => ({ ...prev, [knowledgeBaseId]: [] }));
+      setFilesByKb((prev) => ({ ...prev, [knowledgeBaseId]: [] }));
       setNotice(
         error instanceof Error
           ? `同步知识库失败：${error.message}`
           : "同步知识库失败"
       );
     } finally {
-      setIsBusy(null);
+      loadingKbIdsRef.current.delete(knowledgeBaseId);
+      setLoadingKbIds((prev) => {
+        const next = { ...prev };
+        delete next[knowledgeBaseId];
+        return next;
+      });
     }
   };
+
+  /** 展开某个库时按需加载它的目录；已有缓存或正在加载则跳过 */
+  const ensureKbContents = useCallback(
+    (knowledgeBaseId: string) => {
+      if (!knowledgeBaseId) return;
+      if (foldersByKb[knowledgeBaseId] || loadingKbIds[knowledgeBaseId]) return;
+      void loadKnowledgeBaseWorkspace(knowledgeBaseId);
+    },
+    // loadKnowledgeBaseWorkspace 是每次渲染重建的普通函数，这里只依赖判定条件
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [foldersByKb, loadingKbIds],
+  );
 
   useEffect(() => {
     void loadKnowledgeBasesData();
@@ -623,6 +704,39 @@ function KnowledgeWorkspace() {
       // localStorage 不可用（隐私模式 / 配额满）→ 用默认比例即可
     }
   }, []);
+
+  // 还原上次的收/展选择。
+  // 这里不会出现「先闪一下展开态再收起」：isLoading 初始为 true，整页显示加载
+  // 文案，本 effect 早在工作台挂载之前就跑完了。
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      setLeftCollapsed(
+        window.localStorage.getItem(LEFT_COLLAPSED_STORAGE_KEY) === "1",
+      );
+    } catch {
+      // localStorage 不可用 → 保持展开
+    }
+  }, []);
+
+  /**
+   * 收/展并立即落盘。
+   * 落盘写在事件回调里而不是 useEffect：若用 effect 监听 leftCollapsed，挂载时
+   * 它会先用初始值 false 覆盖掉存储里的 "1"，再被还原 effect 纠正回来——多一次
+   * 无意义的错误写入。
+   */
+  const toggleLeftCollapsed = useCallback(() => {
+    const next = !leftCollapsed;
+    setLeftCollapsed(next);
+    try {
+      window.localStorage.setItem(
+        LEFT_COLLAPSED_STORAGE_KEY,
+        next ? "1" : "0",
+      );
+    } catch {
+      // localStorage 不可用 → 本次会话内仍然生效，只是不跨刷新
+    }
+  }, [leftCollapsed]);
 
   // 当前选中知识库持久化（刷新后保持在原知识库，而非跳回第一个）
   useEffect(() => {
@@ -679,13 +793,11 @@ function KnowledgeWorkspace() {
     return () => clearTimeout(timer);
   }, [notice]);
 
-  // 切换浏览的知识库只重新加载目录，不动问答作用域（否则又会打断当前会话）
+  // 切换浏览的知识库只重新加载目录，不动问答作用域（否则又会打断当前会话）。
+  // 这里无条件重新拉取（而非复用缓存），让当前浏览的库始终是最新的；其余库的缓存
+  // 保持原样，它们的内容不会因为这次切换而消失。
   useEffect(() => {
-    if (!selectedKbId) {
-      setFolders([]);
-      setFiles([]);
-      return;
-    }
+    if (!selectedKbId) return;
 
     void loadKnowledgeBaseWorkspace(selectedKbId);
   }, [selectedKbId]);
@@ -714,22 +826,47 @@ function KnowledgeWorkspace() {
   }, [knowledgeBases, selectedKb]);
 
 
+  // 文件数与更新时间统一从缓存派生，省掉在每个写入点手动同步统计的重复代码
   useEffect(() => {
-    if (!selectedKbId) return;
+    setKnowledgeMetrics((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [kbId, list] of Object.entries(filesByKb)) {
+        const metric = buildMetrics(list);
+        if (
+          prev[kbId]?.fileCount !== metric.fileCount ||
+          prev[kbId]?.lastUpdated !== metric.lastUpdated
+        ) {
+          next[kbId] = metric;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [filesByKb]);
 
-    const progressIds = files.filter(isFileIndexing).map((file) => file.file_id);
-    if (progressIds.length === 0) return;
+  // 索引进度轮询覆盖所有已加载的知识库：它们的文件现在可以同时展示在树里，
+  // 只盯着当前选中的那个会让别的库的进度条僵在原地。
+  useEffect(() => {
+    const pendingByKb = new Map<string, string[]>();
+    for (const [kbId, list] of Object.entries(filesByKb)) {
+      const ids = list.filter(isFileIndexing).map((file) => file.file_id);
+      if (ids.length > 0) pendingByKb.set(kbId, ids);
+    }
+    if (pendingByKb.size === 0) return;
+
+    const progressIds = [...pendingByKb.values()].flat();
 
     const timer = window.setInterval(async () => {
       try {
         const progress = await fetchIndexProgress(progressIds);
-        setFiles((current) => {
-          const nextFiles = mergeProgress(current, progress);
-          setKnowledgeMetrics((prev) => ({
-            ...prev,
-            [selectedKbId]: buildMetrics(nextFiles),
-          }));
-          return nextFiles;
+        setFilesByKb((current) => {
+          const next = { ...current };
+          for (const kbId of pendingByKb.keys()) {
+            const list = current[kbId];
+            if (list) next[kbId] = mergeProgress(list, progress);
+          }
+          return next;
         });
       } catch {
         // Ignore transient polling failures.
@@ -737,7 +874,7 @@ function KnowledgeWorkspace() {
     }, 2500);
 
     return () => window.clearInterval(timer);
-  }, [files, selectedKbId]);
+  }, [filesByKb]);
 
   const processingTaskIdsRef = useRef<Set<string>>(new Set());
 
@@ -848,15 +985,24 @@ function KnowledgeWorkspace() {
     }
   };
 
-  // 同步左侧轮询到的解析完成状态到悬浮上传卡片中
+  // 同步左侧轮询到的解析完成状态到悬浮上传卡片中。
+  // 跨所有已加载的库查找：上传过程中用户可能已经切到别的库浏览了。
+  const fileById = useMemo(() => {
+    const next = new Map<string, KnowledgeFile>();
+    for (const list of Object.values(filesByKb)) {
+      for (const file of list) next.set(file.file_id, file);
+    }
+    return next;
+  }, [filesByKb]);
+
   useEffect(() => {
-    if (files.length === 0 || uploadTasks.length === 0) return;
+    if (fileById.size === 0 || uploadTasks.length === 0) return;
 
     setUploadTasks((prev) => {
       let changed = false;
       const next = prev.map((task) => {
         if (task.status !== "indexing" || !task.fileId) return task;
-        const matchedFile = files.find((f) => f.file_id === task.fileId);
+        const matchedFile = fileById.get(task.fileId);
         if (!matchedFile) return task;
 
         if (matchedFile.index_status === "success") {
@@ -874,7 +1020,7 @@ function KnowledgeWorkspace() {
       });
       return changed ? next : prev;
     });
-  }, [files, uploadTasks.length]);
+  }, [fileById, uploadTasks.length]);
 
   // 防误触刷新拦截：只要有处于上传、排队或索引中的任务，就弹窗保护
   useEffect(() => {
@@ -1057,13 +1203,14 @@ function KnowledgeWorkspace() {
         knowledge_base_id: selectedKbId,
         file_ids: [file.file_id],
       });
-      setFiles((current) =>
-        current.map((f) =>
+      setFilesByKb((current) => ({
+        ...current,
+        [selectedKbId]: (current[selectedKbId] ?? []).map((f) =>
           f.file_id === file.file_id
             ? { ...f, index_status: "pending" as const, progress: 0 }
             : f
-        )
-      );
+        ),
+      }));
       setNotice(`文件「${file.file_name}」已重新提交处理。`);
     } catch (error) {
       setNotice(
@@ -1202,10 +1349,15 @@ function KnowledgeWorkspace() {
           setIsBusy("delete-kb");
           await deleteKnowledgeBase(kb.knowledge_base_id);
           await loadKnowledgeBasesData();
+          // 丢掉被删库（含子库）的缓存，否则它们的内容会一直留在树里
+          const dropAffected = <T,>(current: Record<string, T>) =>
+            Object.fromEntries(
+              Object.entries(current).filter(([kbId]) => !allAffectedIds.has(kbId))
+            );
+          setFoldersByKb(dropAffected);
+          setFilesByKb(dropAffected);
           if (allAffectedIds.has(selectedKbId)) {
             setSelectedKbId("");
-            setFolders([]);
-            setFiles([]);
           }
           setNotice("知识库已删除。");
         } catch (error) {
@@ -1236,17 +1388,44 @@ function KnowledgeWorkspace() {
         className="grid h-screen grid-cols-1 bg-white xl:grid-cols-[var(--knowledge-left-width)_6px_minmax(0,1fr)]"
         style={
           {
-            "--knowledge-left-width": `${effectiveLeftWidth}px`,
+            "--knowledge-left-width": `${
+              leftCollapsed ? SPLIT_RAIL_WIDTH : effectiveLeftWidth
+            }px`,
           } as React.CSSProperties
         }
       >
         <div className="flex min-w-0 overflow-hidden">
-          <div className="min-w-0 flex-1 overflow-hidden">
+          {leftCollapsed ? (
+            <div className="flex h-full w-full items-start justify-center border-r border-gray-200 py-2.5">
+              <button
+                type="button"
+                onClick={toggleLeftCollapsed}
+                aria-expanded={false}
+                className="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-gray-100 hover:text-foreground"
+                title="展开知识库管理"
+                aria-label="展开知识库管理"
+              >
+                <PanelLeftOpen className="h-4 w-4" />
+              </button>
+            </div>
+          ) : null}
+
+          {/* 收起时用 hidden 隐藏而非卸载：树的滚动位置与搜索框开合是组件内部
+              状态，卸载会让每次收/展都把它们重置掉。display:none 同时把子树移出
+              可访问性树与 tab 顺序，不会留下隐形焦点。 */}
+          <div
+            className={cn(
+              "min-w-0 flex-1 overflow-hidden",
+              leftCollapsed && "hidden",
+            )}
+          >
             <KnowledgeTree
               knowledgeBases={knowledgeBasesView}
               selectedKbId={selectedKbId}
-              folders={folders}
-              files={files}
+              foldersByKb={foldersByKb}
+              filesByKb={filesByKb}
+              loadingKbIds={loadingKbIds}
+              onRequestKbContents={ensureKbContents}
               uploadTasks={uploadTasks}
               selectedFolderId={selectedFolderId}
               searchTerm={searchTerm}
@@ -1272,12 +1451,17 @@ function KnowledgeWorkspace() {
               onDeleteFolder={handleDeleteFolder}
               onDeleteFile={handleDeleteFile}
               onRetryFile={handleRetryFile}
+              onCollapse={toggleLeftCollapsed}
               onSearchChange={setSearchTerm}
               onMoveFileToFolder={async (file, targetFolderId) => {
                 try {
                   setIsBusy("move");
                   await moveFile(file.file_id, targetFolderId);
-                  await loadKnowledgeBaseWorkspace(selectedKbId);
+                  // 刷新文件自己所属的库：树里可以同时展开多个库，被拖动的文件
+                  // 不一定来自当前浏览的那个
+                  await loadKnowledgeBaseWorkspace(
+                    file.knowledge_base_id || selectedKbId
+                  );
                   setNotice(`文件「${file.file_name}」已移动。`);
                 } catch (error) {
                   setNotice(
@@ -1300,34 +1484,38 @@ function KnowledgeWorkspace() {
           />
         </div>
 
-        {/* 可拖拽分割条：仅在 xl 及以上可用 */}
+        {/* 可拖拽分割条：仅在 xl 及以上可用。
+            左栏收起时整条让位——拖动一个已收起的面板没有可预期的结果，
+            边线此时由导轨自己的 border-r 提供，不会缺一道线。 */}
         <div
           className={cn(
             "group relative hidden h-full w-full xl:flex xl:items-center xl:justify-center",
             dragging && "bg-primary/10"
           )}
         >
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="拖动调整左侧宽度"
-            onMouseDown={(event) => {
-              event.preventDefault();
-              setDragging(true);
-            }}
-            onDoubleClick={() => setLeftRatio(null)}
-            className="h-full w-full cursor-col-resize"
-            title="拖动调整宽度（双击恢复默认 1/4 屏宽）"
-          >
+          {leftCollapsed ? null : (
             <div
-              className={cn(
-                "h-full w-px transition-colors",
-                dragging
-                  ? "bg-primary/60"
-                  : "bg-gray-200 group-hover:bg-primary/40"
-              )}
-            />
-          </div>
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="拖动调整左侧宽度"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                setDragging(true);
+              }}
+              onDoubleClick={() => setLeftRatio(null)}
+              className="h-full w-full cursor-col-resize"
+              title="拖动调整宽度（双击恢复默认 1/4 屏宽）"
+            >
+              <div
+                className={cn(
+                  "h-full w-px transition-colors",
+                  dragging
+                    ? "bg-primary/60"
+                    : "bg-gray-200 group-hover:bg-primary/40"
+                )}
+              />
+            </div>
+          )}
         </div>
 
         <div className="relative flex min-h-0 min-w-0 overflow-hidden">
