@@ -12,6 +12,7 @@ import {
   FolderPlus,
   Loader2,
   MessageSquare,
+  PanelLeftClose,
   Plus,
   RotateCcw,
   Search,
@@ -69,12 +70,20 @@ interface KnowledgeTreeProps {
    * 新建子知识库的入口已下线，不再产生新的嵌套。
    */
   knowledgeBases: KnowledgeBaseNode[];
-  /** 当前激活的知识库；只有它的文件夹与文件会被展开渲染 */
+  /** 当前浏览的知识库；决定上传/新建文件夹等写操作落到哪个库 */
   selectedKbId?: string;
   /** 当前问答锁定的知识库；与 selectedKbId 解耦，点击知识库行不会改变它 */
   chatKbId?: string | null;
-  folders: FolderInfo[];
-  files: KnowledgeFile[];
+  /**
+   * 目录内容按知识库分桶传入，任意多个库可以同时展开。
+   * 桶里有 key 即表示该库已加载完毕（空数组＝确实是空库）。
+   */
+  foldersByKb: Record<string, FolderInfo[]>;
+  filesByKb: Record<string, KnowledgeFile[]>;
+  /** 正在加载目录的知识库，用于在对应行下显示载入提示 */
+  loadingKbIds?: Record<string, boolean>;
+  /** 某个库被展开但还没有缓存时回调，由调用方按需加载 */
+  onRequestKbContents?: (kbId: string) => void;
   uploadTasks?: UploadTaskItem[];
   /** 当前问答锁定的文件夹（由文件夹行的对话按钮写入） */
   selectedFolderId?: string | null;
@@ -95,14 +104,18 @@ interface KnowledgeTreeProps {
   onRetryFile?: (file: KnowledgeFile) => void;
   onMoveFileToFolder?: (file: KnowledgeFile, targetFolderId: string | null) => void;
   onSearchChange?: (term: string) => void;
+  /** 收起整个面板；由调用方控制布局宽度，未传则不显示收起按钮 */
+  onCollapse?: () => void;
 }
 
 export const KnowledgeTree = ({
   knowledgeBases,
   selectedKbId,
   chatKbId,
-  folders,
-  files,
+  foldersByKb,
+  filesByKb,
+  loadingKbIds = {},
+  onRequestKbContents,
   uploadTasks = [],
   selectedFolderId,
   searchTerm = "",
@@ -120,6 +133,7 @@ export const KnowledgeTree = ({
   onRetryFile,
   onMoveFileToFolder,
   onSearchChange,
+  onCollapse,
 }: KnowledgeTreeProps) => {
   const [expandedKbs, setExpandedKbs] = useState<Record<string, boolean>>(
     () => readExpandedState().kbs
@@ -155,6 +169,18 @@ export const KnowledgeTree = ({
     }
   }, [expandedKbs, expandedFolders]);
 
+  /** 所有已加载库的内容拍平；搜索、祖先链回溯与拖拽查找都需要跨库视角 */
+  const folders = useMemo(
+    () => Object.values(foldersByKb).flat(),
+    [foldersByKb]
+  );
+  const files = useMemo(() => Object.values(filesByKb).flat(), [filesByKb]);
+
+  const knownKbIds = useMemo(
+    () => new Set(knowledgeBases.map((kb) => kb.knowledge_base_id)),
+    [knowledgeBases]
+  );
+
   // 当有上传任务分配到某个文件夹时，自动展开该文件夹及其各级父文件夹，便于即时看到占位项
   useEffect(() => {
     if (!uploadTasks || uploadTasks.length === 0) return;
@@ -178,6 +204,18 @@ export const KnowledgeTree = ({
 
   const normalizedSearch = searchTerm.trim().toLowerCase();
 
+  // 展开一个库就按需拉取它的内容。localStorage 里恢复出来的展开项会在这里被
+  // 一并补齐，所以刷新后此前展开的库依然有东西可看；已删除的库要先滤掉，否则
+  // 会拿着失效 id 去请求。
+  useEffect(() => {
+    if (!onRequestKbContents) return;
+    Object.entries(expandedKbs).forEach(([kbId, open]) => {
+      if (!open || !knownKbIds.has(kbId)) return;
+      if (foldersByKb[kbId] || loadingKbIds[kbId]) return;
+      onRequestKbContents(kbId);
+    });
+  }, [expandedKbs, foldersByKb, knownKbIds, loadingKbIds, onRequestKbContents]);
+
   const kbChildrenByParent = useMemo(() => {
     const next = new Map<string | null, KnowledgeBaseNode[]>();
     knowledgeBases.forEach((kb) => {
@@ -192,87 +230,103 @@ export const KnowledgeTree = ({
     return next;
   }, [knowledgeBases]);
 
-  const filesByFolder = useMemo(() => {
-    const next = new Map<string | null, KnowledgeFile[]>();
-    files.forEach((file) => {
-      const key = file.folder_id ?? null;
-      const list = next.get(key) ?? [];
-      list.push(file);
-      next.set(key, list);
+  /**
+   * 根级内容按知识库归组，非根级仍按父文件夹 id 归组。
+   *
+   * folder_id 全局唯一，所以子文件夹/子文件用父 id 做键不会跨库串味。只有
+   * parent_folder_id / folder_id 为空的「根级」项必须额外按 kbId 区分，否则多个
+   * 库的根内容会全挤进同一个 null 键里，互相顶掉。
+   */
+  const rootFoldersByKb = useMemo(() => {
+    const next = new Map<string, FolderInfo[]>();
+    Object.entries(foldersByKb).forEach(([kbId, list]) => {
+      next.set(
+        kbId,
+        list
+          .filter((folder) => !folder.parent_folder_id)
+          .sort((a, b) => a.folder_name.localeCompare(b.folder_name))
+      );
     });
-    next.forEach((list) => list.sort((a, b) => a.file_name.localeCompare(b.file_name)));
     return next;
-  }, [files]);
+  }, [foldersByKb]);
 
-  const tasksByFolder = useMemo(() => {
-    const next = new Map<string | null, UploadTaskItem[]>();
-    const existingFileIds = new Set(files.map((f) => f.file_id));
-
-    (uploadTasks || []).forEach((task) => {
-      if (task.knowledgeBaseId !== selectedKbId) return;
-      if (task.fileId && existingFileIds.has(task.fileId)) {
-        return;
-      }
-      const key = task.folderId ?? null;
-      const list = next.get(key) ?? [];
-      list.push(task);
-      next.set(key, list);
-    });
-
-    return next;
-  }, [uploadTasks, selectedKbId, files]);
-
-  const childrenByParent = useMemo(() => {
-    const next = new Map<string | null, FolderInfo[]>();
+  const childFoldersByParent = useMemo(() => {
+    const next = new Map<string, FolderInfo[]>();
     folders.forEach((folder) => {
-      const key = folder.parent_folder_id ?? null;
-      const list = next.get(key) ?? [];
+      if (!folder.parent_folder_id) return;
+      const list = next.get(folder.parent_folder_id) ?? [];
       list.push(folder);
-      next.set(key, list);
+      next.set(folder.parent_folder_id, list);
     });
     next.forEach((list) => list.sort((a, b) => a.folder_name.localeCompare(b.folder_name)));
     return next;
   }, [folders]);
 
-  const matchesFile = useCallback(
-    (file: KnowledgeFile) =>
-      `${file.file_name} ${file.description ?? ""} ${file.mime_type ?? ""}`
-        .toLowerCase()
-        .includes(normalizedSearch),
-    [normalizedSearch]
-  );
-
-  /** 命中的文件夹及其祖先链；null 表示不过滤 */
-  const matchedFolderIds = useMemo(() => {
-    if (!normalizedSearch) return null;
-
-    const folderLookup = new Map(folders.map((folder) => [folder.folder_id, folder]));
-    const next = new Set<string>();
-
-    folders.forEach((folder) => {
-      if (folder.folder_name.toLowerCase().includes(normalizedSearch)) {
-        next.add(folder.folder_id);
-        let parentId = folder.parent_folder_id;
-        while (parentId) {
-          next.add(parentId);
-          parentId = folderLookup.get(parentId)?.parent_folder_id ?? null;
-        }
-      }
+  /** folder_id → 所属知识库，比 FolderInfo.knowledge_base_id 可靠（该字段是可选的） */
+  const kbIdByFolderId = useMemo(() => {
+    const next = new Map<string, string>();
+    Object.entries(foldersByKb).forEach(([kbId, list]) => {
+      list.forEach((folder) => next.set(folder.folder_id, kbId));
     });
-
-    files.forEach((file) => {
-      if (!matchesFile(file)) return;
-      let folderId = file.folder_id ?? null;
-      while (folderId) {
-        next.add(folderId);
-        folderId = folderLookup.get(folderId)?.parent_folder_id ?? null;
-      }
-    });
-
     return next;
-  }, [files, folders, matchesFile, normalizedSearch]);
+  }, [foldersByKb]);
 
-  /** 按名称命中的知识库；命中后其内部内容整体保留，不再逐个过滤文件夹 */
+  const rootFilesByKb = useMemo(() => {
+    const next = new Map<string, KnowledgeFile[]>();
+    Object.entries(filesByKb).forEach(([kbId, list]) => {
+      next.set(
+        kbId,
+        list
+          .filter((file) => !file.folder_id)
+          .sort((a, b) => a.file_name.localeCompare(b.file_name))
+      );
+    });
+    return next;
+  }, [filesByKb]);
+
+  const filesByFolder = useMemo(() => {
+    const next = new Map<string, KnowledgeFile[]>();
+    files.forEach((file) => {
+      if (!file.folder_id) return;
+      const list = next.get(file.folder_id) ?? [];
+      list.push(file);
+      next.set(file.folder_id, list);
+    });
+    next.forEach((list) => list.sort((a, b) => a.file_name.localeCompare(b.file_name)));
+    return next;
+  }, [files]);
+
+  /** 已经出现在文件列表里的任务不再画占位行，避免同一个文件重复出现 */
+  const pendingTasks = useMemo(() => {
+    const existingFileIds = new Set(files.map((f) => f.file_id));
+    return uploadTasks.filter(
+      (task) => !(task.fileId && existingFileIds.has(task.fileId))
+    );
+  }, [uploadTasks, files]);
+
+  const rootTasksByKb = useMemo(() => {
+    const next = new Map<string, UploadTaskItem[]>();
+    pendingTasks.forEach((task) => {
+      if (task.folderId) return;
+      const list = next.get(task.knowledgeBaseId) ?? [];
+      list.push(task);
+      next.set(task.knowledgeBaseId, list);
+    });
+    return next;
+  }, [pendingTasks]);
+
+  const tasksByFolder = useMemo(() => {
+    const next = new Map<string, UploadTaskItem[]>();
+    pendingTasks.forEach((task) => {
+      if (!task.folderId) return;
+      const list = next.get(task.folderId) ?? [];
+      list.push(task);
+      next.set(task.folderId, list);
+    });
+    return next;
+  }, [pendingTasks]);
+
+  /** 按名称命中的知识库；命中后其内部内容整体保留，不再逐个过滤 */
   const nameMatchedKbIds = useMemo(() => {
     if (!normalizedSearch) return null;
     const next = new Set<string>();
@@ -288,12 +342,69 @@ export const KnowledgeTree = ({
     return next;
   }, [knowledgeBases, normalizedSearch]);
 
-  /** 选中知识库整体命中时，其文件夹/文件不参与过滤 */
-  const selectedKbNameMatched = Boolean(
-    selectedKbId && nameMatchedKbIds?.has(selectedKbId)
+  /**
+   * 「整库命中则内部不过滤」按库逐个判定。
+   * 以前是一个全局开关（只看选中库是否命中），那时树里只有选中库的内容所以够用；
+   * 多个库同时可见后，一个库名命中会连带把其他库的内容全部放行，所以改成把命中库
+   * 的内容直接并入命中集合。
+   */
+  const matchesFile = useCallback(
+    (file: KnowledgeFile) =>
+      Boolean(
+        file.knowledge_base_id && nameMatchedKbIds?.has(file.knowledge_base_id)
+      ) ||
+      `${file.file_name} ${file.description ?? ""} ${file.mime_type ?? ""}`
+        .toLowerCase()
+        .includes(normalizedSearch),
+    [nameMatchedKbIds, normalizedSearch]
   );
-  const folderFilter = selectedKbNameMatched ? null : matchedFolderIds;
-  const fileFilterActive = Boolean(normalizedSearch) && !selectedKbNameMatched;
+
+  /** 命中的文件夹及其祖先链；null 表示不过滤 */
+  const matchedFolderIds = useMemo(() => {
+    if (!normalizedSearch) return null;
+
+    const folderLookup = new Map(folders.map((folder) => [folder.folder_id, folder]));
+    const next = new Set<string>();
+
+    Object.entries(foldersByKb).forEach(([kbId, list]) => {
+      const kbMatched = nameMatchedKbIds?.has(kbId);
+      list.forEach((folder) => {
+        if (
+          !kbMatched &&
+          !folder.folder_name.toLowerCase().includes(normalizedSearch)
+        ) {
+          return;
+        }
+        next.add(folder.folder_id);
+        let parentId = folder.parent_folder_id;
+        while (parentId) {
+          next.add(parentId);
+          parentId = folderLookup.get(parentId)?.parent_folder_id ?? null;
+        }
+      });
+    });
+
+    files.forEach((file) => {
+      if (!matchesFile(file)) return;
+      let folderId = file.folder_id ?? null;
+      while (folderId) {
+        next.add(folderId);
+        folderId = folderLookup.get(folderId)?.parent_folder_id ?? null;
+      }
+    });
+
+    return next;
+  }, [
+    files,
+    folders,
+    foldersByKb,
+    matchesFile,
+    nameMatchedKbIds,
+    normalizedSearch,
+  ]);
+
+  const folderFilter = matchedFolderIds;
+  const fileFilterActive = Boolean(normalizedSearch);
 
   /** 需要显示的知识库：自身命中、子孙命中，或其内部文件夹/文件命中 */
   const visibleKbIds = useMemo(() => {
@@ -313,22 +424,26 @@ export const KnowledgeTree = ({
 
     nameMatchedKbIds?.forEach((kbId) => addWithAncestors(kbId));
 
-    const hitInsideSelectedKb =
-      (matchedFolderIds && matchedFolderIds.size > 0) ||
-      files.some((file) => !file.folder_id && matchesFile(file));
-    if (selectedKbId && hitInsideSelectedKb) {
-      addWithAncestors(selectedKbId);
-    }
+    // 命中项可能散落在任意已加载的库里，按归属逐个点亮，而不是一律归给选中库
+    matchedFolderIds?.forEach((folderId) => {
+      const kbId = kbIdByFolderId.get(folderId);
+      if (kbId) addWithAncestors(kbId);
+    });
+    Object.entries(filesByKb).forEach(([kbId, list]) => {
+      if (list.some((file) => !file.folder_id && matchesFile(file))) {
+        addWithAncestors(kbId);
+      }
+    });
 
     return next;
   }, [
-    files,
+    filesByKb,
+    kbIdByFolderId,
     knowledgeBases,
     matchedFolderIds,
     matchesFile,
     nameMatchedKbIds,
     normalizedSearch,
-    selectedKbId,
   ]);
 
   const toggleFolder = (folderId: string) => {
@@ -347,8 +462,34 @@ export const KnowledgeTree = ({
     setExpandedKbs((current) => ({ ...current, [kbId]: !(current[kbId] ?? true) }));
   };
 
+  const draggingFile = useMemo(
+    () =>
+      draggingFileId
+        ? (files.find((file) => file.file_id === draggingFileId) ?? null)
+        : null,
+    [draggingFileId, files]
+  );
+
+  /**
+   * 只允许把文件拖到它自己所属的知识库内。
+   *
+   * moveFile 只改 folder_id、不会换库，跨库落点会让文件挂到另一个库的目录树上。
+   * 以前树里只渲染选中库的文件夹，这种落点根本构造不出来；现在多个库能同时展开，
+   * 就必须显式拦住。
+   */
+  const canDropInKb = (kbId: string) =>
+    Boolean(canMoveFiles && onMoveFileToFolder && draggingFile) &&
+    draggingFile?.knowledge_base_id === kbId;
+
+  const canDropInFolder = (folderId: string) =>
+    canDropInKb(kbIdByFolderId.get(folderId) ?? "");
+
   const renderUploadingPlaceholder = (task: UploadTaskItem, depth: number) => {
-    if (fileFilterActive && !task.fileName.toLowerCase().includes(normalizedSearch)) {
+    // 与 matchesFile 保持一致：所属库整体命中时不再按文件名过滤
+    const taskMatched =
+      Boolean(nameMatchedKbIds?.has(task.knowledgeBaseId)) ||
+      task.fileName.toLowerCase().includes(normalizedSearch);
+    if (fileFilterActive && !taskMatched) {
       return null;
     }
 
@@ -414,6 +555,9 @@ export const KnowledgeTree = ({
     const isProcessing = status !== "success" && status !== "failed";
     const isFailed = status === "failed";
     const isDraggable = canMoveFiles && status === "success";
+    // 重试/删除的调用方以 selectedKbId 为基准刷新，只在激活的库里放出这两个入口；
+    // 「详情」是只读的，任何库都能点
+    const isInSelectedKb = file.knowledge_base_id === selectedKbId;
     const pct = Math.round(Math.max(0, Math.min(1, file.progress ?? 0)) * 100);
 
     const statusLabels: Record<string, string> = {
@@ -451,12 +595,12 @@ export const KnowledgeTree = ({
             {statusLabels[status] ?? status}
           </span>
         ) : (
-          <span className="shrink-0 text-[11px] text-muted/40 group-hover:hidden">
+          <span className="shrink-0 text-[11px] text-muted-subtle group-hover:hidden">
             {formatBytes(file.file_size)}
           </span>
         )}
         <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
-          {isFailed && onRetryFile ? (
+          {isInSelectedKb && isFailed && onRetryFile ? (
             <button
               type="button"
               onClick={() => onRetryFile(file)}
@@ -476,7 +620,7 @@ export const KnowledgeTree = ({
               <Eye className="h-3.5 w-3.5" />
             </button>
           ) : null}
-          {onDeleteFile ? (
+          {isInSelectedKb && onDeleteFile ? (
             <button
               type="button"
               onClick={() => onDeleteFile(file)}
@@ -496,20 +640,25 @@ export const KnowledgeTree = ({
       return null;
     }
 
-    const childFolders = childrenByParent.get(folder.folder_id) ?? [];
+    const childFolders = childFoldersByParent.get(folder.folder_id) ?? [];
     const childFiles = filesByFolder.get(folder.folder_id) ?? [];
     const childTasks = tasksByFolder.get(folder.folder_id) ?? [];
     const isExpanded = normalizedSearch
       ? true
       : (expandedFolders[folder.folder_id] ?? false);
-    const isDragOver = dragOverFolderId === folder.folder_id && !!draggingFileId;
+    const isDragOver =
+      canDropInFolder(folder.folder_id) && dragOverFolderId === folder.folder_id;
     const isChatTarget = selectedFolderId === folder.folder_id;
+    // 写操作只作用于当前激活的知识库（与知识库行上的上传/新建同一套规则）：
+    // 调用方的创建/删除处理器都以 selectedKbId 为基准，落到别的库上会算错子树。
+    const isInSelectedKb =
+      kbIdByFolderId.get(folder.folder_id) === selectedKbId;
 
     return (
       <div key={folder.folder_id}>
         <div
           onDragOver={(event) => {
-            if (!canMoveFiles || !onMoveFileToFolder || !draggingFileId) return;
+            if (!canDropInFolder(folder.folder_id)) return;
             event.preventDefault();
             event.stopPropagation();
             setDragOverFolderId(folder.folder_id);
@@ -518,14 +667,14 @@ export const KnowledgeTree = ({
             if (dragOverFolderId === folder.folder_id) setDragOverFolderId(null);
           }}
           onDrop={(event) => {
-            if (!canMoveFiles || !onMoveFileToFolder || !draggingFileId) return;
+            if (!canDropInFolder(folder.folder_id)) return;
             event.preventDefault();
             event.stopPropagation();
             setDragOverFolderId(null);
-            const file = files.find((item) => item.file_id === draggingFileId);
+            const file = draggingFile;
             setDraggingFileId(null);
             if (file) {
-              onMoveFileToFolder(file, folder.folder_id);
+              onMoveFileToFolder?.(file, folder.folder_id);
             }
           }}
           className={cn(
@@ -549,7 +698,7 @@ export const KnowledgeTree = ({
             ) : (
               <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted" />
             )}
-            <Folder className="h-4 w-4 shrink-0 text-muted/60" />
+            <Folder className="h-4 w-4 shrink-0 text-muted-faint" />
             <span className="min-w-0 flex-1 truncate text-left">{folder.folder_name}</span>
           </button>
           <div
@@ -573,7 +722,7 @@ export const KnowledgeTree = ({
             >
               <MessageSquare className="h-3.5 w-3.5" />
             </button>
-            {onUploadFile ? (
+            {isInSelectedKb && onUploadFile ? (
               <button
                 type="button"
                 onClick={(e) => {
@@ -586,7 +735,7 @@ export const KnowledgeTree = ({
                 <Plus className="h-3.5 w-3.5" />
               </button>
             ) : null}
-            {onCreateFolder ? (
+            {isInSelectedKb && onCreateFolder ? (
               <button
                 type="button"
                 onClick={(e) => {
@@ -599,7 +748,7 @@ export const KnowledgeTree = ({
                 <FolderPlus className="h-3.5 w-3.5" />
               </button>
             ) : null}
-            {onDeleteFolder && folder.is_default !== 1 ? (
+            {isInSelectedKb && onDeleteFolder && folder.is_default !== 1 ? (
               <button
                 type="button"
                 onClick={(e) => {
@@ -637,12 +786,15 @@ export const KnowledgeTree = ({
     const isExpanded = normalizedSearch
       ? true
       : (expandedKbs[kb.knowledge_base_id] ?? isSelected);
-    // 文件夹与文件只在激活的知识库下渲染：其余知识库的目录数据尚未加载
-    const rootFolders = isSelected ? (childrenByParent.get(null) ?? []) : [];
-    const rootFiles = isSelected ? (filesByFolder.get(null) ?? []) : [];
-    const rootTasks = isSelected ? (tasksByFolder.get(null) ?? []) : [];
+    // 每个库都渲染自己那一桶内容，展开状态互不影响
+    const rootFolders = rootFoldersByKb.get(kb.knowledge_base_id) ?? [];
+    const rootFiles = rootFilesByKb.get(kb.knowledge_base_id) ?? [];
+    const rootTasks = rootTasksByKb.get(kb.knowledge_base_id) ?? [];
+    const isLoaded = Boolean(foldersByKb[kb.knowledge_base_id]);
+    const isLoadingContents = Boolean(loadingKbIds[kb.knowledge_base_id]);
     const isDragOver =
-      isSelected && dragOverFolderId === kb.knowledge_base_id && !!draggingFileId;
+      canDropInKb(kb.knowledge_base_id) &&
+      dragOverFolderId === kb.knowledge_base_id;
     const hasContent =
       childKbs.length > 0 ||
       rootFolders.length > 0 ||
@@ -653,7 +805,7 @@ export const KnowledgeTree = ({
       <div key={kb.knowledge_base_id}>
         <div
           onDragOver={(event) => {
-            if (!isSelected || !canMoveFiles || !onMoveFileToFolder || !draggingFileId) return;
+            if (!canDropInKb(kb.knowledge_base_id)) return;
             event.preventDefault();
             event.stopPropagation();
             setDragOverFolderId(kb.knowledge_base_id);
@@ -662,14 +814,14 @@ export const KnowledgeTree = ({
             if (dragOverFolderId === kb.knowledge_base_id) setDragOverFolderId(null);
           }}
           onDrop={(event) => {
-            if (!isSelected || !canMoveFiles || !onMoveFileToFolder || !draggingFileId) return;
+            if (!canDropInKb(kb.knowledge_base_id)) return;
             event.preventDefault();
             event.stopPropagation();
             setDragOverFolderId(null);
-            const file = files.find((item) => item.file_id === draggingFileId);
+            const file = draggingFile;
             setDraggingFileId(null);
             if (file) {
-              onMoveFileToFolder(file, null);
+              onMoveFileToFolder?.(file, null);
             }
           }}
           className={cn(
@@ -698,7 +850,7 @@ export const KnowledgeTree = ({
             <Database
               className={cn(
                 "h-4 w-4 shrink-0",
-                isChatTarget ? "text-primary" : "text-muted/60"
+                isChatTarget ? "text-primary" : "text-muted-faint"
               )}
             />
             <span
@@ -714,7 +866,7 @@ export const KnowledgeTree = ({
           {/* 窄面板里只留数字徽标，把宽度让给知识库名；问答目标行常驻按钮，徽标让位 */}
           {kb.fileCount > 0 && !isChatTarget ? (
             <span
-              className="shrink-0 text-[11px] text-muted/40 group-hover:hidden"
+              className="shrink-0 text-[11px] text-muted-subtle group-hover:hidden"
               title={`${kb.fileCount} 个文件`}
             >
               {kb.fileCount}
@@ -793,9 +945,18 @@ export const KnowledgeTree = ({
             {rootFolders.map((folder) => renderFolder(folder, depth + 1))}
             {rootTasks.map((task) => renderUploadingPlaceholder(task, depth + 1))}
             {rootFiles.map((file) => renderFile(file, depth + 1))}
-            {isSelected && !hasContent ? (
+            {/* 「载入中」与「暂无内容」必须分开：桶里有 key 才代表真的是空库 */}
+            {!isLoaded && isLoadingContents ? (
               <div
-                className="py-2 text-xs text-muted/50"
+                className="flex items-center gap-1.5 py-2 text-xs text-muted-subtle"
+                style={{ paddingLeft: indentOf(depth + 1) }}
+              >
+                <Loader2 className="h-3 w-3 animate-spin" />
+                载入中…
+              </div>
+            ) : isLoaded && !hasContent ? (
+              <div
+                className="py-2 text-xs text-muted-subtle"
                 style={{ paddingLeft: indentOf(depth + 1) }}
               >
                 暂无内容
@@ -845,6 +1006,18 @@ export const KnowledgeTree = ({
               新建
             </button>
           ) : null}
+          {onCollapse ? (
+            <button
+              type="button"
+              onClick={onCollapse}
+              aria-expanded
+              className="flex h-6 w-6 items-center justify-center rounded-md text-muted transition-colors hover:bg-gray-100 hover:text-foreground"
+              title="收起知识库管理"
+              aria-label="收起知识库管理"
+            >
+              <PanelLeftClose className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -856,7 +1029,7 @@ export const KnowledgeTree = ({
             value={searchTerm}
             onChange={(e) => onSearchChange?.(e.target.value)}
             placeholder="搜索..."
-            className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted/50"
+            className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-subtle"
           />
           {searchTerm ? (
             <button
@@ -875,7 +1048,7 @@ export const KnowledgeTree = ({
         {visibleRootKbs.map((kb) => renderKb(kb, 0))}
 
         {visibleRootKbs.length === 0 ? (
-          <div className="px-3 py-4 text-center text-xs text-muted/50">
+          <div className="px-3 py-4 text-center text-xs text-muted-subtle">
             {rootKbs.length === 0 ? "还没有知识库，点右上角新建" : "没有匹配的内容"}
           </div>
         ) : null}
