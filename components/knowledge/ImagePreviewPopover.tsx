@@ -201,7 +201,7 @@ export function ImagePreviewPopover({
                   onError={() => setError("图片加载失败")}
                 />
               ) : (
-                <div className="px-2 py-6 text-center text-[11px] text-muted-foreground">
+                <div className="px-2 py-6 text-center text-[11px] text-muted">
                   （暂无图片）
                 </div>
               )}

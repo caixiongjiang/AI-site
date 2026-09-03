@@ -296,7 +296,7 @@ export function CitationPreviewBody({
     return (
       <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 text-left">
         <div className="min-h-0 flex-1 overflow-auto overscroll-contain rounded-md border border-gray-200 bg-gray-50/80 p-1.5">
-          <div className="px-2 py-6 text-center text-[11px] text-muted-foreground">
+          <div className="px-2 py-6 text-center text-[11px] text-muted">
             （预览中无可用图片链接）
           </div>
         </div>
