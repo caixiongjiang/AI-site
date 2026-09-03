@@ -45,11 +45,6 @@ export interface FileProgress {
   message?: string | null;
 }
 
-export interface FileDeleteResponse {
-  file_id: string;
-  success: boolean;
-}
-
 export interface FolderDeleteResponse {
   folder_id: string;
   deleted_folder_count: number;
@@ -64,36 +59,6 @@ export interface KnowledgeFile extends FileInfo {
   render_as?: "pdf" | "original" | string | null;
   preview_mime_type?: string | null;
   has_converted_pdf?: boolean;
-}
-
-export interface TrashItem {
-  item_type: "folder" | "file";
-  item_id: string;
-  item_name: string;
-  full_path?: string | null;
-  folder_id?: string | null;
-  file_size?: number | null;
-  mime_type?: string | null;
-  knowledge_base_id?: string;
-  deleted_at?: string | null;
-}
-
-export interface TrashFolderChildItem {
-  folder_id: string;
-  folder_name: string;
-  full_path: string;
-  parent_folder_id?: string | null;
-  depth?: number;
-  knowledge_base_id?: string;
-}
-
-export interface TrashFolderFileItem {
-  file_id: string;
-  file_name: string;
-  folder_id?: string | null;
-  file_size?: number | null;
-  mime_type?: string | null;
-  knowledge_base_id?: string;
 }
 
 export interface FilePreviewResponse {

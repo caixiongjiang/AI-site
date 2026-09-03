@@ -1,4 +1,4 @@
-import { KnowledgeBaseInfo, FolderInfo, KnowledgeFile, TrashItem } from "./knowledge-types";
+import { KnowledgeBaseInfo, FolderInfo, KnowledgeFile } from "./knowledge-types";
 
 export const mockKnowledgeBases: KnowledgeBaseInfo[] = [
   {
@@ -144,24 +144,5 @@ export const mockFiles: KnowledgeFile[] = [
     updated_at: "2026-03-09T19:30:00+08:00",
     index_status: "success",
     progress: 1,
-  },
-];
-
-export const mockTrashItems: TrashItem[] = [
-  {
-    item_type: "file",
-    item_id: "file-trash-1",
-    item_name: "历史合同备份.zip",
-    file_size: 3650000,
-    knowledge_base_id: "kb-legal",
-    deleted_at: "2026-03-06T11:00:00+08:00",
-  },
-  {
-    item_type: "folder",
-    item_id: "folder-trash-1",
-    item_name: "旧版需求",
-    full_path: "/需求调研/旧版需求",
-    knowledge_base_id: "kb-product",
-    deleted_at: "2026-03-02T17:20:00+08:00",
   },
 ];

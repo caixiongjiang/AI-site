@@ -47,6 +47,10 @@ import {
 } from "lucide-react";
 import { useKnowledgeChat } from "@/lib/hooks/useKnowledgeChat";
 import { useChatModels, type ChatModelItem } from "@/lib/api/chat-models";
+import {
+  ConfirmModal,
+  type ConfirmAction,
+} from "@/components/knowledge/ConfirmModal";
 import { MarkdownAnswer } from "@/components/knowledge/MarkdownAnswer";
 import { ContextIndicator } from "@/components/knowledge/ContextIndicator";
 import { ReportViewer } from "@/components/knowledge/ReportViewer";
@@ -3092,6 +3096,8 @@ export const KnowledgeChatPanel = ({
   const { models } = useChatModels();
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
   // Cursor 式滚动：新用户消息发出后置顶，底部保留一段"呼吸区"空白
@@ -3551,20 +3557,28 @@ export const KnowledgeChatPanel = ({
     }
   };
 
-  const handleSessionDelete = async (s: ChatSessionInfo) => {
-    const confirmed =
-      typeof window !== "undefined"
-        ? window.confirm(`确定删除会话「${s.title || "新会话"}」？`)
-        : true;
-    if (!confirmed) return;
-    if (s.session_id !== activeSessionId) {
-      await handleSelectSession(s.session_id);
-    }
-    try {
-      await deleteActive();
-    } catch (err) {
-      console.error(err);
-    }
+  const handleSessionDelete = (s: ChatSessionInfo) => {
+    const title = s.title || "新会话";
+    setConfirmAction({
+      kind: "danger",
+      title: `删除会话「${title}」`,
+      description: "会话及其全部消息记录会被永久删除，无法恢复。",
+      confirmLabel: "删除会话",
+      onConfirm: async () => {
+        setConfirmBusy(true);
+        try {
+          if (s.session_id !== activeSessionId) {
+            await handleSelectSession(s.session_id);
+          }
+          await deleteActive();
+          setConfirmAction(null);
+        } catch (err) {
+          console.error(err);
+        } finally {
+          setConfirmBusy(false);
+        }
+      },
+    });
   };
 
   const placeholder = effectiveDisabled
@@ -3641,7 +3655,7 @@ export const KnowledgeChatPanel = ({
                 setSessionPanelOpen(false);
               }}
               onRename={handleSessionRename}
-              onDelete={(s) => void handleSessionDelete(s)}
+              onDelete={handleSessionDelete}
             />
           ) : null}
         </>
@@ -3712,7 +3726,7 @@ export const KnowledgeChatPanel = ({
                       onSelect={(id) => void handleSelectSession(id)}
                       onNew={() => void handleNewSession()}
                       onRename={handleSessionRename}
-                      onDelete={(s) => void handleSessionDelete(s)}
+                      onDelete={handleSessionDelete}
                     />
                   </div>
                 ) : null}
@@ -4214,6 +4228,12 @@ export const KnowledgeChatPanel = ({
           }}
         />
       )}
+
+      <ConfirmModal
+        action={confirmAction}
+        busy={confirmBusy}
+        onCancel={() => setConfirmAction(null)}
+      />
     </section>
   );
 };
