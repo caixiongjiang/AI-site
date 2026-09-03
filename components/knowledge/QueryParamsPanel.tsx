@@ -182,7 +182,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
         e.stopPropagation();
         copy();
       }}
-      className="rounded p-1 text-muted-foreground transition-colors hover:bg-gray-200 hover:text-foreground"
+      className="rounded p-1 text-muted transition-colors hover:bg-gray-200 hover:text-foreground"
       aria-label={label}
       title={label}
     >
@@ -258,7 +258,7 @@ function Row({
     <div className="flex gap-2 py-0.5">
       <span
         className={cn(
-          "shrink-0 text-[11px] leading-5 text-muted-foreground",
+          "shrink-0 text-[11px] leading-5 text-muted",
           nested ? "whitespace-nowrap" : "w-[62px]",
         )}
       >
@@ -272,7 +272,7 @@ function Row({
 /** 值渲染：数组→chips，对象→递归行，长 ID→IdChip，布尔→是/否 */
 function Value({ value, depth = 0 }: { value: unknown; depth?: number }) {
   if (value === null || value === undefined) {
-    return <span className="text-muted-foreground">—</span>;
+    return <span className="text-muted">—</span>;
   }
   if (typeof value === "boolean") {
     return (
@@ -289,7 +289,7 @@ function Value({ value, depth = 0 }: { value: unknown; depth?: number }) {
     return <span className="break-words">{value}</span>;
   }
   if (Array.isArray(value)) {
-    if (value.length === 0) return <span className="text-muted-foreground">空</span>;
+    if (value.length === 0) return <span className="text-muted">空</span>;
     const allScalar = value.every((v) => typeof v === "string" || typeof v === "number");
     if (allScalar) {
       return (
@@ -318,7 +318,7 @@ function Value({ value, depth = 0 }: { value: unknown; depth?: number }) {
   const rec = asRecord(value);
   if (rec) {
     const entries = Object.entries(rec);
-    if (entries.length === 0) return <span className="text-muted-foreground">空</span>;
+    if (entries.length === 0) return <span className="text-muted">空</span>;
     // 嵌套过深退化成紧凑 JSON，避免无限缩进把窄栏挤爆
     if (depth >= 2) {
       return (
@@ -378,7 +378,7 @@ function AnalysisBlock({ analysis }: { analysis: QueryAnalysisView }) {
           <button
             type="button"
             onClick={() => setShowReasoning((v) => !v)}
-            className="flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+            className="flex items-center gap-1 text-[11px] text-muted transition-colors hover:text-foreground"
           >
             {showReasoning ? (
               <ChevronDown className="h-3 w-3" />
@@ -410,7 +410,7 @@ function RouteCard({ route, index }: { route: RouteConfigView; index: number }) 
         <span className="font-mono text-[11px] font-medium text-foreground">{route.route}</span>
         {meta ? <Chip tone={meta.tone}>{meta.label}</Chip> : null}
         {route.top_k !== undefined ? (
-          <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
+          <span className="ml-auto shrink-0 font-mono text-[10px] text-muted">
             top_k {route.top_k}
           </span>
         ) : null}
@@ -424,7 +424,7 @@ function RouteCard({ route, index }: { route: RouteConfigView; index: number }) 
           ))}
         </div>
       ) : (
-        <p className="text-[11px] text-muted-foreground">无额外参数（沿用请求级原问）</p>
+        <p className="text-[11px] text-muted">无额外参数（沿用请求级原问）</p>
       )}
     </li>
   );
@@ -439,7 +439,7 @@ function RawJsonBlock({ params }: { params: Record<string, unknown> }) {
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="flex flex-1 items-center gap-1 px-2.5 py-1.5 text-left text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+          className="flex flex-1 items-center gap-1 px-2.5 py-1.5 text-left text-[11px] text-muted transition-colors hover:text-foreground"
         >
           {open ? (
             <ChevronDown className="h-3 w-3 shrink-0" />
@@ -504,7 +504,7 @@ export function QueryParamsBody({
         <section>
           <div className="mb-1.5 flex items-center gap-1.5 px-0.5">
             <span className="text-[11px] font-medium text-foreground">召回路由</span>
-            <span className="text-[10px] text-muted-foreground">
+            <span className="text-[10px] text-muted">
               {plan.routes.length} 路并行
             </span>
           </div>
@@ -586,7 +586,7 @@ function QueryParamsModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-gray-100 hover:text-foreground"
+            className="rounded-lg p-1.5 text-muted transition-colors hover:bg-gray-100 hover:text-foreground"
             aria-label="关闭"
           >
             <X className="h-4 w-4" />
@@ -615,20 +615,20 @@ export function QueryParamsSection({ params }: { params: Record<string, unknown>
           className="flex flex-1 items-center gap-2 text-left"
         >
           {open ? (
-            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted" />
           ) : (
-            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted" />
           )}
           <Database className="h-3.5 w-3.5 shrink-0 text-primary" />
           <span className="text-[13px] font-medium text-foreground">查询参数</span>
           {routeCount > 0 ? (
-            <span className="ml-auto text-[11px] text-muted-foreground">{routeCount} 路</span>
+            <span className="ml-auto text-[11px] text-muted">{routeCount} 路</span>
           ) : null}
         </button>
         <button
           type="button"
           onClick={() => setModalOpen(true)}
-          className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-gray-200 hover:text-primary"
+          className="rounded-md p-1 text-muted transition-colors hover:bg-gray-200 hover:text-primary"
           aria-label="放大查看"
           title="放大查看"
         >
