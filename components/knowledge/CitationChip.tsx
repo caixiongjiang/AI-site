@@ -22,6 +22,7 @@ import {
   type RefObject,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -70,6 +71,19 @@ const POPOVER_W = 288;
 const VIEW_PAD = 8;
 const HOVER_CLOSE_MS = 160;
 
+// 全局单例管理器：确保同一时刻整个页面最多只有一个 CitationChip 浮层处于打开状态
+// 当鼠标在相邻引用芯片之间移动时，瞬时切换，消除多浮层叠加的残影 (Issue #25)
+type ActivePopoverListener = (activeId: string | null) => void;
+const activeListeners = new Set<ActivePopoverListener>();
+let currentActivePopoverId: string | null = null;
+
+function setActivePopover(id: string | null) {
+  currentActivePopoverId = id;
+  for (const listener of activeListeners) {
+    listener(id);
+  }
+}
+
 function usePopoverPosition(
   open: boolean,
   anchorRef: RefObject<HTMLElement | null>,
@@ -102,6 +116,7 @@ function usePopoverPosition(
     };
 
     place();
+
     let ro: ResizeObserver | undefined;
     if (typeof ResizeObserver !== "undefined") {
       ro = new ResizeObserver(place);
@@ -326,6 +341,7 @@ export function CitationChip({
   citation,
   rawChunkId,
 }: CitationChipProps) {
+  const chipId = useId();
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
@@ -340,10 +356,38 @@ export function CitationChip({
 
   const scheduleClose = useCallback(() => {
     cancelScheduledClose();
-    closeTimerRef.current = setTimeout(() => setOpen(false), HOVER_CLOSE_MS);
-  }, [cancelScheduledClose]);
+    closeTimerRef.current = setTimeout(() => {
+      setOpen(false);
+      if (currentActivePopoverId === chipId) {
+        setActivePopover(null);
+      }
+    }, HOVER_CLOSE_MS);
+  }, [cancelScheduledClose, chipId]);
 
-  useEffect(() => () => cancelScheduledClose(), [cancelScheduledClose]);
+  const handleOpen = useCallback(() => {
+    cancelScheduledClose();
+    // 激活当前浮层并瞬时关闭其他已打开的 CitationChip，避免重叠残影
+    setActivePopover(chipId);
+    setOpen(true);
+  }, [cancelScheduledClose, chipId]);
+
+  // 监听全局 active popover 变更：若其他 chip 被激活，当前 chip 立即无延迟关闭并清理定时器
+  useEffect(() => {
+    const onActiveChange: ActivePopoverListener = (activeId) => {
+      if (activeId !== chipId) {
+        cancelScheduledClose();
+        setOpen(false);
+      }
+    };
+    activeListeners.add(onActiveChange);
+    return () => {
+      activeListeners.delete(onActiveChange);
+      cancelScheduledClose();
+      if (currentActivePopoverId === chipId) {
+        currentActivePopoverId = null;
+      }
+    };
+  }, [cancelScheduledClose, chipId]);
 
   const hasFullMeta = Boolean(citation?.file_id || citation?.file_name);
   const ChunkIcon =
@@ -388,7 +432,7 @@ export function CitationChip({
             onMouseLeave={scheduleClose}
             className={cn(
               "fixed z-[100] flex flex-col rounded-xl border border-gray-200 bg-white p-3 text-left shadow-xl",
-              "max-h-[min(80vh,28rem)] max-w-[min(288px,calc(100vw-16px))] overflow-hidden"
+              "max-h-[min(80vh,28rem)] max-w-[min(288px,calc(100vw-16px))] overflow-hidden",
             )}
             style={{
               pointerEvents: "auto",
@@ -441,10 +485,7 @@ export function CitationChip({
         ref={anchorRef}
         type="button"
         onClick={handleClick}
-        onMouseEnter={() => {
-          cancelScheduledClose();
-          setOpen(true);
-        }}
+        onMouseEnter={handleOpen}
         onMouseLeave={scheduleClose}
         disabled={!citation?.file_id}
         className={cn(
