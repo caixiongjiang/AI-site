@@ -14,6 +14,8 @@ import {
   AlignJustify,
   AlertTriangle,
   ArrowUp,
+  ArrowUpRight,
+  BookOpen,
   Bot,
   Brain,
   Check,
@@ -133,8 +135,8 @@ const STARTER_PROMPTS = [
 
 const SESSION_DEFAULT_VISIBLE = 5;
 
-/** 对话主内容最大宽度，居中窄栏（类似 Cursor） */
-const CHAT_CONTENT_CLASS = "mx-auto w-full max-w-[720px]";
+/** 对话主内容最大宽度，居中排版（现代流式布局，保持舒适行宽与适度留白） */
+const CHAT_CONTENT_CLASS = "mx-auto w-full max-w-[880px]";
 
 interface ChatSettings {
   interactionMode: InteractionMode;
@@ -801,30 +803,116 @@ const CHUNK_TYPE_ICON: Record<string, ComponentType<{ className?: string }>> = {
   text: AlignJustify,
 };
 
-/** 底部引用区：仅显示"全部来源"按钮，点击打开右侧面板按文档分组查看 */
+function truncateFileName(name: string, maxLen = 16): string {
+  if (!name || name.length <= maxLen) return name;
+  const dotIdx = name.lastIndexOf(".");
+  if (dotIdx > 0 && name.length - dotIdx <= 5) {
+    const ext = name.slice(dotIdx);
+    const baseLen = maxLen - ext.length - 3;
+    if (baseLen > 2) {
+      return name.slice(0, baseLen) + "..." + ext;
+    }
+  }
+  return name.slice(0, maxLen - 3) + "...";
+}
+
+function getDocTypeIcon(
+  fileName?: string | null,
+  chunkType?: string | null,
+): ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }> {
+  if (chunkType === "table") return TableIcon;
+  if (chunkType === "image") return ImageIcon;
+  const ext = fileName?.split(".").pop()?.toLowerCase();
+  if (ext === "xlsx" || ext === "xls" || ext === "csv") return TableIcon;
+  if (ext === "png" || ext === "jpg" || ext === "jpeg" || ext === "webp") return ImageIcon;
+  return FileText;
+}
+
+/** 方案 2：微型芯片 + 溢出折叠（最多显示前 2 篇截断微标 + "+N 篇" 胶囊，点击打开右侧面板） */
 function ReferencedDocumentsBlock({
   citations,
   onOpenAllSources,
+  className,
 }: {
   citations: UiChatMessage["citations"];
   onOpenAllSources?: (citations: Citation[]) => void;
+  className?: string;
 }) {
   if (!citations || citations.length === 0) return null;
 
-  const docCount = new Set(citations.map(docGroupKey)).size;
+  // 按文档（file_id / file_name / document_id）去重
+  const uniqueDocMap = new Map<
+    string,
+    { name: string; type?: string | null; page?: number | null }
+  >();
+  for (const c of citations) {
+    const key = docGroupKey(c);
+    if (!uniqueDocMap.has(key)) {
+      uniqueDocMap.set(key, {
+        name: c.file_name ?? c.document_id ?? c.chunk_id,
+        type: c.chunk_type,
+        page: c.page_index,
+      });
+    }
+  }
+  const uniqueDocs = Array.from(uniqueDocMap.values());
+  const visibleDocs = uniqueDocs.slice(0, 2);
+  const overflowCount = uniqueDocs.length - 2;
 
   return (
-    <div className="mt-3 pt-1">
-      {onOpenAllSources ? (
+    <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
+      <span className="text-[11px] text-muted-subtle flex-shrink-0 select-none">
+        来源：
+      </span>
+
+      {visibleDocs.map((doc, i) => {
+        const Icon = getDocTypeIcon(doc.name, doc.type);
+        return (
+          <button
+            key={`${doc.name}-${i}`}
+            type="button"
+            onClick={() => onOpenAllSources?.(citations)}
+            className="group inline-flex max-w-[170px] items-center gap-1 truncate rounded-md border border-hairline bg-gray-50/80 px-2 py-0.5 text-[11px] text-muted transition-all hover:border-primary/40 hover:bg-primary/5 hover:text-primary-deep"
+            title={`${doc.name}${typeof doc.page === "number" ? ` (P.${doc.page + 1})` : ""} · 点击查看全部来源`}
+          >
+            <Icon
+              className="h-3 w-3 shrink-0 text-muted-subtle group-hover:text-primary-deep"
+              aria-hidden="true"
+            />
+            <span className="truncate">{truncateFileName(doc.name, 15)}</span>
+            {typeof doc.page === "number" ? (
+              <span className="shrink-0 text-[10px] text-muted-faint group-hover:text-primary-deep">
+                P.{doc.page + 1}
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
+
+      {overflowCount > 0 ? (
         <button
           type="button"
-          onClick={() => onOpenAllSources(citations)}
-          className="inline-flex items-center gap-1.5 rounded-full bg-primary/5 px-3 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/10"
+          onClick={() => onOpenAllSources?.(citations)}
+          className="group inline-flex items-center gap-0.5 rounded-md border border-primary/20 bg-primary/5 px-1.5 py-0.5 text-[11px] font-medium text-primary-deep transition-all hover:border-primary/40 hover:bg-primary/10 hover:shadow-xs"
+          title={`共 ${uniqueDocs.length} 篇文档，${citations.length} 处引用 · 点击查看全部`}
         >
-          <Database className="h-3 w-3" />
-          全部来源 · {docCount} 篇文档 · {citations.length} 段引用
+          <span>+{overflowCount} 篇</span>
+          <ArrowUpRight
+            className="h-3 w-3 opacity-70 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
+            aria-hidden="true"
+          />
         </button>
-      ) : null}
+      ) : (
+        <button
+          type="button"
+          onClick={() => onOpenAllSources?.(citations)}
+          className="inline-flex items-center text-primary-deep hover:text-primary transition-colors p-0.5"
+          title="查看引用的所有文档片段"
+          aria-label="查看引用的所有文档片段"
+        >
+          <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
+        </button>
+      )}
     </div>
   );
 }
@@ -1042,16 +1130,20 @@ function ReferencesSidePanel({
     });
 
     return order.map((key) => ({ key, ...groups.get(key)! }));
-  }, [citations]);
+  }, [citations, showScore]);
 
   return (
     <aside
-      className="flex min-h-0 w-[min(320px,35vw)] max-w-[100vw] shrink-0 flex-col bg-gray-50/50"
+      className="flex min-h-0 w-[min(340px,36vw)] max-w-[100vw] shrink-0 flex-col border-l border-hairline/80 bg-gray-50/50 shadow-xs"
       aria-label="全部来源"
     >
-      <div className="flex shrink-0 items-center justify-between px-4 py-3">
+      <div className="flex shrink-0 items-center justify-between border-b border-hairline/60 bg-white/80 px-4 py-2.5 backdrop-blur-xs">
         <span className="text-sm font-semibold text-foreground">
-          全部来源 · {docGroups.length} 篇文档
+          {showScore
+            ? docGroups.length > 0
+              ? `检索结果 · ${docGroups.length} 篇文档`
+              : "检索详情与参数"
+            : `全部来源 · ${docGroups.length} 篇文档`}
         </span>
         <button
           type="button"
@@ -1359,51 +1451,16 @@ function DocGroup({
 }
 
 // ============================================================
-// 消息分组：连续 assistant 消息合并为一个视觉块
-// ============================================================
-
-interface MessageGroup {
-  type: "user" | "assistant-group" | "summary";
-  messages: UiChatMessage[];
-}
-
-/** 把 messages 切分为 user 单条 + assistant 连续组 */
-function groupMessages(messages: UiChatMessage[]): MessageGroup[] {
-  const groups: MessageGroup[] = [];
-  let currentAssistantGroup: UiChatMessage[] = [];
-
-  const flushAssistant = () => {
-    if (currentAssistantGroup.length > 0) {
-      groups.push({
-        type: "assistant-group",
-        messages: [...currentAssistantGroup],
-      });
-      currentAssistantGroup = [];
-    }
-  };
-
-  for (const m of messages) {
-    if (m.role === "user") {
-      flushAssistant();
-      groups.push({ type: "user", messages: [m] });
-    } else if (m.role === "assistant") {
-      currentAssistantGroup.push(m);
-    } else if (m.role === "summary") {
-      // summary 是持久化的时间线事件，不能和相邻 assistant 消息合并。
-      flushAssistant();
-      groups.push({ type: "summary", messages: [m] });
-    }
-    // tool / system 已在 hook 层被过滤，不会出现
-  }
-  flushAssistant();
-  return groups;
-}
-
-// ============================================================
 // 操作按钮栏（复制、点赞、反对、分享）
 // ============================================================
 
-function AssistantActionBar({ messages }: { messages: UiChatMessage[] }) {
+function AssistantActionBar({
+  messages,
+  className,
+}: {
+  messages: UiChatMessage[];
+  className?: string;
+}) {
   const [copied, setCopied] = useState(false);
   const [liked, setLiked] = useState<"up" | "down" | null>(null);
 
@@ -1431,7 +1488,7 @@ function AssistantActionBar({ messages }: { messages: UiChatMessage[] }) {
   }, [messages]);
 
   return (
-    <div className="mt-2 flex items-center gap-1">
+    <div className={cn("flex items-center gap-1", className)}>
       <button
         type="button"
         onClick={handleCopy}
@@ -1442,8 +1499,13 @@ function AssistantActionBar({ messages }: { messages: UiChatMessage[] }) {
             : "text-muted hover:bg-gray-100 hover:text-foreground",
         )}
         title="复制回答"
+        aria-label="复制回答"
       >
-        <Copy className="h-3 w-3" />
+        {copied ? (
+          <Check className="h-3 w-3 text-emerald-600" aria-hidden="true" />
+        ) : (
+          <Copy className="h-3 w-3" aria-hidden="true" />
+        )}
       </button>
       <button
         type="button"
@@ -1455,8 +1517,9 @@ function AssistantActionBar({ messages }: { messages: UiChatMessage[] }) {
             : "text-muted hover:bg-gray-100 hover:text-foreground",
         )}
         title="赞"
+        aria-label="赞"
       >
-        <ThumbsUp className="h-3 w-3" />
+        <ThumbsUp className="h-3 w-3" aria-hidden="true" />
       </button>
       <button
         type="button"
@@ -1468,85 +1531,85 @@ function AssistantActionBar({ messages }: { messages: UiChatMessage[] }) {
             : "text-muted hover:bg-gray-100 hover:text-foreground",
         )}
         title="踩"
+        aria-label="踩"
       >
-        <ThumbsDown className="h-3 w-3" />
+        <ThumbsDown className="h-3 w-3" aria-hidden="true" />
       </button>
       <button
         type="button"
         onClick={handleShare}
         className="flex h-7 w-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-gray-100 hover:text-foreground"
         title="分享"
+        aria-label="分享"
       >
-        <Share2 className="h-3 w-3" />
+        <Share2 className="h-3 w-3" aria-hidden="true" />
       </button>
     </div>
   );
 }
 
 // ============================================================
-// 单条用户消息
+// 轮次分组与卡片流（Turn-Grouped Card Flow）
 // ============================================================
 
-function UserMessageBubble({
-  message,
-  onViewRetrievalChunks,
-}: {
-  message: UiChatMessage;
-  onViewRetrievalChunks?: (citations: Citation[]) => void;
-}) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = useCallback(() => {
-    if (!message.content) return;
-    void navigator.clipboard.writeText(message.content).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }, [message.content]);
-
-  return (
-    <div className="animate-fadeIn">
-      <div className="mb-1.5">
-        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gray-100 text-sm text-foreground">
-          你
-        </div>
-      </div>
-      <div className="rounded-2xl bg-primary/5 px-4 py-3 text-sm leading-7 text-foreground">
-        <div className="whitespace-pre-wrap break-words">{message.content}</div>
-      </div>
-      {message.content ? (
-        <div className="mt-2 flex items-center gap-1">
-          <button
-            type="button"
-            onClick={handleCopy}
-            className={cn(
-              "flex h-7 items-center gap-1 rounded-lg px-2 text-[11px] transition-colors",
-              copied
-                ? "bg-emerald-50 text-emerald-600"
-                : "text-muted hover:bg-gray-100 hover:text-foreground",
-            )}
-            title="复制问题"
-          >
-            <Copy className="h-3 w-3" />
-          </button>
-        </div>
-      ) : null}
-      <RetrievalChip
-        retrieval={message.retrieval}
-        onViewChunks={onViewRetrievalChunks}
-      />
-      {message.created_at ? (
-        <div className="mt-1 text-[10px] text-muted">
-          {formatDate(message.created_at)}
-        </div>
-      ) : null}
-    </div>
-  );
+interface ChatTurn {
+  id: string;
+  userMessage?: UiChatMessage;
+  assistantMessages: UiChatMessage[];
+  accumulatedCitations: Citation[];
+  summaryMessage?: UiChatMessage;
 }
 
-// ============================================================
-// 连续 assistant 消息组（合并为一个视觉块）
-// ============================================================
+/** 把 messages 切分为按轮次聚合的 ChatTurn 结构 */
+function groupMessagesIntoTurns(messages: UiChatMessage[]): ChatTurn[] {
+  const turns: ChatTurn[] = [];
+  const accumulated = new Map<string, Citation>();
+
+  let currentTurn: ChatTurn | null = null;
+
+  const flushTurn = () => {
+    if (currentTurn) {
+      currentTurn.accumulatedCitations = Array.from(accumulated.values());
+      turns.push(currentTurn);
+      currentTurn = null;
+    }
+  };
+
+  for (const m of messages) {
+    if (m.role === "summary") {
+      flushTurn();
+      turns.push({
+        id: `summary-${m.id}`,
+        summaryMessage: m,
+        assistantMessages: [],
+        accumulatedCitations: Array.from(accumulated.values()),
+      });
+    } else if (m.role === "user") {
+      flushTurn();
+      currentTurn = {
+        id: `turn-user-${m.id}`,
+        userMessage: m,
+        assistantMessages: [],
+        accumulatedCitations: [],
+      };
+    } else if (m.role === "assistant") {
+      for (const c of m.citations ?? []) {
+        if (c.chunk_id) accumulated.set(c.chunk_id, c);
+      }
+      if (!currentTurn) {
+        currentTurn = {
+          id: `turn-asst-${m.id}`,
+          assistantMessages: [m],
+          accumulatedCitations: [],
+        };
+      } else {
+        currentTurn.assistantMessages.push(m);
+      }
+    }
+  }
+  flushTurn();
+  return turns;
+}
 
 /**
  * 从消息正文中提取 HTML 报告片段，返回 null 表示不是 HTML 报告。
@@ -1625,18 +1688,18 @@ function AssistantRoundBlock({
   return (
     <div className={className}>
       {isReportGenerating ? (
-        <div className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3">
-          <div className="flex items-center gap-2 text-sm text-primary">
-            <Loader2 className="h-4 w-4 animate-spin" />
+        <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3">
+          <div className="flex items-center gap-2 text-sm text-primary-deep">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
             正在生成调研报告…
           </div>
         </div>
       ) : isHtmlReport ? (
-        <div className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3">
+        <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <FileText className="h-4 w-4 text-primary" />
-              <span className="text-sm font-medium text-primary">
+              <span className="text-sm font-medium text-primary-deep">
                 调研报告已生成
               </span>
             </div>
@@ -1645,7 +1708,7 @@ function AssistantRoundBlock({
               onClick={() =>
                 onViewReport?.(reportHtml ?? m.content, allCitations)
               }
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary/90"
+              className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-deep"
             >
               <ExternalLink className="h-3.5 w-3.5" />
               查看报告
@@ -1653,9 +1716,13 @@ function AssistantRoundBlock({
           </div>
         </div>
       ) : showAnswer ? (
-        <div className="rounded-2xl bg-gray-50 px-4 py-3 text-sm leading-7 text-foreground">
+        <div className="text-[13.5px] leading-7 text-foreground">
           <div className="markdown-body prose prose-sm max-w-none text-foreground prose-pre:bg-gray-900 prose-pre:text-gray-100">
-            <MarkdownAnswer content={m.content} citations={allCitations} />
+            <MarkdownAnswer
+              content={m.content}
+              citations={allCitations}
+              inflight={m.inflight}
+            />
           </div>
         </div>
       ) : null}
@@ -1671,40 +1738,157 @@ function AssistantRoundBlock({
   );
 }
 
-function AssistantMessageGroup({
-  messages,
-  priorCitations,
+const STARTER_PROMPTS_CARDS: {
+  title: string;
+  desc: string;
+  prompt: string;
+  icon: ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>;
+}[] = [
+  {
+    title: "总结核心全貌",
+    desc: "提炼当前知识库的结构脉络与最值得先读的重点资料",
+    prompt: "总结当前知识库里最值得先看的内容",
+    icon: BookOpen,
+  },
+  {
+    title: "探索提问切入点",
+    desc: "分析知识库覆盖范围，梳理高价值的提问视角与建议",
+    prompt: "梳理这个知识库适合怎么提问",
+    icon: Sparkles,
+  },
+  {
+    title: "提炼重点与风险",
+    desc: "深度挖掘资料中的关键结论、潜在风险与注意事项",
+    prompt: "从当前资料里提炼重点和潜在风险",
+    icon: Search,
+  },
+];
+
+/**
+ * 空状态欢迎引导卡片（Hero Welcome Guide）
+ * 沉浸式微渐变微标 + 3 组针对性建议提问微卡片，带 hover/active 微交互
+ */
+function ChatEmptyWelcomeGuide({
+  knowledgeBaseName,
+  selectedFolderName,
+  onSelectPrompt,
+}: {
+  knowledgeBaseName?: string;
+  selectedFolderName?: string | null;
+  onSelectPrompt: (prompt: string) => void;
+}) {
+  const targetName = selectedFolderName || knowledgeBaseName || "当前知识库";
+
+  return (
+    <div className="mx-auto my-auto flex w-full max-w-2xl flex-col items-center py-6 text-center animate-fadeIn">
+      {/* 沉浸式微渐变徽标 */}
+      <div className="relative mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/15 via-primary/10 to-primary/5 border border-primary/20 text-primary-deep shadow-xs">
+        <Sparkles className="h-7 w-7 text-primary" aria-hidden="true" />
+      </div>
+
+      <h2 className="text-base sm:text-lg font-semibold text-foreground tracking-tight">
+        围绕「{targetName}」展开探索
+      </h2>
+      <p className="mt-1.5 max-w-md text-xs sm:text-[13px] leading-relaxed text-muted-subtle">
+        基于已挂载的文档切片与深度向量检索，支持多轮深度推理、事实溯源与结构化总结。
+      </p>
+
+      {/* 3 张精美 Prompt 卡片 */}
+      <div className="mt-6 grid w-full grid-cols-1 gap-3 sm:grid-cols-3">
+        {STARTER_PROMPTS_CARDS.map((item, idx) => {
+          const Icon = item.icon;
+          return (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => onSelectPrompt(item.prompt)}
+              className="group relative flex flex-col justify-between rounded-xl border border-hairline/90 bg-white/90 p-3.5 text-left shadow-[0_1px_3px_rgba(0,0,0,0.03)] transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:bg-white hover:shadow-md active:scale-[0.98]"
+            >
+              <div>
+                <div className="mb-2.5 flex items-center justify-between">
+                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 text-primary-deep transition-colors group-hover:bg-primary/15">
+                    <Icon className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
+                  </div>
+                  <ArrowUpRight
+                    className="h-3.5 w-3.5 text-muted-faint opacity-0 transition-all duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:opacity-100 group-hover:text-primary-deep"
+                    aria-hidden="true"
+                  />
+                </div>
+                <div className="text-xs font-semibold text-foreground transition-colors group-hover:text-primary-deep">
+                  {item.title}
+                </div>
+                <p className="mt-1 text-[11px] leading-snug text-muted-subtle line-clamp-2">
+                  {item.desc}
+                </p>
+              </div>
+
+              <div className="mt-3 flex items-center gap-1 text-[10.5px] font-medium text-primary-deep opacity-80 group-hover:opacity-100">
+                <span>立即提问</span>
+                <ChevronRight className="h-2.5 w-2.5" />
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 形态 2：现代通栏流（Modern Fluid · Claude 风格）
+ * 极简通透排版：用户右对齐轻气泡 + 助手无卡片全幅通栏，正文与公式自然流淌。
+ */
+function ModernFluidTurn({
+  turn,
+  isLastTurn,
+  isStreaming,
+  turnAnchorRef,
   onOpenSourcesPanel,
   onViewSearchResults,
+  onViewRetrievalChunks,
   onViewReport,
 }: {
-  messages: UiChatMessage[];
-  /** 前面所有 group 累积的 citations（跨 turn 引用） */
-  priorCitations?: Citation[];
+  turn: ChatTurn;
+  isLastTurn: boolean;
+  isStreaming: boolean;
+  turnAnchorRef?: React.RefObject<HTMLDivElement | null>;
   onOpenSourcesPanel?: (citations: Citation[]) => void;
   onViewSearchResults?: (
     citations: Citation[],
     params?: Record<string, unknown>,
     recallStats?: RecallStats,
   ) => void;
+  onViewRetrievalChunks?: (citations: Citation[]) => void;
   onViewReport?: (html: string, citations: Citation[]) => void;
 }) {
-  // 本 group 自身的 citations（全量，供跨 turn 合并用）
+  const { userMessage, assistantMessages, accumulatedCitations } = turn;
+
+  const [userCopied, setUserCopied] = useState(false);
+
+  const handleCopyUserPrompt = useCallback(() => {
+    if (!userMessage?.content) return;
+    void navigator.clipboard.writeText(userMessage.content).then(() => {
+      setUserCopied(true);
+      setTimeout(() => setUserCopied(false), 2000);
+    });
+  }, [userMessage?.content]);
+
+  // 本 turn 自身的 citations（全量）
   const ownCitations = useMemo(() => {
     const map = new Map<string, Citation>();
-    for (const m of messages) {
+    for (const m of assistantMessages) {
       for (const c of m.citations ?? []) {
         map.set(c.chunk_id, c);
       }
     }
     return Array.from(map.values());
-  }, [messages]);
+  }, [assistantMessages]);
 
   // 本轮 LLM 实际引用的 citations（用于"引用来源"展示）
   const citedCitations = useMemo(() => {
     const cited = new Set<string>();
     const re = /\[c(\d+)\]/g;
-    for (const m of messages) {
+    for (const m of assistantMessages) {
       if (!m.content) continue;
       let match;
       while ((match = re.exec(m.content)) !== null) {
@@ -1713,88 +1897,157 @@ function AssistantMessageGroup({
     }
     if (cited.size === 0) return [];
     return ownCitations.filter((c) => c.alias && cited.has(c.alias));
-  }, [messages, ownCitations]);
+  }, [assistantMessages, ownCitations]);
 
   // 跨 turn 合并 citations（用于 MarkdownAnswer 渲染 [cN] 引用）
   const allCitationsForRender = useMemo(() => {
     const map = new Map<string, Citation>();
-    for (const c of priorCitations ?? []) {
+    for (const c of accumulatedCitations) {
       if (c.chunk_id) map.set(c.chunk_id, c);
     }
     for (const c of ownCitations) {
       map.set(c.chunk_id, c);
     }
     return Array.from(map.values());
-  }, [ownCitations, priorCitations]);
+  }, [accumulatedCitations, ownCitations]);
 
-  const isGroupInflight = messages.some((m) => m.inflight);
-  const lastMsg = messages[messages.length - 1];
+  const isTurnInflight = assistantMessages.some((m) => m.inflight);
+  const lastMsg = assistantMessages[assistantMessages.length - 1];
+  const hasContent = assistantMessages.some((m) => m.content);
 
-  // 整组的思考、旁白与工具调用合并成一条轨道，放在答案之前统一折叠
-  const traceSteps = useMemo(() => buildTraceSteps(messages), [messages]);
+  // 整组的思考、旁白与工具调用合并成一条轨道
+  const traceSteps = useMemo(
+    () => buildTraceSteps(assistantMessages),
+    [assistantMessages],
+  );
+
+  // 当前轮是否处于"正在规划 / 等待"状态：
+  const showTurnPlanning = useMemo(() => {
+    if (!isStreaming || !isLastTurn) return false;
+    if (traceSteps.length > 0) return false;
+    return !hasContent;
+  }, [isStreaming, isLastTurn, traceSteps.length, hasContent]);
 
   return (
-    <div className="animate-fadeIn">
-      {/* 头像 */}
-      <div className="mb-1.5">
-        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary text-sm">
-          <Sparkles className="h-4 w-4" />
+    <div
+      ref={isLastTurn && userMessage ? turnAnchorRef : undefined}
+      className="space-y-4 animate-fadeIn"
+    >
+      {/* 1. 用户提问：右侧轻量气泡（Claude 风格），带 hover 快捷复制与时间 */}
+      {userMessage ? (
+        <div className="group relative flex flex-col items-end gap-1 pt-1">
+          <div className="relative max-w-[85%] rounded-[20px_20px_4px_20px] bg-primary/5 px-4 py-2.5 text-[13.5px] leading-6 text-foreground sm:px-5 sm:py-3 transition-colors hover:bg-primary/10 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+            <div className="whitespace-pre-wrap break-words">{userMessage.content}</div>
+            {userMessage.retrieval ? (
+              <div className="mt-2">
+                <RetrievalChip
+                  retrieval={userMessage.retrieval}
+                  onViewChunks={onViewRetrievalChunks}
+                />
+              </div>
+            ) : null}
+          </div>
+
+          <div className="flex h-5 items-center gap-1.5 px-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              type="button"
+              onClick={handleCopyUserPrompt}
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-subtle hover:bg-gray-100 hover:text-foreground transition-colors"
+              title="复制问题"
+              aria-label="复制问题"
+            >
+              {userCopied ? (
+                <Check className="h-3 w-3 text-emerald-600" aria-hidden="true" />
+              ) : (
+                <Copy className="h-3 w-3" aria-hidden="true" />
+              )}
+            </button>
+            {userMessage.created_at ? (
+              <span className="text-[10px] text-muted-faint whitespace-nowrap select-none">
+                {formatDate(userMessage.created_at)}
+              </span>
+            ) : null}
+          </div>
         </div>
-      </div>
+      ) : null}
 
-      <div className="min-w-0">
-        {/* 推理轨道：整组思考 + 旁白 + 工具调用，默认折叠成一行，让答案先出现 */}
-        <TraceTimeline
-          steps={traceSteps}
-          inflight={isGroupInflight}
-          onViewSearchResults={onViewSearchResults}
-        />
+      {/* 2. 助手回答区：现代通栏，纯净通透，无厚重外框 */}
+      <div className="min-w-0 space-y-3 pt-1">
+        {/* 头部助手身份标记 */}
+        <div className="flex items-center gap-2">
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary-deep text-xs font-semibold select-none">
+            <Sparkles className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
+          </div>
+          <span className="text-xs font-medium text-foreground select-none">
+            知识库助手
+          </span>
+          {isTurnInflight ? (
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-primary-deep font-medium">
+              <Loader2 className="h-3 w-3 animate-spin text-primary" />
+              正在生成…
+            </span>
+          ) : null}
+        </div>
 
-        {/* 每条 assistant 消息的答案区；无交付内容的中间轮自己返回 null */}
-        {messages.map((m, idx) => (
+        {/* 推理轨道：整组思考 + 旁白 + 工具调用 */}
+        {traceSteps.length > 0 ? (
+          <div className="rounded-xl border border-hairline/80 bg-gray-50/60 p-2.5">
+            <TraceTimeline
+              steps={traceSteps}
+              inflight={isTurnInflight}
+              onViewSearchResults={onViewSearchResults}
+            />
+          </div>
+        ) : null}
+
+        {/* 规划中 / 等待中指示器 */}
+        {showTurnPlanning ? (
+          <div className="flex items-center gap-2 py-1.5 text-xs text-muted-subtle">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+            <span className="text-shimmer font-medium">正在检索与推理…</span>
+          </div>
+        ) : null}
+
+        {/* 答案输出与 HTML 报告 */}
+        {assistantMessages.map((m, idx) => (
           <AssistantRoundBlock
             key={m.id}
             message={m}
-            isLast={idx === messages.length - 1}
+            isLast={idx === assistantMessages.length - 1}
             allCitations={allCitationsForRender}
             onViewReport={onViewReport}
             className={idx > 0 ? "mt-3" : undefined}
           />
         ))}
 
-        {/* ---- 以下内容仅在整组末尾显示一次 ---- */}
+        {/* 底部统一行：左侧【方案 2 微型芯片 + 折叠溢出】+ 右侧【操作栏】 */}
+        {!isTurnInflight && (hasContent || citedCitations.length > 0) ? (
+          <div className="mt-4 pt-2.5 border-t border-hairline/60 flex flex-wrap items-center justify-between gap-2">
+            {/* 左侧：微型芯片与 token 计数 */}
+            <div className="flex items-center gap-2.5 min-w-0">
+              {citedCitations.length > 0 ? (
+                <ReferencedDocumentsBlock
+                  citations={citedCitations}
+                  onOpenAllSources={onOpenSourcesPanel}
+                />
+              ) : null}
+              {lastMsg?.usage ? (
+                <span className="text-[10.5px] text-muted-faint hidden sm:inline select-none">
+                  tokens: {lastMsg.usage.total_tokens}
+                </span>
+              ) : null}
+            </div>
 
-        {/* 操作按钮（复制、赞、踩、分享） */}
-        {!isGroupInflight && messages.some((m) => m.content) ? (
-          <AssistantActionBar messages={messages} />
-        ) : null}
-
-        {/* 全部来源：合并后的 citations 统一显示 */}
-        {!isGroupInflight ? (
-          <ReferencedDocumentsBlock
-            citations={citedCitations}
-            onOpenAllSources={onOpenSourcesPanel}
-          />
-        ) : null}
-
-        {/* token 统计（取最后一条的 usage，或汇总） */}
-        {!isGroupInflight && lastMsg?.usage ? (
-          <div className="mt-1.5 text-[10px] text-muted-subtle">
-            tokens · prompt {lastMsg.usage.prompt_tokens} · completion{" "}
-            {lastMsg.usage.completion_tokens}
-            {typeof lastMsg.usage.thinking_tokens === "number"
-              ? ` · thinking ${lastMsg.usage.thinking_tokens}`
-              : ""}{" "}
-            · total {lastMsg.usage.total_tokens}
-          </div>
-        ) : null}
-
-        {lastMsg?.created_at ? (
-          <div className="mt-1 text-[10px] text-muted">
-            {formatDate(lastMsg.created_at)}
+            {/* 右侧：操作按钮组 */}
+            <AssistantActionBar messages={assistantMessages} />
           </div>
         ) : null}
       </div>
+
+      {/* 轮次间微弱分隔线（仅非最后一轮） */}
+      {!isLastTurn ? (
+        <div className="h-px bg-hairline/60 my-6" aria-hidden="true" />
+      ) : null}
     </div>
   );
 }
@@ -3203,6 +3456,8 @@ export const KnowledgeChatPanel = ({
   const [confirmBusy, setConfirmBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const rafScrollRef = useRef<number | null>(null);
   // Cursor 式滚动：新用户消息发出后置顶，底部保留一段"呼吸区"空白
   const turnAnchorRef = useRef<HTMLDivElement>(null);
   const bottomSpacerRef = useRef<HTMLDivElement>(null);
@@ -3391,13 +3646,26 @@ export const KnowledgeChatPanel = ({
     setLastSelectedModel(knowledgeBaseId, selectedFolderId, settings.model);
   }, [knowledgeBaseId, selectedFolderId, settings.model]);
 
-  // 检测用户是否在底部（阈值 50px）
+  // 检测用户是否在底部（阈值 60px）
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const threshold = 50;
-    isAtBottomRef.current =
+    const threshold = 60;
+    const atBottom =
       el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    isAtBottomRef.current = atBottom;
+    setIsAtBottom(atBottom);
+  }, []);
+
+  const scrollToBottom = useCallback((smooth = true) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: smooth ? "smooth" : "auto",
+    });
+    isAtBottomRef.current = true;
+    setIsAtBottom(true);
   }, []);
 
   // 底部"呼吸区"高度：让当前轮（最后一条用户消息 + 助手回复）能被滚动到视口顶部，
@@ -3444,10 +3712,15 @@ export const KnowledgeChatPanel = ({
       requestAnimationFrame(() => scrollTurnToTop(true));
       return;
     }
-    // 未处于置顶状态时：仅当用户本就在底部且内容溢出，才跟随到底
+    // 未处于置顶状态时：仅当用户本就在底部且内容溢出，才平滑平稳跟随到底（通过 RAF 批处理）
     const overflows = container.scrollHeight > container.clientHeight + 4;
     if (isAtBottomRef.current && overflows) {
-      container.scrollTop = container.scrollHeight;
+      if (rafScrollRef.current) cancelAnimationFrame(rafScrollRef.current);
+      rafScrollRef.current = requestAnimationFrame(() => {
+        if (isAtBottomRef.current && scrollRef.current) {
+          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+      });
     }
   }, [messages, isStreaming, recomputeSpacer, scrollTurnToTop]);
 
@@ -3696,41 +3969,19 @@ export const KnowledgeChatPanel = ({
       ? `知识库「${knowledgeBaseName}」`
       : "历史会话";
 
-  // 跨 turn 累积 citations：每个 assistant group 可引用前面所有 group 的 chunk
-  const groupsWithAccumulatedCitations = useMemo(() => {
-    const groups = groupMessages(messages);
-    const accumulated = new Map<string, Citation>();
-    return groups.map((group) => {
-      if (group.type === "assistant-group") {
-        for (const m of group.messages) {
-          for (const c of m.citations ?? []) {
-            if (c.chunk_id) accumulated.set(c.chunk_id, c);
-          }
-        }
-      }
-      return { group, accumulatedCitations: Array.from(accumulated.values()) };
-    });
+  // 转换消息列表为轮次结构（Turn-based）并累积跨轮 citations
+  const chatTurns = useMemo(() => {
+    return groupMessagesIntoTurns(messages);
   }, [messages]);
 
-  // 最后一条用户消息所在 group 索引：作为"当前轮"的置顶锚点
-  const lastUserGroupIndex = useMemo(() => {
+  // 最后一条用户轮次的索引，供 turnAnchorRef 置顶使用
+  const lastUserTurnIndex = useMemo(() => {
     let idx = -1;
-    groupsWithAccumulatedCitations.forEach((g, i) => {
-      if (g.group.type === "user") idx = i;
+    chatTurns.forEach((t, i) => {
+      if (t.userMessage) idx = i;
     });
     return idx;
-  }, [groupsWithAccumulatedCitations]);
-
-  // 是否显示 "Planning next moves"：模型正在生成，但当前这一轮还没有任何可见输出
-  //（思考 or 正文）——即用户提问后的等待期、以及多轮之间的间隙。一旦开始吐字则隐藏。
-  const showPlanning = useMemo(() => {
-    if (!isStreaming) return false;
-    const activeInflight = messages.find(
-      (m) => m.role === "assistant" && m.inflight,
-    );
-    if (!activeInflight) return true;
-    return !activeInflight.content && !activeInflight.thinking;
-  }, [isStreaming, messages]);
+  }, [chatTurns]);
 
   return (
     <section
@@ -3764,199 +4015,195 @@ export const KnowledgeChatPanel = ({
         </>
       ) : null}
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-row overflow-hidden">
-        {/* 主体（顶栏 + 通知 + 消息流 + 输入区） */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {/* 顶部 */}
-          <div className="bg-white">
-            <div className={cn(CHAT_CONTENT_CLASS, "px-4 py-3 sm:px-5")}>
-              <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                  <Bot className="h-5 w-5" />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        {/* 顶部全宽状态栏 */}
+        <div className="shrink-0 border-b border-hairline/70 bg-white/95 px-4 py-2.5 backdrop-blur-xs sm:px-6">
+          <div className="flex items-center justify-between gap-3">
+            {/* 左侧：Bot 标识 + 标题 + 状态胶囊 + 范围面包屑 */}
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary-deep shadow-xs">
+                <Sparkles className="h-4.5 w-4.5 text-primary" aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  {renaming ? (
+                    <input
+                      autoFocus
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onBlur={handleRename}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void handleRename();
+                        if (e.key === "Escape") {
+                          setRenaming(false);
+                          setRenameValue("");
+                        }
+                      }}
+                      className="min-w-0 rounded-md border border-primary/40 bg-white px-2 py-0.5 text-sm font-medium outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  ) : (
+                    <span
+                      className="truncate text-sm font-semibold text-foreground hover:text-primary-deep transition-colors cursor-pointer select-none"
+                      title={activeSession?.title ? `${activeSession.title}（双击可重命名）` : (knowledgeBaseName || "知识库问答")}
+                      onDoubleClick={() => {
+                        if (activeSession) {
+                          setRenameValue(activeSession.title || "");
+                          setRenaming(true);
+                        }
+                      }}
+                    >
+                      {activeSession?.title || knowledgeBaseName || "知识库问答"}
+                    </span>
+                  )}
+                  <PhasePill phase={phase} />
                 </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                    {renaming ? (
-                      <input
-                        autoFocus
-                        value={renameValue}
-                        onChange={(e) => setRenameValue(e.target.value)}
-                        onBlur={handleRename}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") void handleRename();
-                          if (e.key === "Escape") {
-                            setRenaming(false);
-                            setRenameValue("");
-                          }
-                        }}
-                        className="min-w-0 flex-1 rounded-md border border-gray-200 px-2 py-0.5 text-sm outline-none focus:border-primary"
-                      />
-                    ) : (
-                      <span className="truncate" title={activeSession?.title}>
-                        {activeSession?.title || knowledgeBaseName}
-                      </span>
-                    )}
-                    <PhasePill phase={phase} />
-                    <ContextIndicator report={contextStatus} />
-                  </div>
-                  <p className="mt-1 truncate text-[11px] leading-5 text-muted">
+                <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-muted-subtle truncate">
+                  <span className="truncate">
                     {selectedFolderName
-                      ? selectedFolderName
+                      ? `${knowledgeBaseName ? `${knowledgeBaseName} / ` : ""}${selectedFolderName}`
                       : knowledgeBaseName
                         ? knowledgeBaseName
                         : "选择一个知识库以开始问答"}
-                    {activeSession
-                      ? ` · ${activeSession.message_count} 条消息`
-                      : ""}
-                  </p>
+                  </span>
+                  {activeSession ? (
+                    <span className="text-muted-faint shrink-0">
+                      · {activeSession.message_count} 条消息
+                    </span>
+                  ) : null}
                 </div>
-
-                {/* 紧凑模式：顶栏放新建 + 历史 popover */}
-                {compact ? (
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => void handleNewSession()}
-                      className="flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 text-foreground hover:border-primary"
-                      title="新建会话"
-                      aria-label="新建会话"
-                    >
-                      <MessageSquarePlus className="h-3.5 w-3.5" />
-                    </button>
-                    <SessionPopover
-                      sessions={sessions}
-                      activeSessionId={activeSessionId}
-                      onSelect={(id) => void handleSelectSession(id)}
-                      onNew={() => void handleNewSession()}
-                      onRename={handleSessionRename}
-                      onDelete={handleSessionDelete}
-                    />
-                  </div>
-                ) : null}
               </div>
+            </div>
+
+            {/* 右侧：上下文指示器 + 紧凑模式控制 */}
+            <div className="flex items-center gap-2 shrink-0">
+              <ContextIndicator report={contextStatus} />
+              {compact ? (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => void handleNewSession()}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-hairline bg-white text-muted transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+                    title="新建会话"
+                    aria-label="新建会话"
+                  >
+                    <MessageSquarePlus className="h-3.5 w-3.5" />
+                  </button>
+                  <SessionPopover
+                    sessions={sessions}
+                    activeSessionId={activeSessionId}
+                    onSelect={(id) => void handleSelectSession(id)}
+                    onNew={() => void handleNewSession()}
+                    onRename={handleSessionRename}
+                    onDelete={handleSessionDelete}
+                  />
+                </div>
+              ) : null}
             </div>
           </div>
+        </div>
 
-          {/* scope 由左侧 KB / 文件夹选择驱动；切换时 hook 会自动加载对应 session 列表 */}
-
-          {phase === "disconnected" ? (
-            <div className={cn(CHAT_CONTENT_CLASS, "mt-3 px-4 sm:px-5")}>
-              <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
-                <AlertTriangle className="mt-0.5 h-3.5 w-3.5" />
-                <span className="flex-1">
-                  连接已断开。直接发送下一条消息即可自动重连。
-                </span>
+        {/* 中间核心工作区：左侧消息主体列 + 右侧引用源面板 */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-row overflow-hidden">
+          {/* 聊天主体列（通知 + 消息流 + 输入区） */}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            {/* 错误提示 banner */}
+            {phase === "disconnected" ? (
+              <div className={cn(CHAT_CONTENT_CLASS, "mt-3 px-4 sm:px-5")}>
+                <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5" />
+                  <span className="flex-1">
+                    连接已断开。直接发送下一条消息即可自动重连。
+                  </span>
+                </div>
               </div>
-            </div>
-          ) : null}
+            ) : null}
 
-          {lastError ? (
-            <div className={cn(CHAT_CONTENT_CLASS, "mt-3 px-4 sm:px-5")}>
-              <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
-                <AlertTriangle className="mt-0.5 h-3.5 w-3.5" />
-                <span className="flex-1">{lastError}</span>
-                <button
-                  type="button"
-                  onClick={clearError}
-                  className="text-red-500 hover:text-red-700"
-                >
-                  关闭
-                </button>
+            {lastError ? (
+              <div className={cn(CHAT_CONTENT_CLASS, "mt-3 px-4 sm:px-5")}>
+                <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5" />
+                  <span className="flex-1">{lastError}</span>
+                  <button
+                    type="button"
+                    onClick={clearError}
+                    className="text-red-500 hover:text-red-700"
+                  >
+                    关闭
+                  </button>
+                </div>
               </div>
-            </div>
-          ) : null}
+            ) : null}
 
-          {/* 消息列表 + 输入区：消息在剩余视口内垂直居中，输入固定底部 */}
-          <div className="flex min-h-0 flex-1 flex-col">
-            <div
-              ref={scrollRef}
-              tabIndex={-1}
-              onScroll={handleScroll}
-              onMouseEnter={(e) =>
-                e.currentTarget.focus({ preventScroll: true })
-              }
-              style={{ scrollbarGutter: "stable both-edges" }}
-              className="flex-1 min-h-0 overflow-y-auto overscroll-contain outline-none"
-            >
+            {/* 消息列表 + 输入区：消息在剩余视口内垂直居中，输入固定底部 */}
+            <div className="relative flex min-h-0 flex-1 flex-col">
+              {/* 顶部渐变羽化遮罩 */}
               <div
-                className={cn(
-                  "flex min-h-full flex-col",
-                  messages.length === 0 && "justify-center",
-                )}
+                aria-hidden="true"
+                className="pointer-events-none absolute top-0 left-0 right-0 h-6 z-10 bg-gradient-to-b from-white via-white/80 to-transparent"
+              />
+
+              <div
+                ref={scrollRef}
+                tabIndex={-1}
+                onScroll={handleScroll}
+                onMouseEnter={(e) =>
+                  e.currentTarget.focus({ preventScroll: true })
+                }
+                style={{ scrollbarGutter: "stable both-edges" }}
+                className="flex-1 min-h-0 overflow-y-auto overscroll-contain outline-none"
               >
                 <div
                   className={cn(
-                    CHAT_CONTENT_CLASS,
-                    "space-y-4 px-4 pt-4 pb-2 sm:px-5",
+                    "flex min-h-full flex-col",
+                    messages.length === 0 && "justify-center",
                   )}
                 >
-                  {isLoading && messages.length === 0 ? (
-                    <div className="flex items-center justify-center py-10 text-xs text-muted">
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      加载历史消息…
-                    </div>
-                  ) : null}
-
-                  {messages.length === 0 && !isLoading && !effectiveDisabled ? (
-                    <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-6 text-sm text-muted">
-                      还没有对话。可以试试下面 starter
-                      prompts，或直接输入你的问题。
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {STARTER_PROMPTS.map((p) => (
-                          <button
-                            key={p}
-                            type="button"
-                            onClick={() => void handleSend(p)}
-                            className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs text-foreground transition-colors hover:border-primary hover:bg-primary/5"
-                          >
-                            {p}
-                          </button>
-                        ))}
+                  <div
+                    className={cn(
+                      CHAT_CONTENT_CLASS,
+                      "space-y-4 px-4 pt-4 pb-2 sm:px-5",
+                    )}
+                  >
+                    {isLoading && messages.length === 0 ? (
+                      <div className="flex items-center justify-center py-10 text-xs text-muted">
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        加载历史消息…
                       </div>
-                    </div>
-                  ) : null}
+                    ) : null}
 
-                  {groupsWithAccumulatedCitations.map(
-                    ({ group, accumulatedCitations }, gi) => {
-                      if (group.type === "summary") {
-                        return (
-                          <div key={group.messages[0].id} className="flex">
-                            <span className="text-[13px] text-muted">
-                              Chat context summarized
-                            </span>
-                          </div>
-                        );
-                      }
-                      if (group.type === "user") {
-                        const m = group.messages[0];
-                        const isLastUser = gi === lastUserGroupIndex;
+                    {messages.length === 0 && !isLoading && !effectiveDisabled ? (
+                      <ChatEmptyWelcomeGuide
+                        knowledgeBaseName={knowledgeBaseName}
+                        selectedFolderName={selectedFolderName}
+                        onSelectPrompt={(p) => void handleSend(p)}
+                      />
+                    ) : null}
+
+                    {chatTurns.map((turn, ti) => {
+                      if (turn.summaryMessage) {
                         return (
                           <div
-                            key={m.id}
-                            ref={isLastUser ? turnAnchorRef : undefined}
+                            key={turn.id}
+                            className="my-5 flex items-center justify-center gap-3"
                           >
-                            <UserMessageBubble
-                              message={m}
-                              onViewRetrievalChunks={(c) =>
-                                setSourcesSidePanel({
-                                  citations: c,
-                                  showScore: true,
-                                  params: m.retrieval?.params,
-                                })
-                              }
-                            />
+                            <div className="h-px flex-1 bg-hairline" />
+                            <span className="rounded-full border border-hairline bg-gray-50/80 px-3 py-0.5 text-xs text-muted-subtle shadow-xs">
+                              对话上下文已总结压缩
+                            </span>
+                            <div className="h-px flex-1 bg-hairline" />
                           </div>
                         );
                       }
-                      // assistant-group
-                      const groupKey = group.messages
-                        .map((m) => m.id)
-                        .join("|");
+
+                      const isLastUserTurn = ti === lastUserTurnIndex;
+
                       return (
-                        <AssistantMessageGroup
-                          key={groupKey}
-                          messages={group.messages}
-                          priorCitations={accumulatedCitations}
+                        <ModernFluidTurn
+                          key={turn.id}
+                          turn={turn}
+                          isLastTurn={isLastUserTurn}
+                          isStreaming={isStreaming}
+                          turnAnchorRef={turnAnchorRef}
                           onOpenSourcesPanel={(c) =>
                             setSourcesSidePanel({
                               citations: c,
@@ -3971,30 +4218,78 @@ export const KnowledgeChatPanel = ({
                               recallStats,
                             })
                           }
+                          onViewRetrievalChunks={(c) =>
+                            setSourcesSidePanel({
+                              citations: c,
+                              showScore: true,
+                              params: turn.userMessage?.retrieval?.params,
+                            })
+                          }
                           onViewReport={(html, citations) => {
                             setReportHtml(html);
                             setReportCitations(citations);
                           }}
                         />
                       );
-                    },
-                  )}
-                  {summarizing || showPlanning ? (
-                    <div className="flex">
-                      <span className="text-shimmer text-[13px] font-medium">
-                        {summarizing
-                          ? "Summarizing chat context"
-                          : "Planning next moves"}
-                      </span>
-                    </div>
-                  ) : null}
-                  <div
-                    ref={bottomSpacerRef}
-                    aria-hidden
-                    style={{ height: bottomSpacer }}
-                  />
+                    })}
+
+                    {summarizing ? (
+                      <div className="flex">
+                        <span className="text-shimmer text-[13px] font-medium">
+                          正在总结对话上下文…
+                        </span>
+                      </div>
+                    ) : null}
+
+                    <div
+                      ref={bottomSpacerRef}
+                      aria-hidden
+                      style={{ height: bottomSpacer }}
+                    />
+                  </div>
                 </div>
               </div>
+
+              {/* 底部渐变羽化遮罩（输入框上方） */}
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute bottom-0 left-0 right-0 h-5 z-10 bg-gradient-to-t from-white via-white/80 to-transparent"
+              />
+
+              {/* 智能置底悬浮胶囊 */}
+              {!isAtBottom && messages.length > 0 && (
+                <div className="absolute bottom-3 right-6 z-20 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                  <button
+                    type="button"
+                    onClick={() => scrollToBottom(true)}
+                    className="group inline-flex items-center gap-1.5 rounded-full border border-hairline bg-white/95 px-3 py-1.5 text-xs font-medium text-foreground shadow-md backdrop-blur-sm transition-all hover:border-primary/40 hover:bg-white hover:text-primary-deep"
+                    title="滚动到底部"
+                    aria-label="滚动到底部"
+                  >
+                    {isStreaming ? (
+                      <>
+                        <span className="relative flex h-2 w-2">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+                          <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+                        </span>
+                        <span className="text-primary-deep font-medium">生成中</span>
+                        <ChevronDown
+                          className="h-3.5 w-3.5 text-primary-deep transition-transform group-hover:translate-y-0.5"
+                          aria-hidden="true"
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown
+                          className="h-3.5 w-3.5 text-muted-subtle transition-transform group-hover:translate-y-0.5 group-hover:text-primary"
+                          aria-hidden="true"
+                        />
+                        <span>回到底部</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* 输入区：参数扁平化 toolbar + textarea + 发送/停止 */}
@@ -4014,7 +4309,7 @@ export const KnowledgeChatPanel = ({
                 <div className="transition-colors">
                   <div
                     className={cn(
-                      "relative border border-gray-200 bg-white transition-colors focus-within:border-primary",
+                      "relative border border-hairline bg-white shadow-[0_2px_8px_rgba(0,0,0,0.04)] transition-all hover:border-gray-300/80 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15 focus-within:shadow-[0_4px_12px_rgba(0,0,0,0.06)]",
                       showMultilineLayout ? "rounded-2xl" : "rounded-full py-2",
                     )}
                   >
@@ -4195,7 +4490,7 @@ export const KnowledgeChatPanel = ({
                               <button
                                 type="button"
                                 onClick={stop}
-                                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-500 text-white transition-colors hover:bg-red-400"
+                                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-500 text-white shadow-xs transition-all hover:bg-red-600 active:scale-95 animate-pulse"
                                 title="停止生成"
                               >
                                 <CircleStop className="h-3.5 w-3.5" />
@@ -4204,7 +4499,7 @@ export const KnowledgeChatPanel = ({
                               <button
                                 type="button"
                                 onClick={stopSummarize}
-                                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-500 text-white transition-colors hover:bg-red-400"
+                                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-500 text-white shadow-xs transition-all hover:bg-red-600 active:scale-95 animate-pulse"
                                 title="中断总结"
                               >
                                 <CircleStop className="h-3.5 w-3.5" />
@@ -4215,10 +4510,10 @@ export const KnowledgeChatPanel = ({
                                 onClick={() => void handleSend()}
                                 disabled={effectiveDisabled || !input.trim()}
                                 className={cn(
-                                  "flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors",
+                                  "flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-all",
                                   effectiveDisabled || !input.trim()
-                                    ? "cursor-not-allowed bg-gray-200 text-muted"
-                                    : "bg-neutral-900 text-white hover:bg-neutral-800",
+                                    ? "cursor-not-allowed bg-gray-100 text-muted-subtle"
+                                    : "bg-primary text-white shadow-xs hover:bg-primary-deep active:scale-95",
                                 )}
                                 title="发送（Enter）"
                               >
@@ -4264,7 +4559,7 @@ export const KnowledgeChatPanel = ({
                             <button
                               type="button"
                               onClick={stop}
-                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-500 text-white transition-colors hover:bg-red-400"
+                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-500 text-white shadow-xs transition-all hover:bg-red-600 active:scale-95 animate-pulse"
                               title="停止生成"
                             >
                               <CircleStop className="h-3.5 w-3.5" />
@@ -4273,7 +4568,7 @@ export const KnowledgeChatPanel = ({
                             <button
                               type="button"
                               onClick={stopSummarize}
-                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-500 text-white transition-colors hover:bg-red-400"
+                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-500 text-white shadow-xs transition-all hover:bg-red-400"
                               title="中断总结"
                             >
                               <CircleStop className="h-3.5 w-3.5" />
@@ -4284,10 +4579,10 @@ export const KnowledgeChatPanel = ({
                               onClick={() => void handleSend()}
                               disabled={effectiveDisabled || !input.trim()}
                               className={cn(
-                                "flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors",
+                                "flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-all",
                                 effectiveDisabled || !input.trim()
-                                  ? "cursor-not-allowed bg-gray-200 text-muted"
-                                  : "bg-neutral-900 text-white hover:bg-neutral-800",
+                                  ? "cursor-not-allowed bg-gray-100 text-muted-subtle"
+                                  : "bg-primary text-white shadow-xs hover:bg-primary-deep active:scale-95",
                               )}
                               title="发送（Enter）"
                             >
@@ -4305,19 +4600,21 @@ export const KnowledgeChatPanel = ({
               </div>
             </div>
           </div>
+
+          {/* 右侧引用源 / 检索详情侧边栏 */}
+          {sourcesSidePanel &&
+          (sourcesSidePanel.citations.length > 0 ||
+            sourcesSidePanel.params ||
+            sourcesSidePanel.recallStats) ? (
+            <ReferencesSidePanel
+              citations={sourcesSidePanel.citations}
+              showScore={sourcesSidePanel.showScore}
+              params={sourcesSidePanel.params}
+              recallStats={sourcesSidePanel.recallStats}
+              onClose={() => setSourcesSidePanel(null)}
+            />
+          ) : null}
         </div>
-        {sourcesSidePanel &&
-        (sourcesSidePanel.citations.length > 0 ||
-          sourcesSidePanel.params ||
-          sourcesSidePanel.recallStats) ? (
-          <ReferencesSidePanel
-            citations={sourcesSidePanel.citations}
-            showScore={sourcesSidePanel.showScore}
-            params={sourcesSidePanel.params}
-            recallStats={sourcesSidePanel.recallStats}
-            onClose={() => setSourcesSidePanel(null)}
-          />
-        ) : null}
       </div>
 
       {/* 调研报告模态框 */}

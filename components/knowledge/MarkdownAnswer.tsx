@@ -42,6 +42,7 @@ const ALIAS_RE = /^c\d+$/;
 interface MarkdownAnswerProps {
   content: string;
   citations?: Citation[];
+  inflight?: boolean;
 }
 
 interface CitationLookup {
@@ -137,7 +138,11 @@ function mapChildren(
   });
 }
 
-export function MarkdownAnswer({ content, citations }: MarkdownAnswerProps) {
+export function MarkdownAnswer({
+  content,
+  citations,
+  inflight,
+}: MarkdownAnswerProps) {
   const lookup = useMemo<CitationLookup>(() => {
     const byAlias = new Map<string, { index: number; citation: Citation }>();
     const byChunkId = new Map<string, { index: number; citation: Citation }>();
@@ -191,12 +196,20 @@ export function MarkdownAnswer({ content, citations }: MarkdownAnswerProps) {
   }, [lookup, warnedUnknown]);
 
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkMath]}
-      rehypePlugins={[rehypeKatex]}
-      components={components}
-    >
-      {content}
-    </ReactMarkdown>
+    <div className="relative">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+        components={components}
+      >
+        {content}
+      </ReactMarkdown>
+      {inflight ? (
+        <span
+          aria-hidden="true"
+          className="inline-block h-3.5 w-1.5 ml-1 rounded-[1px] bg-primary animate-pulse align-middle"
+        />
+      ) : null}
+    </div>
   );
 }
