@@ -262,7 +262,11 @@ function traceSummaryLabel(steps: TraceStep[], inflight: boolean): string {
   if (inflight) {
     const running = [...steps]
       .reverse()
-      .find((s) => (s.kind === "tool" ? s.tc.inflight : s.inflight));
+      .find((s) =>
+        s.kind === "tool"
+          ? s.tc.inflight
+          : s.kind === "think" && s.inflight,
+      );
     if (running?.kind === "tool") {
       const tc = running.tc;
       const stage =
