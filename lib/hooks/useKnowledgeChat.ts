@@ -217,6 +217,8 @@ function fromBackendMessage(message: ChatMessage): UiChatMessage {
     role: message.role,
     content: message.content ?? "",
     thinking: message.thinking ?? undefined,
+    thinking_ms:
+      typeof message.thinking_ms === "number" ? message.thinking_ms : undefined,
     tool_calls: message.tool_calls ?? [],
     citations: message.citations ?? [],
     usage: message.usage ?? undefined,
@@ -237,6 +239,16 @@ function fromBackendMessage(message: ChatMessage): UiChatMessage {
         }
       : {}),
   };
+}
+
+function stampThinkingStart(m: UiChatMessage): UiChatMessage {
+  if (m.thinking_started_at != null) return m;
+  return { ...m, thinking_started_at: Date.now() };
+}
+
+function finalizeThinkingMs(m: UiChatMessage): UiChatMessage {
+  if (m.thinking_ms != null || m.thinking_started_at == null) return m;
+  return { ...m, thinking_ms: Math.max(0, Date.now() - m.thinking_started_at) };
 }
 
 function makeLocalId(prefix: string): string {
@@ -628,7 +640,10 @@ export function useKnowledgeChat(
           setMessages((prev) =>
             prev.map((m) =>
               m.id === id
-                ? { ...m, thinking: (m.thinking ?? "") + frame.data.text }
+                ? stampThinkingStart({
+                    ...m,
+                    thinking: (m.thinking ?? "") + frame.data.text,
+                  })
                 : m
             )
           );
@@ -640,7 +655,12 @@ export function useKnowledgeChat(
           if (!id) break;
           setMessages((prev) =>
             prev.map((m) =>
-              m.id === id ? { ...m, content: m.content + frame.data.text } : m
+              m.id === id
+                ? finalizeThinkingMs({
+                    ...m,
+                    content: m.content + frame.data.text,
+                  })
+                : m
             )
           );
           break;
@@ -677,12 +697,16 @@ export function useKnowledgeChat(
           setMessages((prev) =>
             prev.map((m) => {
               if (m.id !== targetId) return m;
-              const dup = m.tool_calls.some(
+              const doneThinking = finalizeThinkingMs(m);
+              const dup = doneThinking.tool_calls.some(
                 (t) => t.id === placeholder.id || t.index === placeholder.index
               );
               return dup
-                ? m
-                : { ...m, tool_calls: [...m.tool_calls, placeholder] };
+                ? doneThinking
+                : {
+                    ...doneThinking,
+                    tool_calls: [...doneThinking.tool_calls, placeholder],
+                  };
             })
           );
           break;
@@ -860,7 +884,7 @@ export function useKnowledgeChat(
           setMessages((prev) =>
             prev.map((m) =>
               m.id === id
-                ? {
+                ? finalizeThinkingMs({
                     ...m,
                     id: backendId,
                     inflight: false,
@@ -868,7 +892,11 @@ export function useKnowledgeChat(
                       mergedCitations.length > 0 ? mergedCitations : m.citations,
                     finish_reason: frame.data.finish_reason ?? null,
                     usage: frame.data.usage ?? m.usage ?? null,
-                  }
+                    thinking_ms:
+                      typeof frame.data.thinking_ms === "number"
+                        ? frame.data.thinking_ms
+                        : m.thinking_ms,
+                  })
                 : m
             )
           );
@@ -889,15 +917,17 @@ export function useKnowledgeChat(
           // "调用中…"。tool_call 缺失的结果会在下一次会话回放走 REST 历史时补齐
           // （后端 _persist_assistant 已合并了 result_brief / items_added）。
           setMessages((prev) =>
-            prev.map((m) => ({
-              ...m,
-              inflight: false,
-              tool_calls: m.tool_calls.map((t) =>
-                t.inflight
-                  ? { ...t, inflight: false, argsText: undefined }
-                  : t
-              ),
-            }))
+            prev.map((m) =>
+              finalizeThinkingMs({
+                ...m,
+                inflight: false,
+                tool_calls: m.tool_calls.map((t) =>
+                  t.inflight
+                    ? { ...t, inflight: false, argsText: undefined }
+                    : t
+                ),
+              })
+            )
           );
           resetInflight();
           setPhase("ready");
@@ -945,7 +975,7 @@ export function useKnowledgeChat(
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === id || (m.inflight && !id)
-                  ? { ...m, inflight: false, cancelled: true }
+                  ? finalizeThinkingMs({ ...m, inflight: false, cancelled: true })
                   : m
               )
             );
@@ -976,7 +1006,9 @@ export function useKnowledgeChat(
           // 其他错误（llm_stream / start / load_session …）视为致命
           setMessages((prev) =>
             prev.map((m) =>
-              m.inflight ? { ...m, inflight: false, cancelled: true } : m
+              m.inflight
+                ? finalizeThinkingMs({ ...m, inflight: false, cancelled: true })
+                : m
             )
           );
           resetInflight();
@@ -1062,7 +1094,9 @@ export function useKnowledgeChat(
         // 进行中的轮没收到 turn.done → 标记为中断
         setMessages((prev) =>
           prev.map((m) =>
-            m.inflight ? { ...m, inflight: false, cancelled: true } : m
+            m.inflight
+              ? finalizeThinkingMs({ ...m, inflight: false, cancelled: true })
+              : m
           )
         );
         resetInflight();

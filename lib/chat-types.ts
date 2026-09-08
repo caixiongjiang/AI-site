@@ -94,6 +94,8 @@ export interface ChatMessage {
   role: ChatRole;
   content: string;
   thinking?: string | null;
+  /** 本轮思考墙钟耗时（毫秒）；历史消息可能缺失 */
+  thinking_ms?: number | null;
   tool_calls: ToolCallRecord[];
   citations: Citation[];
   usage?: TokenUsageRecord | null;
@@ -123,8 +125,6 @@ export interface ChatSessionInfo {
   mode: string;
   /** 思考强度档位（pi 标准 7 档：off/minimal/low/medium/high/xhigh/max） */
   thinking_level?: string | null;
-  /** [兼容] 是否启用思考链；由 thinking_level 派生（!= "off"），旧客户端读它 */
-  enable_thinking: boolean;
   enable_multimodal?: boolean;
   system_prompt?: string | null;
   message_count: number;
@@ -385,6 +385,8 @@ export type ServerFrame =
          * 直接挂到对应 UiChatMessage.citations，前端 CitationChip 即可渲染。
          */
         citations?: Citation[];
+        /** 本轮思考墙钟耗时（毫秒） */
+        thinking_ms?: number | null;
         usage?: TokenUsageRecord | null;
       };
     }
@@ -422,6 +424,10 @@ export interface UiChatMessage {
   role: ChatRole;
   content: string;
   thinking?: string;
+  /** 本轮思考开始的本地时间戳，仅用于计算 thinking_ms */
+  thinking_started_at?: number;
+  /** 思考耗时（毫秒），流式结束后固化 */
+  thinking_ms?: number;
   tool_calls: ToolCallRecord[];
   citations: Citation[];
   usage?: TokenUsageRecord | null;

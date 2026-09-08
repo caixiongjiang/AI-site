@@ -15,6 +15,7 @@ import {
   AlertTriangle,
   ArrowUp,
   ArrowUpRight,
+  Atom,
   BookOpen,
   Bot,
   Brain,
@@ -22,6 +23,7 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
+  Compass,
   CircleStop,
   Clock,
   Copy,
@@ -44,6 +46,7 @@ import {
   ThumbsDown,
   ThumbsUp,
   Trash2,
+  Wrench,
   X,
 } from "lucide-react";
 import { useKnowledgeChat } from "@/lib/hooks/useKnowledgeChat";
@@ -97,7 +100,11 @@ import {
   isEffortThinking,
   getOnThinkingLevel,
 } from "@/lib/chat/thinking-levels";
-import { pickSettingsDefaultModel } from "@/lib/chat/chat-preferences";
+import {
+  getSettingsDefaultThinkingLevel,
+  pickSettingsDefaultModel,
+  setSettingsDefaultThinkingLevel,
+} from "@/lib/chat/chat-preferences";
 import { isAction } from "@/lib/actions/chat-actions";
 
 interface KnowledgeChatPanelProps {
@@ -191,23 +198,18 @@ function PhasePill({ phase }: { phase: ChatPhase }) {
 }
 
 // ============================================================
-// 推理轨道
-//
-// 思考与工具调用曾经是两套独立的彩色卡片（琥珀 / 翠绿 / 紫 / 蓝），
-// 一轮问答动辄堆十几张等权重的全宽卡，答案被挤到首屏之外。
-// 现在整组合并成一条时间线：默认只占一行摘要，展开后是一根轨道。
-//
-// 节点配色只编码两件事，且各用独立通道，不再靠明度差堆档位：
-//   · 形状——空心圆是模型的内部叙述（思考 / 旁白），实心圆是外部动作（工具）
-//   · 色相——primary.deep 表示进行中
-// 「空结果」不进节点：它已经由右侧的「无结果」文字和更淡的标签表达，
-// 再往 7px 圆点上叠一档透明度只会得到一个 1.2:1 的不可见差异。
-// 所有节点统一 muted-faint（对白底 3.6:1），满足非文本图形 3:1 的下限。
+// 推理轨道：思考=脑、检索=书、导航=罗盘、其它工具=扳手、正文旁白=灰点（不折叠）
 // ============================================================
 
 type TraceStep =
-  | { kind: "think"; key: string; thinking: string; inflight: boolean }
-  | { kind: "note"; key: string; content: string; inflight: boolean }
+  | {
+      kind: "think";
+      key: string;
+      thinking: string;
+      inflight: boolean;
+      thinkingMs?: number;
+    }
+  | { kind: "note"; key: string; content: string }
   | { kind: "tool"; key: string; tc: ToolCallRecord };
 
 /**
@@ -226,7 +228,8 @@ function buildTraceSteps(messages: UiChatMessage[]): TraceStep[] {
         kind: "think",
         key: `${m.id}-think`,
         thinking: m.thinking,
-        inflight: Boolean(m.inflight),
+        inflight: Boolean(m.inflight) && m.thinking_ms == null,
+        thinkingMs: m.thinking_ms,
       });
     }
     // 旁白发生在它将要调用的工具之前，故插在 tool_calls 之前
@@ -235,7 +238,6 @@ function buildTraceSteps(messages: UiChatMessage[]): TraceStep[] {
         kind: "note",
         key: `${m.id}-note`,
         content: m.content,
-        inflight: Boolean(m.inflight),
       });
     }
     for (const tc of m.tool_calls ?? []) {
@@ -247,6 +249,12 @@ function buildTraceSteps(messages: UiChatMessage[]): TraceStep[] {
 
 function formatSeconds(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function thinkRowLabel(inflight: boolean, thinkingMs?: number): string {
+  if (inflight) return "正在思考…";
+  if (thinkingMs == null) return "已思考";
+  return `已思考（${Math.max(0, Math.round(thinkingMs / 1000))}s）`;
 }
 
 /** 折叠态摘要文案：流式时报当前动作，结束后报步数与总耗时 */
@@ -273,10 +281,11 @@ function traceSummaryLabel(steps: TraceStep[], inflight: boolean): string {
   const parts = [`${steps.length} 步`];
   const thinkCount = steps.filter((s) => s.kind === "think").length;
   if (thinkCount > 0) parts.push(`${thinkCount} 次思考`);
-  const totalMs = steps.reduce(
-    (sum, s) => (s.kind === "tool" ? sum + (s.tc.time_ms ?? 0) : sum),
-    0,
-  );
+  const totalMs = steps.reduce((sum, s) => {
+    if (s.kind === "tool") return sum + (s.tc.time_ms ?? 0);
+    if (s.kind === "think") return sum + (s.thinkingMs ?? 0);
+    return sum;
+  }, 0);
   if (totalMs > 0) parts.push(formatSeconds(totalMs));
   return parts.join(" · ");
 }
@@ -285,6 +294,7 @@ function TraceTimeline({
   steps,
   inflight,
   onViewSearchResults,
+  aliasToChunkId,
 }: {
   steps: TraceStep[];
   inflight: boolean;
@@ -293,19 +303,12 @@ function TraceTimeline({
     params?: Record<string, unknown>,
     recallStats?: RecallStats,
   ) => void;
+  aliasToChunkId: Map<string, string>;
 }) {
   const [open, setOpen] = useState(inflight);
-  // 记录上一次是否在流式中，用于「跑完自动收起」而不影响用户手动展开
-  const wasInflight = useRef(inflight);
 
   useEffect(() => {
-    if (inflight) {
-      setOpen(true);
-      wasInflight.current = true;
-    } else if (wasInflight.current) {
-      setOpen(false);
-      wasInflight.current = false;
-    }
+    if (inflight) setOpen(true);
   }, [inflight]);
 
   if (steps.length === 0) return null;
@@ -320,14 +323,16 @@ function TraceTimeline({
         aria-expanded={open}
         className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-gray-100"
       >
-        {inflight ? (
-          <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary-deep" />
-        ) : (
-          <span
-            aria-hidden
-            className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-faint"
+        {/* 与轨道行 TraceSlot（w-4 + px-2）同轴，图标可略大但不偏移中心 */}
+        <span
+          aria-hidden
+          className="flex h-4 w-4 shrink-0 items-center justify-center"
+        >
+          <Atom
+            className="h-[18px] w-[18px] text-foreground"
+            strokeWidth={1.75}
           />
-        )}
+        </span>
         <span
           className={cn(
             "shrink-0 text-xs",
@@ -346,10 +351,9 @@ function TraceTimeline({
 
       {open ? (
         <div className="relative mt-0.5">
-          {/* 轨道竖线：left 与节点圆心对齐（px-2 内边距 + 3.5px 半径） */}
           <div
             aria-hidden
-            className="absolute bottom-3 left-[11px] top-3 w-px bg-hairline"
+            className="absolute bottom-4 left-4 top-4 w-px bg-hairline"
           />
           <div>
             {steps.map((s) => {
@@ -362,6 +366,7 @@ function TraceTimeline({
                   key={s.key}
                   tc={s.tc}
                   onViewSearchResults={onViewSearchResults}
+                  aliasToChunkId={aliasToChunkId}
                 />
               );
             })}
@@ -396,13 +401,13 @@ function TraceRow({
   children?: ReactNode;
 }) {
   return (
-    <div>
+    <div className="relative">
       <div className="flex items-center rounded-md transition-colors hover:bg-gray-50">
         <button
           type="button"
           onClick={onToggle}
           aria-expanded={open}
-          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1 text-left"
+          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
         >
           {node}
           <span className={cn("truncate text-xs", labelClass)}>{label}</span>
@@ -415,7 +420,7 @@ function TraceRow({
           tabIndex={-1}
           aria-hidden
           onClick={onToggle}
-          className="shrink-0 px-1.5 py-1 text-muted-faint"
+          className="shrink-0 px-1.5 py-1.5 text-muted-faint"
         >
           {open ? (
             <ChevronUp className="h-3 w-3" />
@@ -425,62 +430,76 @@ function TraceRow({
         </button>
       </div>
       {children && open ? (
-        <div className="mb-1 ml-[26px] mr-2 mt-1 space-y-2">{children}</div>
+        <div className="mb-1 ml-8 mr-2 mt-0.5 space-y-2">{children}</div>
       ) : null}
     </div>
   );
 }
 
-/**
- * 轨道节点。两个视觉轴各管一件事：
- *
- * 形状＝步骤类型。空心＝模型内部叙述（思考与旁白同属一类，区分交给文字标签），
- * 实心＝对外的工具调用。曾想用 muted/60 与 muted/35 把旁白做得"更轻"，实测只差
- * 1.5:1，在 7px + 1.5px 描边上完全看不出来——那不是层级，只是把节点做没了。
- *
- * 颜色＝这一步有没有产出可核查的证据。主色＝取到了东西，中性＝纯推理或空结果。
- * 不用「是否跑完」着色：跑完之后所有节点都是完成态，按状态上色会让最常被展开
- * 审阅的終態变成一片灰，颜色轴等于失效。
- *
- * 进行中额外套一层脉冲光环。它只是冗余提示——状态在行标签文字（正在思考…／
- * 调用中…）和折叠头的 spinner 上都有，不靠这个光环独家承载。
- */
-function TraceNode({
-  solid,
-  tone,
+/** 统一 16px 槽，保证书/脑/罗盘/扳手/灰点与竖线同轴 */
+function TraceSlot({
   inflight,
+  children,
 }: {
-  solid: boolean;
-  tone: "primary" | "muted";
   inflight?: boolean;
+  children: ReactNode;
 }) {
   return (
     <span
       aria-hidden
-      className="relative z-[1] flex h-[7px] w-[7px] shrink-0 items-center justify-center"
+      className="relative z-[1] flex h-4 w-4 shrink-0 items-center justify-center"
     >
-      {/* 光环绝对定位，不参与布局，节点圆心才能继续跟轨道竖线对齐 */}
+      <span className="absolute -inset-0.5 rounded-sm bg-white" />
       {inflight ? (
         <span className="absolute inset-[-3px] animate-pulse rounded-full bg-primary/20" />
       ) : null}
-      <span
-        className={cn(
-          "h-[7px] w-[7px] rounded-full",
-          solid
-            ? tone === "primary"
-              ? "bg-primary-deep"
-              : "bg-muted-faint"
-            : cn(
-                // 白色填充把轨道竖线挡在节点之外，空心才是"空"的
-                "border-[1.5px] bg-white",
-                tone === "primary"
-                  ? "border-primary-deep"
-                  : "border-muted-faint",
-              ),
-        )}
-      />
+      {children}
     </span>
   );
+}
+
+function TraceIconMark({
+  icon: Icon,
+  tone,
+  inflight,
+}: {
+  icon: ComponentType<{ className?: string }>;
+  tone: "primary" | "muted";
+  inflight?: boolean;
+}) {
+  return (
+    <TraceSlot inflight={inflight}>
+      <Icon
+        className={cn(
+          "relative h-3.5 w-3.5",
+          tone === "primary" ? "text-primary-deep" : "text-muted",
+        )}
+      />
+    </TraceSlot>
+  );
+}
+
+function TraceNoteDot() {
+  return (
+    <TraceSlot>
+      <span className="relative h-[7px] w-[7px] rounded-full border-[1.5px] border-muted bg-white" />
+    </TraceSlot>
+  );
+}
+
+const KB_SEARCH_TOOLS = new Set(["search_knowledge_base", "grep_chunks"]);
+const NAV_TOOLS = new Set([
+  "skeleton",
+  "drill_down",
+  "roll_up",
+  "context_window",
+]);
+const IMAGE_TOOL_NAMES = new Set(["read_image_chunks"]);
+
+function toolTraceIcon(name: string) {
+  if (KB_SEARCH_TOOLS.has(name)) return BookOpen;
+  if (NAV_TOOLS.has(name)) return Compass;
+  return Wrench;
 }
 
 function TraceThinkRow({
@@ -489,73 +508,65 @@ function TraceThinkRow({
   step: Extract<TraceStep, { kind: "think" }>;
 }) {
   const [open, setOpen] = useState(step.inflight);
+  const wasInflight = useRef(step.inflight);
 
   useEffect(() => {
-    if (step.inflight) setOpen(true);
+    if (step.inflight) {
+      setOpen(true);
+      wasInflight.current = true;
+    } else if (wasInflight.current) {
+      setOpen(false);
+      wasInflight.current = false;
+    }
   }, [step.inflight]);
 
   return (
     <TraceRow
       node={
-        <TraceNode
-          solid={false}
+        <TraceIconMark
+          icon={Brain}
           tone={step.inflight ? "primary" : "muted"}
           inflight={step.inflight}
         />
       }
-      label={step.inflight ? "正在思考…" : "思考过程"}
+      label={thinkRowLabel(step.inflight, step.thinkingMs)}
       labelClass={step.inflight ? "text-primary-deep" : "text-muted"}
       open={open}
       onToggle={() => setOpen((v) => !v)}
     >
-      <div className="text-xs leading-6 text-muted">
-        <CitationPreviewMarkdown content={step.thinking} />
-      </div>
+      <CitationPreviewMarkdown
+        content={step.thinking}
+        className="text-xs leading-5 text-muted prose-p:my-0.5 prose-headings:text-xs prose-pre:text-xs"
+      />
     </TraceRow>
   );
 }
 
-/** 取旁白首行作为折叠态标签，剥掉标题号与列表符号 */
-function noteHeadline(content: string): string {
-  const line = content
-    .split("\n")
-    .map((l) => l.trim())
-    .find((l) => l.length > 0);
-  if (!line) return "过程说明";
-  return line.replace(/^#+\s*/, "").replace(/^[-*]\s+/, "");
-}
-
 /**
  * 过程旁白行：中间轮的正文。
- *
- * 折叠态直接把首句当标签，因为旁白通常就一句话，展开一次才看到内容是浪费点击。
- * 节点恒为非进行中：旁白只在非末轮生成，末轮的正文走答案区而不进轨道。
+ * 只展示灰点 + 全文，不再折叠。
  */
 function TraceNoteRow({
   step,
 }: {
   step: Extract<TraceStep, { kind: "note" }>;
 }) {
-  const [open, setOpen] = useState(false);
-  const headline = useMemo(() => noteHeadline(step.content), [step.content]);
-
   return (
-    <TraceRow
-      node={<TraceNode solid={false} tone="muted" />}
-      label={headline}
-      labelClass="text-muted"
-      open={open}
-      onToggle={() => setOpen((v) => !v)}
-    >
-      <div className="text-xs leading-6 text-muted">
-        <CitationPreviewMarkdown content={step.content} />
+    <div className="relative py-1.5">
+      <div className="flex items-start gap-2 px-2">
+        <span className="mt-1.5">
+          <TraceNoteDot />
+        </span>
+        <div className="min-w-0 flex-1">
+          <CitationPreviewMarkdown
+            content={step.content}
+            className="text-[13.5px] leading-7 text-muted prose-p:my-0.5 prose-headings:text-[13.5px] prose-pre:text-xs"
+          />
+        </div>
       </div>
-    </TraceRow>
+    </div>
   );
 }
-
-const SEARCH_TOOL_NAMES = new Set(["search_knowledge_base"]);
-const IMAGE_TOOL_NAMES = new Set(["read_image_chunks"]);
 
 const RETRIEVAL_STAGE_LABEL: Record<string, string> = {
   planning: "大模型规划检索路线…",
@@ -573,58 +584,158 @@ function formatExecutionModelLabel(model?: string | null): string {
   return model.replace(/^litellm_proxy\//, "").replace(/^dashscope\//, "");
 }
 
+/** session 级短引用号：c1 / c12。与后端 ChunkAliasMap.ALIAS_RE 对齐。 */
+const CHUNK_ALIAS_RE = /^c\d+$/;
+
+function isChunkAlias(id: string): boolean {
+  return CHUNK_ALIAS_RE.test(id);
+}
+
+function addAliasMapping(
+  map: Map<string, string>,
+  alias?: string | null,
+  chunkId?: string | null,
+) {
+  if (alias && chunkId && isChunkAlias(alias)) {
+    map.set(alias, chunkId);
+  }
+}
+
 /**
- * 从工具结果文本中提取图片 chunk 及对应 caption，并构造公网直读 URL。
+ * 从工具结果文本抽出预览用的 chunk 引用（可能是 alias，也可能是真实 id）。
  *
- * 工具结果文本块形如：
+ * 覆盖两种结果头：
  *   --- chunk_id=c22, page=8 ---
- *   mode: direct_image
- *   image_url: <MinIO 内部预签名 URL，浏览器不可用>
- *   caption: ...
- *   footnote: ...
- *
- * 这里不再使用后端返回的 MinIO 预签名 URL（内网域名 + http，浏览器无法解析且
- * 被 https 站点的混合内容策略拦截），改为从 chunk_id 构造后端 /raw-image
- * 流式端点的公网 URL（query token 鉴权），供 <img> 直接加载。
+ *   --- vlm_qa (n=6, chunk_ids=c12, c13, ...) ---
  */
-function extractToolResultImages(
+function collectToolResultImageRefs(
   text: string,
-): Array<{ url: string; caption: string }> {
+): Array<{ rawId: string; caption: string }> {
   if (!text) return [];
-  const results: Array<{ url: string; caption: string }> = [];
-  // 匹配 --- chunk_id=<id>[, page=N] --- 头
+  const results: Array<{ rawId: string; caption: string }> = [];
+  const seen = new Set<string>();
+
   const headerRe = /---\s*chunk_id=([^\s,]+)(?:[^\n]*?)\s*---/gi;
   let m: RegExpExecArray | null;
   while ((m = headerRe.exec(text)) !== null) {
-    const chunkId = m[1];
-    // 在该 header 之后寻找 caption: <text>
+    const rawId = m[1];
+    if (!rawId || seen.has(rawId)) continue;
     const rest = text.slice(m.index + m[0].length);
     const captionMatch = rest.match(/^\s*\n?caption:\s*(.+?)(?:\n|$)/);
-    const caption = captionMatch ? captionMatch[1].trim() : "";
-    results.push({ url: buildChunkImageRawUrl(chunkId), caption });
+    seen.add(rawId);
+    results.push({
+      rawId,
+      caption: captionMatch ? captionMatch[1].trim() : "",
+    });
+  }
+
+  if (results.length > 0) return results;
+
+  const qaMatch = /---\s*vlm_qa\b[\s\S]*?chunk_ids=([^\n-]+)---/i.exec(text);
+  if (!qaMatch) return results;
+  for (const rawId of qaMatch[1]
+    .split(/[,，\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)) {
+    if (seen.has(rawId)) continue;
+    seen.add(rawId);
+    results.push({ rawId, caption: "" });
   }
   return results;
 }
 
-/** 渲染工具结果中的图片（presigned URL） */
-function ToolResultImageGallery({ text }: { text: string }) {
-  const images = useMemo(() => extractToolResultImages(text), [text]);
-  if (images.length === 0) return null;
+/**
+ * 把结果文本里的 chunk 引用转成 /raw-image URL。
+ *
+ * 工具结果对 LLM 只暴露 alias（c12），但 /raw-image 必须用真实 chunk_id。
+ * 未解析的 alias 不能拿去请求，否则会 404 成裂图。
+ */
+function extractToolResultImages(
+  text: string,
+  aliasToChunkId: Map<string, string>,
+): Array<{ url: string; caption: string; chunkId: string }> {
+  const results: Array<{ url: string; caption: string; chunkId: string }> = [];
+  for (const ref of collectToolResultImageRefs(text)) {
+    const chunkId = isChunkAlias(ref.rawId)
+      ? (aliasToChunkId.get(ref.rawId) ?? null)
+      : ref.rawId;
+    if (!chunkId) continue;
+    results.push({
+      url: buildChunkImageRawUrl(chunkId),
+      caption: ref.caption,
+      chunkId,
+    });
+  }
+  return results;
+}
+
+function ToolResultImageThumb({
+  url,
+  caption,
+  index,
+}: {
+  url: string;
+  caption: string;
+  index: number;
+}) {
+  const [failed, setFailed] = useState(false);
+  const alt = caption || `图片 ${index + 1}`;
+  if (failed) {
+    return (
+      <div className="flex items-center gap-1.5 py-3 text-[11px] text-muted-subtle">
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+        {alt}加载失败
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={url}
+        alt={alt}
+        className="max-h-60 w-auto max-w-full rounded-md border border-gray-200 object-contain"
+        loading="lazy"
+        onError={() => setFailed(true)}
+      />
+      {caption ? (
+        <span className="text-[10px] text-gray-500">{caption}</span>
+      ) : null}
+    </div>
+  );
+}
+
+/** 渲染工具结果中的图片（走后端 /raw-image，不使用 MinIO 预签名 URL） */
+function ToolResultImageGallery({
+  text,
+  aliasToChunkId,
+}: {
+  text: string;
+  aliasToChunkId: Map<string, string>;
+}) {
+  const refs = useMemo(() => collectToolResultImageRefs(text), [text]);
+  const images = useMemo(
+    () => extractToolResultImages(text, aliasToChunkId),
+    [text, aliasToChunkId],
+  );
+  if (refs.length === 0) return null;
+  if (images.length === 0) {
+    return (
+      <div className="flex items-center gap-1.5 py-1 text-[11px] text-muted-subtle">
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+        图片预览暂不可用（引用号未解析）
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col gap-2">
       {images.map((img, i) => (
-        <div key={i} className="flex flex-col gap-1">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={img.url}
-            alt={img.caption || `图片 ${i + 1}`}
-            className="max-h-60 w-auto max-w-full rounded-md border border-gray-200 object-contain"
-            loading="lazy"
-          />
-          {img.caption ? (
-            <span className="text-[10px] text-gray-500">{img.caption}</span>
-          ) : null}
-        </div>
+        <ToolResultImageThumb
+          key={img.chunkId || i}
+          url={img.url}
+          caption={img.caption}
+          index={i}
+        />
       ))}
     </div>
   );
@@ -652,6 +763,7 @@ function ToolCallDetailBlock({
 function TraceToolRow({
   tc,
   onViewSearchResults,
+  aliasToChunkId,
 }: {
   tc: ToolCallRecord;
   onViewSearchResults?: (
@@ -659,12 +771,29 @@ function TraceToolRow({
     params?: Record<string, unknown>,
     recallStats?: RecallStats,
   ) => void;
+  aliasToChunkId: Map<string, string>;
 }) {
   const [open, setOpen] = useState(false);
   const inflight = Boolean(tc.inflight);
-  const isSearchTool = SEARCH_TOOL_NAMES.has(tc.name);
+  const isSearchTool = KB_SEARCH_TOOLS.has(tc.name);
   const isImageTool = IMAGE_TOOL_NAMES.has(tc.name);
   const executionModelLabel = formatExecutionModelLabel(tc.execution_model);
+
+  // 历史落库后 arguments.chunk_ids 可能已是真实 id；与结果头里的 alias 按序对齐补一张表
+  const resolvedAliasMap = useMemo(() => {
+    const map = new Map(aliasToChunkId);
+    const argIds = tc.arguments?.chunk_ids;
+    if (!Array.isArray(argIds) || !tc.result_brief) return map;
+    const refs = collectToolResultImageRefs(tc.result_brief);
+    if (refs.length === 0 || refs.length !== argIds.length) return map;
+    refs.forEach((ref, i) => {
+      const arg = String(argIds[i] ?? "");
+      if (isChunkAlias(ref.rawId) && arg && !isChunkAlias(arg)) {
+        map.set(ref.rawId, arg);
+      }
+    });
+    return map;
+  }, [aliasToChunkId, tc.arguments, tc.result_brief]);
 
   const hasArgs = tc.arguments && Object.keys(tc.arguments).length > 0;
 
@@ -709,7 +838,11 @@ function TraceToolRow({
     <TraceRow
       node={
         /* 空结果落回中性色：工具跑完了但没取到东西，和"产出了证据"不该同色 */
-        <TraceNode solid tone={isEmpty ? "muted" : "primary"} inflight={inflight} />
+        <TraceIconMark
+          icon={toolTraceIcon(tc.name)}
+          tone={isEmpty ? "muted" : "primary"}
+          inflight={inflight}
+        />
       }
       label={tc.name || "tool_call"}
       labelClass={cn(
@@ -776,7 +909,10 @@ function TraceToolRow({
       ) : tc.result_brief ? (
         <ToolCallDetailBlock label="结果">
           {isImageTool ? (
-            <ToolResultImageGallery text={tc.result_brief} />
+            <ToolResultImageGallery
+              text={tc.result_brief}
+              aliasToChunkId={resolvedAliasMap}
+            />
           ) : null}
           {tc.result_brief}
         </ToolCallDetailBlock>
@@ -829,7 +965,7 @@ function getDocTypeIcon(
   return FileText;
 }
 
-/** 方案 2：微型芯片 + 溢出折叠（最多显示前 2 篇截断微标 + "+N 篇" 胶囊，点击打开右侧面板） */
+/** 来源芯片：最多 2 篇截断微标，其余收进「+N 篇」，点击打开右侧面板 */
 function ReferencedDocumentsBlock({
   citations,
   onOpenAllSources,
@@ -1550,7 +1686,7 @@ function AssistantActionBar({
 }
 
 // ============================================================
-// 轮次分组与卡片流（Turn-Grouped Card Flow）
+// 轮次分组
 // ============================================================
 
 interface ChatTurn {
@@ -1836,10 +1972,9 @@ function ChatEmptyWelcomeGuide({
 }
 
 /**
- * 形态 2：现代通栏流（Modern Fluid · Claude 风格）
- * 极简通透排版：用户右对齐轻气泡 + 助手无卡片全幅通栏，正文与公式自然流淌。
+ * 一轮问答：用户右对齐轻气泡 + 助手通栏正文（无外框卡片）。
  */
-function ModernFluidTurn({
+function ChatTurnBlock({
   turn,
   isLastTurn,
   isStreaming,
@@ -1912,6 +2047,32 @@ function ModernFluidTurn({
     return Array.from(map.values());
   }, [accumulatedCitations, ownCitations]);
 
+  // read_image_chunks 结果头是 alias（c12），/raw-image 要真实 chunk_id
+  const previewAliasToChunkId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of allCitationsForRender) {
+      addAliasMapping(map, c.alias, c.chunk_id);
+    }
+    if (userMessage?.retrieval?.chunks) {
+      for (const c of userMessage.retrieval.chunks) {
+        addAliasMapping(map, c.alias, c.chunk_id);
+      }
+    }
+    for (const m of assistantMessages) {
+      for (const tc of m.tool_calls ?? []) {
+        for (const c of tc.retrieval_chunks ?? []) {
+          addAliasMapping(map, c.alias, c.chunk_id);
+        }
+      }
+      if (m.retrieval?.chunks) {
+        for (const c of m.retrieval.chunks) {
+          addAliasMapping(map, c.alias, c.chunk_id);
+        }
+      }
+    }
+    return map;
+  }, [allCitationsForRender, assistantMessages, userMessage]);
+
   const isTurnInflight = assistantMessages.some((m) => m.inflight);
   const lastMsg = assistantMessages[assistantMessages.length - 1];
   const hasContent = assistantMessages.some((m) => m.content);
@@ -1934,7 +2095,7 @@ function ModernFluidTurn({
       ref={isLastTurn && userMessage ? turnAnchorRef : undefined}
       className="space-y-4 animate-fadeIn"
     >
-      {/* 1. 用户提问：右侧轻量气泡（Claude 风格），带 hover 快捷复制与时间 */}
+      {/* 用户提问：右对齐轻气泡，hover 显示复制与时间 */}
       {userMessage ? (
         <div className="group relative flex flex-col items-end gap-1 pt-1">
           <div className="relative max-w-[85%] rounded-[20px_20px_4px_20px] bg-primary/5 px-4 py-2.5 text-[13.5px] leading-6 text-foreground sm:px-5 sm:py-3 transition-colors hover:bg-primary/10 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
@@ -1972,7 +2133,7 @@ function ModernFluidTurn({
         </div>
       ) : null}
 
-      {/* 2. 助手回答区：现代通栏，纯净通透，无厚重外框 */}
+      {/* 助手回答：通栏、无外框 */}
       <div className="min-w-0 space-y-3 pt-1">
         {/* 头部助手身份标记 */}
         <div className="flex items-center gap-2">
@@ -1997,6 +2158,7 @@ function ModernFluidTurn({
               steps={traceSteps}
               inflight={isTurnInflight}
               onViewSearchResults={onViewSearchResults}
+              aliasToChunkId={previewAliasToChunkId}
             />
           </div>
         ) : null}
@@ -2021,7 +2183,7 @@ function ModernFluidTurn({
           />
         ))}
 
-        {/* 底部统一行：左侧【方案 2 微型芯片 + 折叠溢出】+ 右侧【操作栏】 */}
+        {/* 底部：来源芯片 + 操作栏 */}
         {!isTurnInflight && (hasContent || citedCitations.length > 0) ? (
           <div className="mt-4 pt-2.5 border-t border-hairline/60 flex flex-wrap items-center justify-between gap-2">
             {/* 左侧：微型芯片与 token 计数 */}
@@ -2363,7 +2525,6 @@ function ModelCapabilityIcons({ model }: { model: ChatModelItem }) {
   );
 }
 
-const LAST_THINKING_LEVEL_KEY = "knowledge-chat-last-thinking-level";
 const RECENT_MODELS_STORAGE_KEY = "knowledge-chat-recent-models";
 const SELECTED_MODEL_STORAGE_PREFIX = "knowledge-chat-selected-model-v2";
 
@@ -2404,24 +2565,6 @@ function setLastSelectedModel(
   }
 }
 
-function getLastSelectedThinkingLevel(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.localStorage.getItem(LAST_THINKING_LEVEL_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function setLastSelectedThinkingLevel(level: string): void {
-  if (typeof window === "undefined" || !level) return;
-  try {
-    window.localStorage.setItem(LAST_THINKING_LEVEL_KEY, level);
-  } catch {
-    // ignore
-  }
-}
-
 function getRecentModelIds(): string[] {
   if (typeof window === "undefined") return [];
   try {
@@ -2452,7 +2595,7 @@ function applyModelSelection(
   settings: ChatSettings,
   model: ChatModelItem,
 ): ChatSettings {
-  const lastLevel = getLastSelectedThinkingLevel();
+  const lastLevel = getSettingsDefaultThinkingLevel();
   let nextThinkingLevel = "off";
   if (model.supports_thinking === true) {
     const candidate =
@@ -2706,7 +2849,7 @@ function UnifiedModelPicker({
                       key={lvl}
                       type="button"
                       onClick={() => {
-                        setLastSelectedThinkingLevel(lvl);
+                        setSettingsDefaultThinkingLevel(lvl);
                         onThinkingLevelChange(lvl);
                         setOpen(false);
                       }}
@@ -2742,7 +2885,7 @@ function UnifiedModelPicker({
                       key={it.lvl}
                       type="button"
                       onClick={() => {
-                        setLastSelectedThinkingLevel(it.lvl);
+                        setSettingsDefaultThinkingLevel(it.lvl);
                         onThinkingLevelChange(it.lvl);
                         setOpen(false);
                       }}
@@ -3557,9 +3700,7 @@ export const KnowledgeChatPanel = ({
       prevSessionIdRef.current = activeSession.session_id;
       setSettings((prev) => ({
         ...prev,
-        thinkingLevel:
-          activeSession.thinking_level ??
-          (activeSession.enable_thinking ? "medium" : "off"),
+        thinkingLevel: activeSession.thinking_level ?? "off",
         enableMultimodal: false,
         model: switchedNow ? "" : prev.model,
       }));
@@ -3611,10 +3752,8 @@ export const KnowledgeChatPanel = ({
       const resolvedModel = models.find((m) => m.id === nextModel);
       const modelSupportsMultimodal =
         resolvedModel?.supports_multimodal === true;
-      const sessionThinkingLevel =
-        activeSession.thinking_level ??
-        (activeSession.enable_thinking ? "medium" : "off");
-      const lastLevel = getLastSelectedThinkingLevel();
+      const sessionThinkingLevel = activeSession.thinking_level ?? "off";
+      const lastLevel = getSettingsDefaultThinkingLevel();
       const targetThinkingLevel = switchedSession
         ? sessionThinkingLevel !== "off"
           ? sessionThinkingLevel
@@ -4197,7 +4336,7 @@ export const KnowledgeChatPanel = ({
                       const isLastUserTurn = ti === lastUserTurnIndex;
 
                       return (
-                        <ModernFluidTurn
+                        <ChatTurnBlock
                           key={turn.id}
                           turn={turn}
                           isLastTurn={isLastUserTurn}
