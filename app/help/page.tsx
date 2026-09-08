@@ -56,6 +56,11 @@ const PROJECTS = [
     desc: "技能管理独立服务：技能 CRUD、启停、封面存储，对外提供 REST API。",
     href: "https://github.com/caixiongjiang/skill_service",
   },
+  {
+    name: "skill-core",
+    desc: "技能系统核心包：解析、注册表、安全扫描与 MySQL 仓储，供 skill-service 与各后端复用。",
+    href: "https://github.com/caixiongjiang/skill_core",
+  },
 ];
 
 export default function HelpPage() {
