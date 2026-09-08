@@ -1,12 +1,172 @@
+"use client";
+
+import Link from "next/link";
+import {
+  ArrowUpRight,
+  BookOpen,
+  Code2,
+  Github,
+  User,
+} from "lucide-react";
+import { UserAvatar } from "@/components/ui/UserAvatar";
+
+function ZhihuIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className}>
+      <rect width="24" height="24" rx="5" fill="currentColor" />
+      <text
+        x="12"
+        y="12"
+        textAnchor="middle"
+        dominantBaseline="central"
+        fill="#fff"
+        fontSize="13"
+        fontWeight="700"
+        fontFamily="system-ui, 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC', sans-serif"
+      >
+        知
+      </text>
+    </svg>
+  );
+}
+
+const DEVELOPER = {
+  name: "蔡雄江",
+  englishName: "Jarson Cai",
+  title: "全栈开发工程师 · AI 产品设计师",
+  bio: "研究兴趣包括 RAG、Agent、LLM 应用、计算机视觉与参数高效微调。希望通过检索、对话和溯源把资料真正用起来，让 AI 成为可核对、可落地的工作助手。",
+  github: "https://github.com/caixiongjiang",
+  githubHandle: "caixiongjiang",
+  zhihu: "https://www.zhihu.com/people/cai-xiong-jiang",
+};
+
+const PROJECTS = [
+  {
+    name: "AI-site",
+    desc: "本站前端。知识库问答、文档预览与 bbox 溯源、技能管理。",
+    href: "https://github.com/caixiongjiang/AI-site",
+  },
+  {
+    name: "agentic_knowledge_system",
+    desc: "Agentic 知识库后端：多粒度检索、流式对话、引用与索引管线。",
+    href: "https://github.com/caixiongjiang/agentic_knowledge_system",
+  },
+  {
+    name: "skill-service",
+    desc: "技能管理独立服务：技能 CRUD、启停、封面存储，对外提供 REST API。",
+    href: "https://github.com/caixiongjiang/skill_service",
+  },
+];
+
 export default function HelpPage() {
   return (
-    <div className="min-h-screen p-10">
-      <h1 className="mb-8 text-4xl font-light text-foreground">帮助中心</h1>
-      <div className="max-w-2xl">
-        <div className="rounded-xl border border-dark-border bg-dark-card p-6">
-          <p className="text-center text-muted">帮助中心开发中...</p>
+    <div className="min-h-screen bg-gray-50/50">
+      <header className="sticky top-0 z-30 border-b border-gray-200/80 bg-white/80 backdrop-blur-md">
+        <div className="mx-auto max-w-3xl px-6 py-4 sm:px-10">
+          <h1 className="text-lg font-bold text-foreground">关于开发者</h1>
+          <p className="text-xs text-muted">作者信息与开源项目</p>
         </div>
-      </div>
+      </header>
+
+      <main className="mx-auto max-w-3xl space-y-5 px-6 py-8 sm:px-10">
+        <section className="rounded-2xl border border-gray-200/80 bg-white p-6 shadow-xs sm:p-8">
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-start">
+            <UserAvatar
+              userId="caixiongjiang"
+              name={DEVELOPER.name}
+              size={72}
+              shape="rounded-2xl"
+              className="shadow-sm ring-1 ring-black/5"
+            />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-xl font-bold text-foreground">{DEVELOPER.name}</h2>
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-muted">
+                  {DEVELOPER.englishName}
+                </span>
+              </div>
+              <p className="mt-1 text-sm text-primary-deep">{DEVELOPER.title}</p>
+              <p className="mt-3 text-sm leading-relaxed text-muted">{DEVELOPER.bio}</p>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-gray-200/80 bg-white p-6 shadow-xs">
+          <div className="mb-4 flex items-center gap-2">
+            <User className="h-4 w-4 text-primary" />
+            <h3 className="text-sm font-bold text-foreground">联系与主页</h3>
+          </div>
+          <ul className="space-y-2">
+            <li>
+              <a
+                href={DEVELOPER.github}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center justify-between rounded-xl border border-gray-200/80 px-3.5 py-2.5 text-sm text-foreground transition-colors hover:border-primary/30 hover:bg-primary/5"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <Github className="h-4 w-4 text-muted" />
+                  GitHub · @{DEVELOPER.githubHandle}
+                </span>
+                <ArrowUpRight className="h-3.5 w-3.5 text-muted" />
+              </a>
+            </li>
+            <li>
+              <a
+                href={DEVELOPER.zhihu}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center justify-between rounded-xl border border-gray-200/80 px-3.5 py-2.5 text-sm text-foreground transition-colors hover:border-primary/30 hover:bg-primary/5"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <ZhihuIcon className="h-5 w-5 shrink-0 text-foreground" />
+                  知乎 · 蔡雄江
+                </span>
+                <ArrowUpRight className="h-3.5 w-3.5 text-muted" />
+              </a>
+            </li>
+          </ul>
+        </section>
+
+        <section className="rounded-2xl border border-gray-200/80 bg-white p-6 shadow-xs">
+          <div className="mb-1 flex items-center gap-2">
+            <BookOpen className="h-4 w-4 text-primary" />
+            <h3 className="text-sm font-bold text-foreground">相关开源项目</h3>
+          </div>
+          <p className="mb-4 text-sm leading-relaxed text-muted">
+            JarsonCai&apos;s Assistant 是个人维护的 Agentic 知识工作台：左侧管理资料，中间预览文档，右侧对话并按原文坐标溯源。
+          </p>
+          <ul className="space-y-2">
+            {PROJECTS.map((project) => (
+              <li key={project.name}>
+                <a
+                  href={project.href}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-start justify-between gap-3 rounded-xl border border-gray-200/80 px-3.5 py-2.5 transition-colors hover:border-primary/30 hover:bg-primary/5"
+                >
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                      <Code2 className="h-4 w-4 shrink-0 text-primary-deep" />
+                      <span className="truncate">{project.name}</span>
+                    </span>
+                    <p className="mt-1 text-xs leading-relaxed text-muted">{project.desc}</p>
+                  </span>
+                  <ArrowUpRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted" />
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <p className="px-1 text-center text-[11px] text-muted">
+          使用或二次开发请遵守 MIT License。功能问题可在对应仓库提 Issue，或从{" "}
+          <Link href="/settings" className="text-primary-deep underline-offset-2 hover:underline">
+            设置
+          </Link>{" "}
+          检查服务连通性。
+        </p>
+      </main>
     </div>
   );
 }

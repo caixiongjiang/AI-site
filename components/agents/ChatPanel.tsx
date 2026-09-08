@@ -51,7 +51,7 @@ export const ChatPanel = ({ agentName }: ChatPanelProps) => {
   };
 
   return (
-    <div className="flex w-[480px] shrink-0 flex-col border-l border-dark-border bg-[#1E1E1E]">
+    <div className="flex w-[480px] shrink-0 flex-col border-l border-dark-border bg-white">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-dark-border p-5">
         <h3 className="text-base text-foreground">问答</h3>

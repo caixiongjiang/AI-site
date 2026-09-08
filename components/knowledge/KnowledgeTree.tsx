@@ -16,7 +16,6 @@ import {
   Plus,
   RotateCcw,
   Search,
-  Sparkles,
   Trash2,
   UploadCloud,
   X,
@@ -976,8 +975,7 @@ export const KnowledgeTree = ({
   return (
     <div className="flex h-full min-h-0 flex-col bg-white">
       <div className="flex items-center justify-between gap-2 border-b border-gray-200 px-3 py-2.5">
-        <div className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-foreground">
-          <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" />
+        <div className="flex min-w-0 items-center text-sm font-medium text-foreground">
           <span className="truncate">知识库</span>
         </div>
         <div className="flex shrink-0 items-center gap-1">

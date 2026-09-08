@@ -26,6 +26,7 @@ import {
   summarizeChatContext,
   fetchContextStatus,
 } from "@/lib/api/chat";
+import { getSettingsDefaultModel } from "@/lib/chat/chat-preferences";
 import type {
   ChatMention,
   ChatMessage,
@@ -103,8 +104,7 @@ export interface UseKnowledgeChatOptions {
 /**
  * 新建会话时可选的初始偏好。所有字段均为 optional：缺省时由后端默认值决定。
  *
- * 典型用途：用户在 ChatPanel 上已经选了某个模型 / 思考强度档位，"新会话" 按钮
- * 应当把当前选择带过去，避免新会话回到 fast preset 的默认值。
+ * 模型应传设置页默认项（`pickSettingsDefaultModel`），不要沿用当前 chip。
  */
 export interface NewSessionInit {
   modelPreset?: string;
@@ -407,10 +407,12 @@ export function useKnowledgeChat(
         await loadMessagesForSession(target.session_id);
         return target;
       }
+      const defaultModel = getSettingsDefaultModel();
       const created = await createChatSession({
         knowledge_base_ids: [kbId],
         title: "新会话",
         ...buildScopeFields(folderId),
+        ...(defaultModel ? { model: defaultModel } : {}),
       });
       setSessions([created]);
       setActiveSessionId(created.session_id);
@@ -1189,10 +1191,12 @@ export function useKnowledgeChat(
       await loadMessagesForSession(next.session_id);
     } else {
       // 当前 scope 没有会话了，自动建一条（继承 folder / KB scope）
+      const defaultModel = getSettingsDefaultModel();
       const created = await createChatSession({
         knowledge_base_ids: [knowledgeBaseId],
         title: "新会话",
         ...buildScopeFields(optionFolderId),
+        ...(defaultModel ? { model: defaultModel } : {}),
       });
       setSessions([created]);
       setActiveSessionId(created.session_id);

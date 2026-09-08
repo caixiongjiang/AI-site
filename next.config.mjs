@@ -7,6 +7,7 @@ const nextConfig = {
   output: "standalone",
   turbopack: {},
   allowedDevOrigins: ["192.168.35.11"],
+  devIndicators: false,
   async rewrites() {
     return [
       {

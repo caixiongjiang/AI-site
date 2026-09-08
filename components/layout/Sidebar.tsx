@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import {
   Settings,
   HelpCircle,
-  Info,
   LogOut,
   Lock,
   Sparkles,
@@ -16,11 +15,13 @@ import { useState } from "react";
 import { ProfileDrawer } from "./ProfileDrawer";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { useAuthModal } from "@/components/auth/AuthModalProvider";
+import { useUserProfile } from "@/lib/hooks/useUserProfile";
+import { UserAvatar } from "@/components/ui/UserAvatar";
 import { FEATURES, type FeatureConfig } from "@/lib/features";
 
 const bottomItems = [
   { icon: Settings, label: "设置", href: "/settings" },
-  { icon: HelpCircle, label: "帮助", href: "/help" },
+  { icon: HelpCircle, label: "关于", href: "/help" },
 ];
 
 export const Sidebar = () => {
@@ -29,11 +30,7 @@ export const Sidebar = () => {
   const [lockedFeature, setLockedFeature] = useState<FeatureConfig | null>(null);
   const { isAuthenticated, logout, user } = useAuth();
   const { openAuthModal } = useAuthModal();
-  const avatarText =
-    user?.name?.trim()?.[0] ||
-    user?.username?.trim()?.[0] ||
-    user?.email?.trim()?.[0] ||
-    "我";
+  const { userId, avatarUrl } = useUserProfile();
 
   return (
     <>
@@ -54,10 +51,17 @@ export const Sidebar = () => {
 
             setShowProfile(true);
           }}
-          className="mb-8 flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-primary-light text-white font-bold transition-transform hover:scale-110"
+          className="mb-8 flex items-center justify-center rounded-xl p-0.5 transition-transform hover:scale-108 focus:outline-hidden"
           aria-label="用户中心"
         >
-          {avatarText.toUpperCase()}
+          <UserAvatar
+            userId={userId}
+            avatarUrl={avatarUrl}
+            name={user?.name || user?.username}
+            size={32}
+            shape="rounded-lg"
+            className="shadow-xs ring-1 ring-gray-200/80 hover:ring-primary/50 transition-all"
+          />
         </button>
 
         {/* Navigation Items */}
@@ -77,8 +81,8 @@ export const Sidebar = () => {
                 )}
                 <Icon className="h-5 w-5 text-foreground" />
                 {showLockBadge && (
-                  <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#1f2426] ring-1 ring-white/10">
-                    <Lock className="h-2.5 w-2.5 text-primary-light" />
+                  <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-white ring-1 ring-gray-200 text-primary-deep shadow-xs">
+                    <Lock className="h-2.5 w-2.5 text-primary-deep" />
                   </span>
                 )}
               </>
@@ -165,14 +169,6 @@ export const Sidebar = () => {
             );
           })}
 
-          {/* Profile Info Button */}
-          <button
-            onClick={() => setShowProfile(true)}
-            className="flex h-10 w-10 items-center justify-center rounded-lg transition-all hover:bg-primary/10"
-            aria-label="作者简介"
-          >
-            <Info className="h-5 w-5 text-foreground" />
-          </button>
           {isAuthenticated && (
             <button
               onClick={logout}

@@ -97,6 +97,7 @@ import {
   isEffortThinking,
   getOnThinkingLevel,
 } from "@/lib/chat/thinking-levels";
+import { pickSettingsDefaultModel } from "@/lib/chat/chat-preferences";
 import { isAction } from "@/lib/actions/chat-actions";
 
 interface KnowledgeChatPanelProps {
@@ -3533,17 +3534,10 @@ export const KnowledgeChatPanel = ({
 
   // 切换 session / 模型清单到位时，同步 chip 默认值。
   //
-  // model 字段优先级（仅在模型清单已加载完成后生效）：
-  //   1. ``activeSession.model`` 且**仍在当前清单里** —— 已对话过、后端持久化的
-  //      选择，最高优先；
-  //   2. 列表第一项 —— 新会话 / session.model 在当前清单中已不存在（如模型下线
-  //      或老数据写了 fallback id 进去）；
-  //   3. 空字符串 —— 模型清单本身也是空（极少见，proxy 完全空配置）。
-  //
-  // 这里用 ref 区分两种触发：
-  //   - "切了 session"：完全按上面优先级覆盖 prev.model；
-  //   - "models 引用更新（同 session）"：保留 prev.model 中"在新清单里仍然存在"
-  //     的用户选择；不存在时回落到第一项。
+  // 新会话（尚无消息）：设置页默认模型 → 列表第一项。
+  // 已有会话切走再回来：
+  //   本知识库/目录上次选过的模型 → 该会话后端记下的 model → 列表第一项。
+  // 同一会话内（含刷新）：chip 当前值 → 目录上次选择 → 会话 model → 列表第一项。
   const prevSessionIdRef = useRef<string | null>(null);
 
   // 切换会话时重置为 Agent（后端尚无 plan 持久化）
@@ -3576,14 +3570,24 @@ export const KnowledgeChatPanel = ({
     const sessionModel = activeSession.model || "";
     const localModel =
       getLastSelectedModel(knowledgeBaseId, selectedFolderId) || "";
+    const settingsModel = pickSettingsDefaultModel(models);
     const firstAvailable = models[0].id;
+    const isFreshSession =
+      (activeSession.message_count ?? 0) === 0 && !activeSession.last_message_at;
     const switchedSession =
       prevSessionIdRef.current !== activeSession.session_id;
     prevSessionIdRef.current = activeSession.session_id;
 
     setSettings((prev) => {
       let nextModel: string;
-      if (switchedSession) {
+      if (isFreshSession) {
+        // 新开会话：设置页默认模型；同会话内已用手改过 chip 则保留。
+        if (!switchedSession && prev.model && inList(prev.model)) {
+          nextModel = prev.model;
+        } else {
+          nextModel = settingsModel || firstAvailable;
+        }
+      } else if (switchedSession) {
         nextModel = inList(localModel)
           ? localModel
           : inList(sessionModel)
@@ -3885,9 +3889,8 @@ export const KnowledgeChatPanel = ({
     }
   };
 
-  // 新建会话时把当前 chip 选择带过去（保留模型 / 思考链 / agent 模式偏好），
-  // 避免新会话回到 fast preset 默认值——这是用户的 mental model：
-  // "我刚选了 gpt-4o-mini，新开对话还应该是 gpt-4o-mini"。
+  // 新建会话：模型用设置页默认项（不在清单则回落列表第一项）。
+  // 思考强度仍沿用当前 chip（该模型不支持则 off）。
   //
   // v0.8.0：scope 选择策略（不接收参数版本）：
   //   - 若用户当前在 FolderTree 选中了某 folder（selectedFolderId 非空）→
@@ -3899,9 +3902,9 @@ export const KnowledgeChatPanel = ({
   const handleNewSession = useCallback(async () => {
     // 新会话固定默认 Agent 模式
     setSettings((prev) => ({ ...prev, interactionMode: "agent" }));
-    // 思考档位：把当前选择带去新会话（同模型沿用；模型不支持则 "off"）
+    const nextModelId = pickSettingsDefaultModel(models);
     const resolvedModel =
-      models.find((m) => m.id === settings.model) ?? models[0];
+      models.find((m) => m.id === nextModelId) ?? models[0];
     const effectiveThinkingLevel = resolvedModel?.thinking_levels?.includes(
       settings.thinkingLevel,
     )
@@ -3912,14 +3915,13 @@ export const KnowledgeChatPanel = ({
       mode: "agent",
       thinkingLevel: effectiveThinkingLevel,
       enableMultimodal: effectiveMultimodal,
-      // 空字符串 → 显式置空 model，让后端用 model_preset 默认（不是"不传"）
-      model: settings.model || null,
+      model: nextModelId || null,
       // 显式按"用户当前是否选中 folder"决定 scope；hook 内部也会兜底，
       // 但这里写明意图便于后续如果想引入"忽略 folder"的入口（例如紧凑模式
       // 顶栏「新建（KB）」按钮）只需调 newSession({ folderId: null }) 即可。
       folderId: selectedFolderId ?? null,
     });
-  }, [newSession, settings.model, models, selectedFolderId]);
+  }, [newSession, settings.thinkingLevel, models, selectedFolderId]);
 
   const handleSessionRename = (s: ChatSessionInfo) => {
     if (s.session_id !== activeSessionId) {
@@ -4019,11 +4021,8 @@ export const KnowledgeChatPanel = ({
         {/* 顶部全宽状态栏 */}
         <div className="shrink-0 border-b border-hairline/70 bg-white/95 px-4 py-2.5 backdrop-blur-xs sm:px-6">
           <div className="flex items-center justify-between gap-3">
-            {/* 左侧：Bot 标识 + 标题 + 状态胶囊 + 范围面包屑 */}
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary-deep shadow-xs">
-                <Sparkles className="h-4.5 w-4.5 text-primary" aria-hidden="true" />
-              </div>
+            {/* 左侧：标题 + 状态胶囊 + 范围面包屑 */}
+            <div className="flex items-center min-w-0">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   {renaming ? (
