@@ -1376,7 +1376,7 @@ function KnowledgeWorkspace() {
 
   if (isLoading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-[radial-gradient(circle_at_top,rgba(0,179,107,0.15),transparent_35%),#111314] text-sm text-muted">
+      <div className="flex h-screen items-center justify-center bg-white text-sm text-muted">
         正在加载知识库工作台...
       </div>
     );

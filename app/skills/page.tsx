@@ -3,7 +3,7 @@
 /**
  * /skills — 技能管理页面
  *
- * 三个视图：list（列表）→ detail（详情）→ editor（创建/编辑）
+ * 集市列表始终在底层；点击卡片弹出放大预览，创建/编辑仍走独立编辑器。
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -14,16 +14,19 @@ import {
   updateSkill,
   setSkillEnabled,
   deleteSkill,
+  uploadSkillCover,
+  deleteSkillCover,
   type SkillDescriptor,
   type SkillDetail,
 } from "@/lib/api/skills";
+import type { SkillEditorSavePayload } from "@/components/skills/SkillEditor";
 import { SkillList } from "@/components/skills/SkillList";
 import { SkillDetail as SkillDetailComponent } from "@/components/skills/SkillDetail";
 import { SkillEditor } from "@/components/skills/SkillEditor";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { useAuth } from "@/components/auth/AuthProvider";
 
-type View = "list" | "detail" | "create" | "edit";
+type View = "list" | "create" | "edit";
 
 export default function SkillsPage() {
   const { isAuthenticated } = useAuth();
@@ -33,11 +36,12 @@ export default function SkillsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [currentName, setCurrentName] = useState<string | null>(null);
   const [detail, setDetail] = useState<SkillDetail | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
 
-  // 加载技能列表
-  const loadSkills = useCallback(async () => {
-    setLoading(true);
+  // 加载技能列表。silent 用于启停后刷新，避免整页骨架闪一下。
+  const loadSkills = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     setLoadError(null);
     try {
       const data = await fetchSkills();
@@ -48,7 +52,7 @@ export default function SkillsPage() {
       setLoadError(message);
       console.error("加载技能列表失败:", e);
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, []);
 
@@ -57,29 +61,37 @@ export default function SkillsPage() {
     void loadSkills();
   }, [loadSkills, isAuthenticated]);
 
-  // 查看详情
+  // 查看详情：列表不卸载，弹出放大卡片预览
   const handleView = useCallback(async (name: string) => {
     setCurrentName(name);
+    setPreviewOpen(true);
+    setDetail(null);
     setDetailLoading(true);
-    setView("detail");
     try {
       const data = await fetchSkillDetail(name);
       setDetail(data);
     } catch (e) {
       console.error("加载技能详情失败:", e);
-      setView("list");
+      setPreviewOpen(false);
+      setDetail(null);
     } finally {
       setDetailLoading(false);
     }
   }, []);
 
-  // 启停
+  // 启停：先改本地状态，再静默对齐服务端，避免整表卸载闪烁
   const handleToggle = useCallback(
     async (name: string, enabled: boolean) => {
+      setSkills((prev) =>
+        prev.map((s) => (s.name === name ? { ...s, enabled } : s))
+      );
       try {
         await setSkillEnabled(name, enabled);
-        await loadSkills();
+        await loadSkills({ silent: true });
       } catch (e) {
+        setSkills((prev) =>
+          prev.map((s) => (s.name === name ? { ...s, enabled: !enabled } : s))
+        );
         console.error("启停失败:", e);
       }
     },
@@ -91,7 +103,7 @@ export default function SkillsPage() {
     async (name: string) => {
       try {
         await deleteSkill(name);
-        await loadSkills();
+        await loadSkills({ silent: true });
       } catch (e) {
         console.error("删除失败:", e);
       }
@@ -108,26 +120,40 @@ export default function SkillsPage() {
   // 编辑
   const handleEdit = useCallback((name: string) => {
     setCurrentName(name);
+    setPreviewOpen(false);
     setView("edit");
   }, []);
 
   // 保存（创建或编辑）
   const handleSave = useCallback(
-    async (body: string) => {
-      if (view === "edit" && currentName) {
-        await updateSkill(currentName, body);
-      } else {
-        await createSkill(body);
+    async ({ body, coverFile, removeCover }: SkillEditorSavePayload) => {
+      const saved =
+        view === "edit" && currentName
+          ? await updateSkill(currentName, body)
+          : await createSkill(body);
+
+      if (coverFile) {
+        await uploadSkillCover(saved.name, coverFile);
+      } else if (removeCover) {
+        await deleteSkillCover(saved.name);
       }
+
       setView("list");
       await loadSkills();
     },
     [view, currentName, loadSkills]
   );
 
-  // 返回列表
+  const handleClosePreview = useCallback(() => {
+    setPreviewOpen(false);
+    setDetail(null);
+    setCurrentName(null);
+  }, []);
+
+  // 返回列表（关闭编辑器）
   const handleBack = useCallback(() => {
     setView("list");
+    setPreviewOpen(false);
     setDetail(null);
     setCurrentName(null);
   }, []);
@@ -145,7 +171,7 @@ export default function SkillsPage() {
           {loadError}
         </div>
       ) : null}
-      {view === "list" && (
+      {view !== "create" && view !== "edit" ? (
         <SkillList
           skills={skills}
           loading={loading}
@@ -154,21 +180,16 @@ export default function SkillsPage() {
           onDelete={handleDelete}
           onCreate={handleCreate}
         />
-      )}
+      ) : null}
 
-      {view === "detail" && detail && !detailLoading && (
+      {previewOpen ? (
         <SkillDetailComponent
           skill={detail}
-          onBack={handleBack}
-          onEdit={detail.descriptor.deletable ? handleEdit : undefined}
+          loading={detailLoading}
+          onBack={handleClosePreview}
+          onEdit={detail?.descriptor.deletable ? handleEdit : undefined}
         />
-      )}
-
-      {view === "detail" && detailLoading && (
-        <div className="flex items-center justify-center py-20 text-muted">
-          加载中...
-        </div>
-      )}
+      ) : null}
 
       {view === "create" && (
         <SkillEditor onSave={handleSave} onCancel={handleBack} />
@@ -178,6 +199,7 @@ export default function SkillsPage() {
         <SkillEditor
           editName={currentName ?? undefined}
           initialBody={detail.body}
+          initialCoverUrl={detail.descriptor.cover_url}
           onSave={handleSave}
           onCancel={handleBack}
         />

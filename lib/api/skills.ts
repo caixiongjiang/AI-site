@@ -47,6 +47,8 @@ export interface SkillDescriptor {
   source: "builtin" | "custom";
   enabled: boolean;
   deletable: boolean;
+  /** 自定义封面相对路径；为空则使用算法生成封面 */
+  cover_url?: string | null;
 }
 
 export interface SkillDetail {
@@ -151,6 +153,54 @@ export async function setSkillEnabled(
     }
   );
   if (!resp.ok) throw new Error(`setSkillEnabled failed: ${resp.status}`);
+}
+
+export function resolveSkillCoverUrl(
+  coverUrl?: string | null
+): string | null {
+  if (!coverUrl) return null;
+  if (/^(https?:|blob:|data:)/i.test(coverUrl)) return coverUrl;
+  return skillApiUrl(coverUrl);
+}
+
+export async function uploadSkillCover(
+  name: string,
+  file: File
+): Promise<SkillDescriptor> {
+  const url = skillApiUrl(`/skills/${encodeURIComponent(name)}/cover`);
+  const headers = getCommonHeaders();
+  const nextHeaders: Record<string, string> = {};
+  if (headers["X-User-Id"]) nextHeaders["X-User-Id"] = headers["X-User-Id"];
+  if (headers.Authorization) nextHeaders.Authorization = headers.Authorization;
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: nextHeaders,
+    body: formData,
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(
+      err.detail || err.message || `uploadSkillCover failed: ${resp.status}`
+    );
+  }
+  const json: ApiResponse<SkillDescriptor> = await resp.json();
+  if (!json.data) throw new Error("empty data");
+  return json.data;
+}
+
+export async function deleteSkillCover(name: string): Promise<void> {
+  const resp = await fetch(
+    skillApiUrl(`/skills/${encodeURIComponent(name)}/cover`),
+    {
+      method: "DELETE",
+      headers: getCommonHeaders(),
+    }
+  );
+  if (!resp.ok) throw new Error(`deleteSkillCover failed: ${resp.status}`);
 }
 
 export async function deleteSkill(name: string): Promise<void> {

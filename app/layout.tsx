@@ -7,6 +7,14 @@ import { AppShell } from "@/components/layout/AppShell";
 export const metadata: Metadata = {
   title: "JarsonCai's Assistant",
   description: "为创新赋能，与智慧同行",
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+    ],
+    apple: [
+      { url: "/apple-icon.svg", type: "image/svg+xml" },
+    ],
+  },
 };
 
 export default function RootLayout({

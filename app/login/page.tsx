@@ -44,25 +44,25 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_top,rgba(0,179,107,0.22),transparent_30%),linear-gradient(180deg,#111314_0%,#0a0c0d_100%)] px-6 py-12">
-      <div className="absolute inset-0 bg-[linear-gradient(120deg,transparent_0%,rgba(255,255,255,0.03)_35%,transparent_70%)]" />
-      <div className="relative w-full max-w-md rounded-[32px] border border-white/10 bg-[#121516]/90 p-8 shadow-[0_30px_120px_rgba(0,0,0,0.45)] backdrop-blur">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gray-50 px-6 py-12">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(0,179,107,0.12),transparent_40%)]" />
+      <div className="relative w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-8 shadow-2xl">
         <div className="mb-8">
-          <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/15 text-primary-light">
+          <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary-deep">
             <ShieldCheck className="h-6 w-6" />
           </div>
-          <h1 className="mt-5 text-3xl text-foreground">统一登录</h1>
+          <h1 className="mt-5 text-2xl font-bold text-foreground">统一登录</h1>
           <p className="mt-2 text-sm leading-6 text-muted">
             使用 Logto 完成身份认证，登录后即可访问知识库、Agent 和文件操作能力。
           </p>
         </div>
 
         <div className="space-y-4">
-          <div className="rounded-2xl border border-white/10 bg-dark-card px-4 py-4 text-sm leading-6 text-muted">
+          <div className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-4 text-sm leading-6 text-muted">
             当前页面不会直接采集用户名和密码，点击下方按钮后会跳转到你部署好的 Logto 服务端完成登录。
           </div>
           {error && (
-            <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+            <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
               {error}
             </div>
           )}
@@ -71,7 +71,7 @@ export default function LoginPage() {
             type="button"
             onClick={handleLogin}
             disabled={isSubmitting || !isReady}
-            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-medium text-black transition-transform hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary px-4 py-3 text-sm font-medium text-white transition-transform hover:-translate-y-0.5 hover:bg-primary-light disabled:cursor-not-allowed disabled:opacity-60 shadow-md shadow-primary/20"
           >
             {isSubmitting ? (
               <LoaderCircle className="h-4 w-4 animate-spin" />

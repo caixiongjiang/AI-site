@@ -1,7 +1,25 @@
 "use client";
 
-import { X, Mail, Github, Globe } from "lucide-react";
+import { useRef, useState } from "react";
+import Link from "next/link";
+import {
+  X,
+  Camera,
+  RotateCcw,
+  Check,
+  Copy,
+  Edit2,
+  Settings,
+  HelpCircle,
+  LogOut,
+  Sparkles,
+  Loader2,
+  ShieldCheck,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
+import { UserAvatar } from "@/components/ui/UserAvatar";
+import { useUserProfile } from "@/lib/hooks/useUserProfile";
+import { useAuth } from "@/components/auth/AuthProvider";
 
 interface ProfileDrawerProps {
   isOpen: boolean;
@@ -9,117 +27,356 @@ interface ProfileDrawerProps {
 }
 
 export const ProfileDrawer = ({ isOpen, onClose }: ProfileDrawerProps) => {
+  const { user, isAuthenticated, logout } = useAuth();
+  const {
+    userId,
+    avatarUrl,
+    nickname,
+    bio,
+    isLoading,
+    uploadAvatar,
+    deleteAvatar,
+    updateProfile,
+  } = useUserProfile();
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editBio, setEditBio] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [copiedId, setCopiedId] = useState(false);
+  const [statusMsg, setStatusMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  const displayName =
+    nickname ||
+    user?.name ||
+    user?.username ||
+    (userId ? `用户 ${userId.slice(0, 8)}` : "未命名用户");
+
+  const displayBio =
+    bio ||
+    "暂无个人简介。点击编辑按钮添加简介，介绍您的工作或研究方向。";
+
+  const handleStartEdit = () => {
+    setEditName(nickname || user?.name || "");
+    setEditBio(bio || "");
+    setIsEditing(true);
+    setStatusMsg(null);
+  };
+
+  const handleSaveProfile = async () => {
+    setIsSaving(true);
+    setStatusMsg(null);
+    try {
+      await updateProfile({
+        nickname: editName.trim() || undefined,
+        bio: editBio.trim() || undefined,
+      });
+      setIsEditing(false);
+      setStatusMsg({ type: "success", text: "个人资料已保存" });
+      setTimeout(() => setStatusMsg(null), 3000);
+    } catch (err: any) {
+      setStatusMsg({ type: "error", text: err?.message || "保存失败" });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // 清空 input 允许重复选择相同文件
+    e.target.value = "";
+
+    setStatusMsg(null);
+    try {
+      await uploadAvatar(file);
+      setStatusMsg({ type: "success", text: "头像已成功更新" });
+      setTimeout(() => setStatusMsg(null), 3000);
+    } catch (err: any) {
+      setStatusMsg({ type: "error", text: err?.message || "头像上传失败" });
+    }
+  };
+
+  const handleResetAvatar = async () => {
+    setStatusMsg(null);
+    try {
+      await deleteAvatar();
+      setStatusMsg({ type: "success", text: "已重置为默认品牌字符徽章" });
+      setTimeout(() => setStatusMsg(null), 3000);
+    } catch (err: any) {
+      setStatusMsg({ type: "error", text: err?.message || "重置头像失败" });
+    }
+  };
+
+  const handleCopyUserId = () => {
+    if (!userId) return;
+    navigator.clipboard.writeText(userId);
+    setCopiedId(true);
+    setTimeout(() => setCopiedId(false), 2000);
+  };
+
   return (
     <>
-      {/* Overlay */}
+      {/* 遮罩背景 */}
       <div
         className={cn(
-          "fixed inset-0 z-[998] bg-black/50 transition-opacity",
+          "fixed inset-0 z-[998] bg-black/35 backdrop-blur-xs transition-opacity duration-300",
           isOpen ? "opacity-100" : "pointer-events-none opacity-0"
         )}
         onClick={onClose}
       />
 
-      {/* Drawer */}
+      {/* 抽屉容器：完全遵循网站纯白/极简质感设计规范 */}
       <aside
         className={cn(
-          "fixed left-[60px] top-0 z-[999] flex h-screen w-[400px] flex-col bg-[#1E1E1E] border-r border-dark-border shadow-2xl transition-transform duration-300",
+          "fixed left-[60px] top-0 z-[999] flex h-screen w-[380px] max-w-[calc(100vw-60px)] flex-col bg-white text-foreground border-r border-gray-200 shadow-2xl transition-transform duration-300 ease-out",
           isOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >
-        {/* Header */}
-        <div className="bg-gradient-to-br from-primary/10 to-primary-light/5 border-b border-dark-border p-8">
+        {/* 顶部标题栏 */}
+        <div className="flex items-center justify-between border-b border-gray-100 bg-gray-50/70 px-5 py-4">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-foreground">个人空间</span>
+            {isAuthenticated ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary-deep ring-1 ring-primary/20">
+                <ShieldCheck className="h-3 w-3" />
+                已登录
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-muted ring-1 ring-gray-200">
+                访客模式
+              </span>
+            )}
+          </div>
           <button
             onClick={onClose}
-            className="float-right flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-all hover:bg-red-500/20 hover:text-red-500"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-gray-200/70 hover:text-foreground"
+            aria-label="关闭抽屉"
           >
-            <X className="h-5 w-5" />
+            <X className="h-4 w-4" />
           </button>
-          
-          <div className="mt-5 flex h-20 w-20 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-primary-light text-4xl font-bold text-white">
-            蔡
-          </div>
-          
-          <h2 className="mt-5 text-2xl text-foreground">蔡雄江</h2>
-          <p className="mt-2 text-sm text-muted">全栈开发工程师 · AI产品设计师</p>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-8">
-          {/* About Section */}
-          <section className="mb-8">
-            <h3 className="mb-4 text-xs uppercase tracking-wider text-muted">
-              关于我
-            </h3>
-            <p className="leading-relaxed text-sm text-gray-300">
-              热爱技术，专注于人工智能和知识管理领域的产品设计与开发。致力于通过技术创新提升知识工作者的效率，让AI真正成为每个人的智能助手。
-            </p>
-          </section>
+        {/* 隐藏的文件上传 input */}
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileChange}
+          accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+          className="hidden"
+        />
 
-          {/* Stats Section */}
-          <section className="mb-8">
-            <h3 className="mb-4 text-xs uppercase tracking-wider text-muted">
-              统计数据
-            </h3>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="rounded-lg bg-dark-card p-4 text-center">
-                <div className="mb-1 text-2xl font-bold text-primary">16</div>
-                <div className="text-xs text-muted">智能体</div>
+        {/* 抽屉内容区 */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {/* 用户基础信息卡片 */}
+          <div className="relative rounded-2xl bg-gray-50/80 border border-gray-200/80 p-4">
+            <div className="flex items-start gap-3.5">
+              {/* 头像区域：左下角相机修改按钮（GitHub 风格交互） */}
+              <div className="relative shrink-0">
+                <UserAvatar
+                  userId={userId}
+                  avatarUrl={avatarUrl}
+                  name={displayName}
+                  size={58}
+                  shape="rounded-xl"
+                  className="shadow-xs ring-1 ring-black/5"
+                />
+
+                {/* GitHub 风格：位于头像左下角的圆形修改按钮 */}
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isLoading}
+                  className="absolute -bottom-1 -left-1 flex h-6 w-6 items-center justify-center rounded-full bg-white text-gray-700 border border-gray-200 shadow-sm transition-all hover:scale-110 hover:bg-primary hover:text-white hover:border-primary cursor-pointer"
+                  title="修改头像 (点击上传图片)"
+                  aria-label="修改头像"
+                >
+                  {isLoading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                  ) : (
+                    <Camera className="h-3.5 w-3.5" />
+                  )}
+                </button>
               </div>
-              <div className="rounded-lg bg-dark-card p-4 text-center">
-                <div className="mb-1 text-2xl font-bold text-primary">234</div>
-                <div className="text-xs text-muted">知识库</div>
-              </div>
-              <div className="rounded-lg bg-dark-card p-4 text-center">
-                <div className="mb-1 text-2xl font-bold text-primary">1.2k</div>
-                <div className="text-xs text-muted">对话数</div>
+
+              {/* 用户信息与名称 */}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <h2 className="truncate text-base font-bold text-foreground">
+                    {displayName}
+                  </h2>
+                  {!isEditing && (
+                    <button
+                      onClick={handleStartEdit}
+                      className="p-1 text-muted hover:text-primary transition-colors"
+                      title="编辑昵称与简介"
+                    >
+                      <Edit2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* User ID 与复制 */}
+                <div className="mt-1 flex items-center gap-1.5">
+                  <span className="font-mono text-xs text-muted-subtle">ID:</span>
+                  <span className="font-mono text-xs text-muted truncate max-w-[130px]">
+                    {userId}
+                  </span>
+                  <button
+                    onClick={handleCopyUserId}
+                    className="p-0.5 text-muted hover:text-foreground transition-colors"
+                    title="复制用户 ID"
+                  >
+                    {copiedId ? (
+                      <Check className="h-3 w-3 text-primary" />
+                    ) : (
+                      <Copy className="h-3 w-3" />
+                    )}
+                  </button>
+                </div>
+
+                {avatarUrl ? (
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary-deep ring-1 ring-primary/20">
+                      <Sparkles className="h-2.5 w-2.5" />
+                      自定义头像
+                    </span>
+                    <button
+                      onClick={handleResetAvatar}
+                      disabled={isLoading}
+                      className="inline-flex items-center gap-0.5 text-[10px] text-muted hover:text-red-600 transition-colors"
+                      title="恢复默认头像"
+                    >
+                      <RotateCcw className="h-2.5 w-2.5" />
+                      恢复默认
+                    </button>
+                  </div>
+                ) : null}
               </div>
             </div>
-          </section>
 
-          {/* Contact Section */}
-          <section className="mb-8">
-            <h3 className="mb-4 text-xs uppercase tracking-wider text-muted">
-              联系方式
-            </h3>
-            <div className="space-y-3">
-              <a
-                href="mailto:caixiongjiang@example.com"
-                className="flex items-center gap-3 rounded-lg bg-dark-card p-3 transition-all hover:border-l-2 hover:border-primary hover:bg-dark-card/80"
+            {/* 状态反馈提示 */}
+            {statusMsg && (
+              <div
+                className={cn(
+                  "mt-3 rounded-lg px-2.5 py-1.5 text-xs flex items-center gap-1.5 transition-all",
+                  statusMsg.type === "success"
+                    ? "bg-primary/10 text-primary-deep border border-primary/20"
+                    : "bg-red-50 text-red-600 border border-red-200"
+                )}
               >
-                <Mail className="h-5 w-5 text-foreground" />
-                <span className="text-sm text-foreground">caixiongjiang@example.com</span>
-              </a>
-              <a
-                href="https://github.com/caixiongjiang"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-3 rounded-lg bg-dark-card p-3 transition-all hover:border-l-2 hover:border-primary hover:bg-dark-card/80"
-              >
-                <Github className="h-5 w-5 text-foreground" />
-                <span className="text-sm text-foreground">GitHub: @caixiongjiang</span>
-              </a>
-              <a
-                href="#"
-                className="flex items-center gap-3 rounded-lg bg-dark-card p-3 transition-all hover:border-l-2 hover:border-primary hover:bg-dark-card/80"
-              >
-                <Globe className="h-5 w-5 text-foreground" />
-                <span className="text-sm text-foreground">个人网站</span>
-              </a>
-            </div>
-          </section>
+                {statusMsg.type === "success" ? (
+                  <Check className="h-3.5 w-3.5 shrink-0" />
+                ) : (
+                  <X className="h-3.5 w-3.5 shrink-0" />
+                )}
+                <span>{statusMsg.text}</span>
+              </div>
+            )}
+          </div>
 
-          {/* Tech Stack Section */}
-          <section>
-            <h3 className="mb-4 text-xs uppercase tracking-wider text-muted">
-              技术栈
-            </h3>
-            <div className="space-y-2 text-sm leading-relaxed text-gray-300">
-              <p><strong className="text-foreground">前端：</strong>React, Vue, TypeScript</p>
-              <p><strong className="text-foreground">后端：</strong>Python, Node.js, FastAPI</p>
-              <p><strong className="text-foreground">AI：</strong>LangChain, OpenAI, Vector Database</p>
-              <p><strong className="text-foreground">设计：</strong>Figma, Sketch, 交互原型</p>
-            </div>
+          {/* 个人简介模块 */}
+          {isEditing ? (
+            <section className="rounded-2xl bg-gray-50/80 border border-gray-200/80 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold text-muted uppercase tracking-wider">
+                  编辑个人资料
+                </h3>
+              </div>
+              <div>
+                <label className="block text-xs text-muted mb-1">昵称</label>
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  maxLength={30}
+                  className="w-full rounded-lg bg-white border border-gray-300 px-3 py-1.5 text-sm text-foreground focus:border-primary focus:ring-1 focus:ring-primary/20 focus:outline-hidden transition-colors"
+                  placeholder="请输入您的昵称"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-muted mb-1">简介</label>
+                <textarea
+                  value={editBio}
+                  onChange={(e) => setEditBio(e.target.value)}
+                  rows={3}
+                  maxLength={200}
+                  className="w-full rounded-lg bg-white border border-gray-300 px-3 py-1.5 text-sm text-foreground focus:border-primary focus:ring-1 focus:ring-primary/20 focus:outline-hidden resize-none transition-colors"
+                  placeholder="填写您的个人简介或研究方向..."
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsEditing(false)}
+                  className="rounded-lg bg-gray-200/70 hover:bg-gray-300/70 px-3 py-1.5 text-xs text-foreground transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveProfile}
+                  disabled={isSaving}
+                  className="flex items-center gap-1.5 rounded-lg bg-primary hover:bg-primary-light px-3.5 py-1.5 text-xs font-medium text-white transition-colors"
+                >
+                  {isSaving && <Loader2 className="h-3 w-3 animate-spin" />}
+                  保存
+                </button>
+              </div>
+            </section>
+          ) : (
+            <section className="rounded-2xl bg-gray-50/80 border border-gray-200/80 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-xs font-semibold text-muted uppercase tracking-wider">
+                  个人简介
+                </h3>
+              </div>
+              <p className="text-xs leading-relaxed text-muted whitespace-pre-wrap">
+                {displayBio}
+              </p>
+            </section>
+          )}
+
+          {/* 账户操作与设置 */}
+          <section className="rounded-2xl bg-gray-50/80 border border-gray-200/80 p-2 space-y-1">
+            <Link
+              href="/settings"
+              onClick={onClose}
+              className="flex items-center justify-between rounded-xl p-2.5 text-xs text-foreground transition-colors hover:bg-white hover:shadow-xs"
+            >
+              <div className="flex items-center gap-2.5">
+                <Settings className="h-4 w-4 text-muted" />
+                <span>系统与模型设置</span>
+              </div>
+              <span className="text-[10px] text-muted-subtle">前往</span>
+            </Link>
+
+            <Link
+              href="/help"
+              onClick={onClose}
+              className="flex items-center justify-between rounded-xl p-2.5 text-xs text-foreground transition-colors hover:bg-white hover:shadow-xs"
+            >
+              <div className="flex items-center gap-2.5">
+                <HelpCircle className="h-4 w-4 text-muted" />
+                <span>关于开发者</span>
+              </div>
+              <span className="text-[10px] text-muted-subtle">查看</span>
+            </Link>
+
+            {isAuthenticated && (
+              <button
+                type="button"
+                onClick={logout}
+                className="w-full flex items-center justify-between rounded-xl p-2.5 text-xs text-red-600 transition-colors hover:bg-red-50 hover:text-red-700"
+              >
+                <div className="flex items-center gap-2.5">
+                  <LogOut className="h-4 w-4" />
+                  <span>退出当前登录</span>
+                </div>
+              </button>
+            )}
           </section>
         </div>
       </aside>

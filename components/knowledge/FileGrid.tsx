@@ -44,7 +44,7 @@ export const FileGrid = ({
 }: FileGridProps) => {
   if (files.length === 0) {
     return (
-      <div className="rounded-[28px] border border-dashed border-white/10 bg-dark-card/70 p-10 text-center">
+      <div className="rounded-[28px] border border-dashed border-gray-200 bg-gray-50/70 p-10 text-center">
         <div className="text-base text-foreground">当前目录还没有资料</div>
         <div className="mt-2 text-sm text-muted">
           上传文件后，系统会自动处理内容，你可以直接开始问答。
@@ -63,7 +63,7 @@ export const FileGrid = ({
         return (
           <div
             key={file.file_id}
-            className="group flex items-start gap-4 rounded-[24px] border border-white/5 bg-dark-card px-5 py-4 transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-lg hover:shadow-primary/10"
+            className="group flex items-start gap-4 rounded-[24px] border border-gray-200 bg-white px-5 py-4 transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-lg hover:shadow-primary/10"
           >
             <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-primary/10">
               <FileText className="h-5 w-5 text-foreground" />
@@ -114,7 +114,7 @@ export const FileGrid = ({
             <div className="flex items-center gap-2">
               <button
                 onClick={() => onFileClick(file)}
-                className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 text-muted transition-colors hover:border-primary hover:text-foreground"
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-gray-200 text-muted transition-colors hover:border-primary hover:text-foreground"
                 aria-label={`打开 ${file.file_name}`}
               >
                 <ExternalLink className="h-4 w-4" />
@@ -122,7 +122,7 @@ export const FileGrid = ({
               {onDeleteFile && (
                 <button
                   onClick={() => onDeleteFile(file)}
-                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 text-muted transition-colors hover:border-red-500/40 hover:text-red-400"
+                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-gray-200 text-muted transition-colors hover:border-red-500/40 hover:text-red-500"
                   aria-label={`删除 ${file.file_name}`}
                 >
                   <Trash2 className="h-4 w-4" />

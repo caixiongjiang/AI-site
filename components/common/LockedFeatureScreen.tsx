@@ -55,7 +55,7 @@ export function LockedFeatureScreen({
             </Link>
             <Link
               href="/skills"
-              className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm text-foreground transition hover:bg-white/10"
+              className="inline-flex items-center gap-2 rounded-2xl border border-gray-200 bg-white px-5 py-3 text-sm text-foreground transition hover:bg-gray-50 shadow-xs"
             >
               <Sparkles className="h-4 w-4" />
               进入技能
