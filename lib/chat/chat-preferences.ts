@@ -7,6 +7,7 @@ export const CHAT_PREF_KEYS = {
   SEND_SHORTCUT: "chat-send-shortcut",
   DEFAULT_MODEL: "knowledge-chat-last-model",
   DEFAULT_THINKING_LEVEL: "knowledge-chat-last-thinking-level",
+  ENABLE_ROUTE_PLAN: "knowledge-chat-enable-route-plan",
 } as const;
 
 function readPref(key: string): string | null {
@@ -50,6 +51,15 @@ export function getSendShortcut(): "enter" | "cmd-enter" | null {
 
 export function setSendShortcut(shortcut: "enter" | "cmd-enter"): void {
   writePref(CHAT_PREF_KEYS.SEND_SHORTCUT, shortcut);
+}
+
+export function getSettingsEnableRoutePlan(): boolean {
+  const raw = readPref(CHAT_PREF_KEYS.ENABLE_ROUTE_PLAN);
+  return raw === "true";
+}
+
+export function setSettingsEnableRoutePlan(enable: boolean): void {
+  writePref(CHAT_PREF_KEYS.ENABLE_ROUTE_PLAN, String(enable));
 }
 
 /** 设置页默认模型若仍在当前清单中则用之，否则回落列表第一项。 */

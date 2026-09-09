@@ -206,6 +206,8 @@ export interface ChatRequestPayload {
   retrieve_top_k?: number | null;
   custom_system_prompt?: string | null;
   skip_retrieval?: boolean | null;
+  /** 是否启用智能路由规划（LLM₁）；未传或 false 走 4 路混合检索 */
+  enable_route_plan?: boolean | null;
   /**
    * Cursor 式 @ 内联引用（软引用，可多个，文件/目录混选）。
    * 后端解析为「引用资料」块注入 user prompt（小文件全量注入 / 大文件与目录仅提示 document_id）；

@@ -26,7 +26,10 @@ import {
   summarizeChatContext,
   fetchContextStatus,
 } from "@/lib/api/chat";
-import { getSettingsDefaultModel } from "@/lib/chat/chat-preferences";
+import {
+  getSettingsDefaultModel,
+  getSettingsEnableRoutePlan,
+} from "@/lib/chat/chat-preferences";
 import type {
   ChatMention,
   ChatMessage,
@@ -147,6 +150,8 @@ export interface SendOptions {
   retrieveTopK?: number;
   /** 跳过服务端无条件初次召回（仅特殊场景使用） */
   skipRetrieval?: boolean;
+  /** 是否启用智能路由规划（LLM₁）；未传则读取偏好设置 */
+  enableRoutePlan?: boolean;
   /** Slash 显式召唤的技能名列表（后端注入当轮 user turn，非 system prompt） */
   forcedSkillNames?: string[];
   /**
@@ -1365,6 +1370,11 @@ export function useKnowledgeChat(
       if (opts.skipRetrieval !== undefined) {
         payload.skip_retrieval = opts.skipRetrieval;
       }
+      const effectiveEnableRoutePlan =
+        opts.enableRoutePlan !== undefined
+          ? opts.enableRoutePlan
+          : getSettingsEnableRoutePlan();
+      payload.enable_route_plan = effectiveEnableRoutePlan;
       if (opts.forcedSkillNames && opts.forcedSkillNames.length > 0) {
         payload.forced_skill_names = opts.forcedSkillNames;
       }

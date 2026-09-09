@@ -46,9 +46,11 @@ import {
   getSendShortcut,
   getSettingsDefaultModel,
   getSettingsDefaultThinkingLevel,
+  getSettingsEnableRoutePlan,
   setSendShortcut as persistSendShortcut,
   setSettingsDefaultModel,
   setSettingsDefaultThinkingLevel,
+  setSettingsEnableRoutePlan,
 } from "@/lib/chat/chat-preferences";
 
 type TabType = "profile" | "ai" | "data" | "system";
@@ -101,6 +103,7 @@ export default function SettingsPage() {
   const [defaultModel, setDefaultModel] = useState("gpt-4o-mini");
   const [defaultThinking, setDefaultThinking] = useState("off");
   const [sendShortcut, setSendShortcut] = useState<"enter" | "cmd-enter">("enter");
+  const [enableRoutePlan, setEnableRoutePlan] = useState(false);
 
   // ==================== 存储与缓存状态 ====================
   const [storageUsage, setStorageUsage] = useState<string>("0 KB");
@@ -133,6 +136,9 @@ export default function SettingsPage() {
 
     const savedShortcut = getSendShortcut();
     if (savedShortcut) setSendShortcut(savedShortcut);
+
+    const savedRoutePlan = getSettingsEnableRoutePlan();
+    setEnableRoutePlan(savedRoutePlan);
 
     // 计算 Storage 大小
     calculateStorageUsage();
@@ -302,6 +308,11 @@ export default function SettingsPage() {
   const handleShortcutChange = (shortcut: "enter" | "cmd-enter") => {
     setSendShortcut(shortcut);
     persistSendShortcut(shortcut);
+  };
+
+  const handleRoutePlanChange = (enable: boolean) => {
+    setEnableRoutePlan(enable);
+    setSettingsEnableRoutePlan(enable);
   };
 
   // 导出所有数据
@@ -721,6 +732,38 @@ export default function SettingsPage() {
                         </button>
                       );
                     })}
+                  </div>
+                </div>
+
+                {/* 知识库检索智能路由规划 */}
+                <div className="rounded-2xl border border-gray-200/80 bg-white p-6 shadow-xs space-y-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-sm font-bold text-foreground">智能路由规划 (Route Planner)</h2>
+                        <span className={cn(
+                          "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                          enableRoutePlan
+                            ? "bg-primary/10 text-primary-deep ring-1 ring-primary/20"
+                            : "bg-gray-100 text-muted ring-1 ring-gray-200"
+                        )}>
+                          {enableRoutePlan ? "已开启" : "已关闭（推荐）"}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted max-w-xl leading-relaxed">
+                        开启后，知识库检索前由大模型（LLM₁）动态分析意图并规划召回路径；关闭时，默认直接并行执行 <strong>4 路混合检索</strong>（正文稠密向量 + 增强块向量 + BM25 词面 + 原子问答向量）以获取最低首包延迟。
+                      </p>
+                    </div>
+
+                    <label className="relative inline-flex cursor-pointer items-center shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={enableRoutePlan}
+                        onChange={(e) => handleRoutePlanChange(e.target.checked)}
+                        className="peer sr-only"
+                      />
+                      <div className="h-6 w-11 rounded-full bg-gray-200 peer-checked:bg-primary after:absolute after:top-0.5 after:left-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow-xs after:transition-all after:content-[''] peer-checked:after:translate-x-full peer-focus:outline-hidden" />
+                    </label>
                   </div>
                 </div>
 
