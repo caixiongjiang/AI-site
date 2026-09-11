@@ -101,7 +101,7 @@ export function ConfirmModal({
           <button
             type="button"
             onClick={onCancel}
-            className="rounded-full border border-gray-200 px-4 py-2 text-sm text-foreground transition-colors hover:border-primary"
+            className="flex h-9 items-center justify-center rounded-full border border-gray-200 px-5 text-sm font-medium text-foreground transition-colors hover:border-gray-300 hover:bg-gray-50"
           >
             取消
           </button>
@@ -109,7 +109,7 @@ export function ConfirmModal({
             type="button"
             disabled={!canConfirm || busy}
             onClick={() => void action.onConfirm()}
-            className="rounded-full bg-red-500 px-4 py-2 text-sm text-white transition-colors hover:bg-red-400 disabled:cursor-not-allowed disabled:bg-red-500/40"
+            className="flex h-9 items-center justify-center rounded-full bg-red-500 px-5 text-sm font-medium text-white shadow-sm transition-all hover:bg-red-400 disabled:cursor-not-allowed disabled:bg-red-500/40 disabled:shadow-none"
           >
             {busy ? "处理中..." : action.confirmLabel}
           </button>

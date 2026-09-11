@@ -18,7 +18,6 @@ import {
   Atom,
   BookOpen,
   Bot,
-  Brain,
   Check,
   ChevronDown,
   ChevronRight,
@@ -34,6 +33,7 @@ import {
   FileText,
   Folder,
   Image as ImageIcon,
+  Layers,
   Loader2,
   MessageSquarePlus,
   Pencil,
@@ -251,13 +251,186 @@ function formatSeconds(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function thinkRowLabel(inflight: boolean, thinkingMs?: number): string {
-  if (inflight) return "正在思考…";
-  if (thinkingMs == null) return "已思考";
-  return `已思考（${Math.max(0, Math.round(thinkingMs / 1000))}s）`;
+const RETRIEVAL_STAGE_LABEL: Record<string, string> = {
+  planning: "大模型规划检索路线…",
+  searching: "多路召回中…",
+  reranking: "精排结果中…",
+};
+
+const IMAGE_TOOL_STAGE_LABEL: Record<string, string> = {
+  loading_images: "加载图片中…",
+  calling_vlm: "调用多模态大模型理解图片…",
+};
+
+const KB_SEARCH_TOOLS = new Set(["search_knowledge_base"]);
+const IMAGE_TOOL_NAMES = new Set(["read_image_chunks"]);
+
+/** 圆润灯泡图标（光学中心向左微调，与 Lucide 系列线性图标垂直严格对齐） */
+function ThinkingBulbIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      {/* 饱满圆润的球形灯泡主体（中心 x 坐标微调至 11.2，补偿右侧高光带来的视觉右偏） */}
+      <path d="M8.2 17h6c.6-1 1.4-1.8 2.3-3.2A7.5 7.5 0 1 0 5.9 13.8c.9 1.4 1.7 2.2 2.3 3.2z" />
+      {/* 内部高光反光弧线 */}
+      <path d="M12.8 5.8a4.5 4.5 0 0 1 2.7 3" />
+      {/* 底部短横底座线 */}
+      <path d="M8.7 20.5h5" />
+    </svg>
+  );
 }
 
-/** 折叠态摘要文案：流式时报当前动作，结束后报步数与总耗时 */
+/** 适中比例放大镜图标（镜圈半径微调至 6.8，黄金比例舒展） */
+function GrepSearchIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      {/* 适中镜圈（半径微调至 6.8，介于默认 8 与极小 5.8 之间） */}
+      <circle cx="10.5" cy="10.5" r="6.8" />
+      {/* 比例协调的倾斜镜柄 */}
+      <path d="m21 21-5.7-5.7" />
+    </svg>
+  );
+}
+
+function formatExecutionModelLabel(model?: string | null): string {
+  if (!model) return "";
+  return model.replace(/^litellm_proxy\//, "").replace(/^dashscope\//, "");
+}
+
+/** 提取思考文本首部摘要（单行预览） */
+function extractThinkSummary(thinking: string): string {
+  if (!thinking) return "";
+  const clean = thinking
+    .replace(/^[#\s*`>-]+/gm, "")
+    .replace(/\n+/g, " ")
+    .trim();
+  if (clean.length <= 90) return clean;
+  return clean.slice(0, 90) + "…";
+}
+
+/** 友好中文工具名称映射（对齐 DeepSeek / Harness 风格） */
+function getToolFriendlyName(name: string): string {
+  switch (name) {
+    case "search_knowledge_base":
+      return "检索";
+    case "grep_chunks":
+      return "Grep";
+    case "skeleton":
+      return "大纲";
+    case "drill_down":
+      return "下钻";
+    case "roll_up":
+      return "向上汇总";
+    case "context_window":
+      return "上下文窗口";
+    case "read_chunks":
+      return "读取";
+    case "read_image_chunks":
+      return "读图";
+    case "skills_list":
+      return "技能列表";
+    case "skill_view":
+      return "技能详情";
+    default:
+      return name;
+  }
+}
+
+/** 对应工具的线性图标 */
+function getToolIcon(name: string): ComponentType<{ className?: string }> {
+  switch (name) {
+    case "search_knowledge_base":
+      return BookOpen;
+    case "grep_chunks":
+      return GrepSearchIcon;
+    case "skeleton":
+      return Compass;
+    case "drill_down":
+    case "roll_up":
+    case "context_window":
+      return Layers;
+    case "read_chunks":
+      return FileText;
+    case "read_image_chunks":
+      return ImageIcon;
+    case "skills_list":
+    case "skill_view":
+      return Wrench;
+    default:
+      return Wrench;
+  }
+}
+
+/** 提取工具调用的核心参数作为单行摘要 */
+function extractToolSummary(tc: ToolCallRecord): string {
+  const args = (tc.arguments || {}) as Record<string, unknown>;
+  if (tc.name === "search_knowledge_base" && args.query_text) {
+    return String(args.query_text);
+  }
+  if (tc.name === "grep_chunks" && (args.pattern || args.query)) {
+    return String(args.pattern || args.query);
+  }
+  if (tc.name === "skeleton" && (args.document_id || args.file_name)) {
+    return String(args.document_id || args.file_name);
+  }
+  if (tc.name === "drill_down") {
+    const target = args.target_granularity ? ` → ${args.target_granularity}` : "";
+    return `${args.anchor_id || ""}${target}`.trim() || "下钻检索";
+  }
+  if (tc.name === "roll_up" && args.anchor_id) {
+    return String(args.anchor_id);
+  }
+  if (tc.name === "context_window" && args.chunk_id) {
+    return `chunk: ${args.chunk_id}`;
+  }
+  if (tc.name === "read_chunks" && Array.isArray(args.chunk_ids)) {
+    return args.chunk_ids.join(", ") || `${args.chunk_ids.length} 个片段`;
+  }
+  if (tc.name === "read_image_chunks") {
+    if (Array.isArray(args.chunk_ids)) {
+      return args.chunk_ids.join(", ") || `${args.chunk_ids.length} 张图片`;
+    }
+    if (args.prompt) return String(args.prompt);
+  }
+  if (tc.name === "skills_list") {
+    return args.category ? `分类: ${args.category}` : "全部可用技能";
+  }
+  if (tc.name === "skill_view" && args.skill_name) {
+    return String(args.skill_name);
+  }
+
+  for (const [key, val] of Object.entries(args)) {
+    if (typeof val === "string" && val.trim()) {
+      return `${key}: ${val}`;
+    }
+    if (Array.isArray(val) && val.length > 0) {
+      return `${key}: [${val.join(", ")}]`;
+    }
+  }
+
+  if (tc.argsText) {
+    return tc.argsText.slice(0, 80);
+  }
+
+  return tc.name || "执行工具";
+}
+
+/** 折叠态摘要文案：对齐 DeepSeek Harness 风格 */
 function traceSummaryLabel(steps: TraceStep[], inflight: boolean): string {
   if (inflight) {
     const running = [...steps]
@@ -276,24 +449,46 @@ function traceSummaryLabel(steps: TraceStep[], inflight: boolean): string {
         (tc.execution_stage
           ? IMAGE_TOOL_STAGE_LABEL[tc.execution_stage]
           : null);
-      return stage ?? `${tc.name || "工具"} 调用中…`;
+      return stage ?? `正在调用 ${getToolFriendlyName(tc.name)}…`;
     }
     if (running) return "正在思考…";
-    return "进行中…";
+    return "正在检索与推理…";
   }
 
-  const parts = [`${steps.length} 步`];
+  const toolCount = steps.filter((s) => s.kind === "tool").length;
   const thinkCount = steps.filter((s) => s.kind === "think").length;
-  if (thinkCount > 0) parts.push(`${thinkCount} 次思考`);
+  const noteCount = steps.filter((s) => s.kind === "note").length;
+
+  const parts: string[] = [];
+  if (toolCount > 0) {
+    parts.push(`${toolCount} 次工具调用`);
+  }
+  if (thinkCount > 0) {
+    parts.push(`${thinkCount} 次思考`);
+  }
+  if (noteCount > 0) {
+    parts.push(`${noteCount} 条消息`);
+  }
+  if (parts.length === 0) {
+    parts.push(`${steps.length} 个步骤`);
+  }
+
   const totalMs = steps.reduce((sum, s) => {
     if (s.kind === "tool") return sum + (s.tc.time_ms ?? 0);
     if (s.kind === "think") return sum + (s.thinkingMs ?? 0);
     return sum;
   }, 0);
-  if (totalMs > 0) parts.push(formatSeconds(totalMs));
+
+  if (totalMs > 0 && formatSeconds(totalMs) !== "0.0s") {
+    parts.push(formatSeconds(totalMs));
+  }
+
   return parts.join(" · ");
 }
 
+/**
+ * 推理与工具折叠流（DeepSeek Harness 极简扁平风格，无外层卡片包裹）
+ */
 function TraceTimeline({
   steps,
   inflight,
@@ -320,190 +515,47 @@ function TraceTimeline({
   const summary = traceSummaryLabel(steps, inflight);
 
   return (
-    <div className="mb-2">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-gray-100"
+    <div className="w-full text-sm">
+      {/* 极简折叠头（对齐 DeepSeek Harness：8 次工具调用 · 5 次思考 · 7.4s） */}
+      <div
+        className="flex w-full items-center py-1.5 text-left text-muted select-none cursor-pointer"
+        onClick={() => !inflight && setOpen((v) => !v)}
       >
-        {/* 与轨道行 TraceSlot（w-4 + px-2）同轴，图标可略大但不偏移中心 */}
-        <span
-          aria-hidden
-          className="flex h-4 w-4 shrink-0 items-center justify-center"
-        >
-          <Atom
-            className="h-[18px] w-[18px] text-foreground"
-            strokeWidth={1.75}
-          />
-        </span>
-        <span
-          className={cn(
-            "shrink-0 text-xs",
-            inflight ? "text-primary-deep" : "text-muted",
-          )}
-        >
-          检索与推理
-        </span>
-        <span className="truncate text-xs text-muted-subtle">{summary}</span>
-        {open ? (
-          <ChevronUp className="ml-auto h-3.5 w-3.5 shrink-0 text-muted-faint" />
-        ) : (
-          <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 text-muted-faint" />
-        )}
-      </button>
-
-      {open ? (
-        <div className="relative mt-0.5">
-          <div
-            aria-hidden
-            className="absolute bottom-4 left-4 top-4 w-px bg-hairline"
-          />
-          <div>
-            {steps.map((s) => {
-              if (s.kind === "think")
-                return <TraceThinkRow key={s.key} step={s} />;
-              if (s.kind === "note")
-                return <TraceNoteRow key={s.key} step={s} />;
-              return (
-                <TraceToolRow
-                  key={s.key}
-                  tc={s.tc}
-                  onViewSearchResults={onViewSearchResults}
-                  aliasToChunkId={aliasToChunkId}
-                />
-              );
-            })}
-          </div>
+        <div className="flex min-w-0 items-center gap-1.5 pr-2">
+          {inflight ? (
+            <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
+          ) : null}
+          <span className="truncate font-normal text-sm text-muted-foreground transition-colors">
+            {summary}
+          </span>
         </div>
-      ) : null}
-    </div>
-  );
-}
-
-/** 轨道行外壳：统一节点、hover、展开语义，颜色交由调用方按状态决定 */
-function TraceRow({
-  node,
-  label,
-  labelClass,
-  badge,
-  right,
-  trailing,
-  open,
-  onToggle,
-  children,
-}: {
-  node: ReactNode;
-  label: string;
-  labelClass?: string;
-  badge?: ReactNode;
-  right?: ReactNode;
-  /** 展开箭头左侧的额外操作（如「查看」），置于主按钮之外以免嵌套按钮 */
-  trailing?: ReactNode;
-  open: boolean;
-  onToggle: () => void;
-  children?: ReactNode;
-}) {
-  return (
-    <div className="relative">
-      <div className="flex items-center rounded-md transition-colors hover:bg-gray-50">
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={open}
-          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
-        >
-          {node}
-          <span className={cn("truncate text-xs", labelClass)}>{label}</span>
-          {badge}
-          {right ? <span className="ml-auto shrink-0">{right}</span> : null}
-        </button>
-        {trailing}
-        <button
-          type="button"
-          tabIndex={-1}
-          aria-hidden
-          onClick={onToggle}
-          className="shrink-0 px-1.5 py-1.5 text-muted-faint"
-        >
-          {open ? (
-            <ChevronUp className="h-3 w-3" />
-          ) : (
-            <ChevronDown className="h-3 w-3" />
-          )}
-        </button>
       </div>
-      {children && open ? (
-        <div className="mb-1 ml-8 mr-2 mt-0.5 space-y-2">{children}</div>
-      ) : null}
+
+      {/* 展开的平铺步骤列表 */}
+      {open ? (
+        <div className="mt-2 space-y-1.5 border-b border-hairline/60 pb-3 mb-2.5 pt-1">
+          {steps.map((s) => {
+            if (s.kind === "think") {
+              return <TraceThinkRow key={s.key} step={s} />;
+            }
+            if (s.kind === "note") {
+              return <TraceNoteRow key={s.key} step={s} />;
+            }
+            return (
+              <TraceToolRow
+                key={s.key}
+                tc={s.tc}
+                onViewSearchResults={onViewSearchResults}
+                aliasToChunkId={aliasToChunkId}
+              />
+            );
+          })}
+        </div>
+      ) : (
+        <div className="border-b border-hairline/40 pb-1 mb-2" />
+      )}
     </div>
   );
-}
-
-/** 统一 16px 槽，保证书/脑/罗盘/扳手/灰点与竖线同轴 */
-function TraceSlot({
-  inflight,
-  children,
-}: {
-  inflight?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <span
-      aria-hidden
-      className="relative z-[1] flex h-4 w-4 shrink-0 items-center justify-center"
-    >
-      <span className="absolute -inset-0.5 rounded-sm bg-white" />
-      {inflight ? (
-        <span className="absolute inset-[-3px] animate-pulse rounded-full bg-primary/20" />
-      ) : null}
-      {children}
-    </span>
-  );
-}
-
-function TraceIconMark({
-  icon: Icon,
-  tone,
-  inflight,
-}: {
-  icon: ComponentType<{ className?: string }>;
-  tone: "primary" | "muted";
-  inflight?: boolean;
-}) {
-  return (
-    <TraceSlot inflight={inflight}>
-      <Icon
-        className={cn(
-          "relative h-3.5 w-3.5",
-          tone === "primary" ? "text-primary-deep" : "text-muted",
-        )}
-      />
-    </TraceSlot>
-  );
-}
-
-function TraceNoteDot() {
-  return (
-    <TraceSlot>
-      <span className="relative h-[7px] w-[7px] rounded-full border-[1.5px] border-muted bg-white" />
-    </TraceSlot>
-  );
-}
-
-const KB_SEARCH_TOOLS = new Set(["search_knowledge_base", "grep_chunks"]);
-const NAV_TOOLS = new Set([
-  "skeleton",
-  "drill_down",
-  "roll_up",
-  "context_window",
-]);
-const IMAGE_TOOL_NAMES = new Set(["read_image_chunks"]);
-
-function toolTraceIcon(name: string) {
-  if (KB_SEARCH_TOOLS.has(name)) return BookOpen;
-  if (NAV_TOOLS.has(name)) return Compass;
-  return Wrench;
 }
 
 function TraceThinkRow({
@@ -524,31 +576,66 @@ function TraceThinkRow({
     }
   }, [step.inflight]);
 
+  const summary = extractThinkSummary(step.thinking);
+
   return (
-    <TraceRow
-      node={
-        <TraceIconMark
-          icon={Brain}
-          tone={step.inflight ? "primary" : "muted"}
-          inflight={step.inflight}
-        />
-      }
-      label={thinkRowLabel(step.inflight, step.thinkingMs)}
-      labelClass={step.inflight ? "text-primary-deep" : "text-muted"}
-      open={open}
-      onToggle={() => setOpen((v) => !v)}
-    >
-      <CitationPreviewMarkdown
-        content={step.thinking}
-        className="text-xs leading-5 text-muted prose-p:my-0.5 prose-headings:text-xs prose-pre:text-xs"
-      />
-    </TraceRow>
+    <div className="w-full">
+      <div
+        className="group flex items-center gap-2 px-2 py-1 select-none cursor-pointer"
+        onClick={() => !step.inflight && setOpen((v) => !v)}
+      >
+        {/* 默认显示灯泡图标，hover 时替换为展开箭头（同位置覆盖） */}
+        {step.inflight ? (
+          <ThinkingBulbIcon className="h-4 w-4 shrink-0 text-primary animate-pulse" />
+        ) : open ? (
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-faint transition-transform duration-150" />
+        ) : (
+          <>
+            <ThinkingBulbIcon className="h-4 w-4 shrink-0 text-muted-faint group-hover:hidden" />
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-faint hidden group-hover:flex transition-transform duration-150" />
+          </>
+        )}
+        <span
+          className={cn(
+            "shrink-0 text-[13.5px] font-medium leading-normal transition-colors",
+            step.inflight
+              ? "text-primary-deep font-semibold"
+              : "text-foreground/80 group-hover:text-foreground",
+          )}
+        >
+          思考
+        </span>
+
+        {/* 收起态显示单行摘要，展开态只保留「思考」标题 */}
+        {!open ? (
+          <>
+            <span className="text-muted-faint select-none">·</span>
+            <span className="truncate text-muted-subtle text-[13px] font-normal leading-normal transition-colors group-hover:text-muted">
+              {step.inflight ? "正在深度思考…" : summary || "思考过程"}
+            </span>
+          </>
+        ) : null}
+        {step.thinkingMs != null && !step.inflight && formatSeconds(step.thinkingMs) !== "0.0s" ? (
+          <span className="shrink-0 text-xs text-muted-faint tabular-nums leading-normal">
+            {formatSeconds(step.thinkingMs)}
+          </span>
+        ) : null}
+      </div>
+
+      {open ? (
+        <div className="pl-[32px] pr-2 pt-1 pb-1.5 text-[13.5px] text-muted leading-relaxed">
+          <TruncatedMarkdown
+            content={step.thinking}
+            className="text-[13.5px] leading-relaxed text-muted prose-p:leading-relaxed prose-li:leading-relaxed prose-p:my-1.5 prose-headings:text-xs prose-headings:leading-snug prose-pre:text-xs prose-pre:leading-relaxed"
+          />
+        </div>
+      ) : null}
+    </div>
   );
 }
 
 /**
- * 过程旁白行：中间轮的正文。
- * 只展示灰点 + 全文，不再折叠。
+ * 过程旁白行：中间轮的正文输出（自然语言段落，对齐 Harness 中的中间过程文本）
  */
 function TraceNoteRow({
   step,
@@ -556,36 +643,13 @@ function TraceNoteRow({
   step: Extract<TraceStep, { kind: "note" }>;
 }) {
   return (
-    <div className="relative py-1.5">
-      <div className="flex items-start gap-2 px-2">
-        <span className="mt-1.5">
-          <TraceNoteDot />
-        </span>
-        <div className="min-w-0 flex-1">
-          <CitationPreviewMarkdown
-            content={step.content}
-            className="text-[13.5px] leading-7 text-muted prose-p:my-0.5 prose-headings:text-[13.5px] prose-pre:text-xs"
-          />
-        </div>
-      </div>
+    <div className="py-2.5 px-2">
+      <CitationPreviewMarkdown
+        content={step.content}
+        className="text-[14px] sm:text-[15px] leading-relaxed text-foreground/90 prose-p:leading-relaxed sm:prose-p:leading-7 prose-li:leading-relaxed prose-p:my-1.5 prose-headings:text-sm prose-headings:leading-snug prose-pre:text-xs prose-pre:leading-relaxed"
+      />
     </div>
   );
-}
-
-const RETRIEVAL_STAGE_LABEL: Record<string, string> = {
-  planning: "大模型规划检索路线…",
-  searching: "多路召回中…",
-  reranking: "精排结果中…",
-};
-
-const IMAGE_TOOL_STAGE_LABEL: Record<string, string> = {
-  loading_images: "加载图片中…",
-  calling_vlm: "调用多模态大模型理解图片…",
-};
-
-function formatExecutionModelLabel(model?: string | null): string {
-  if (!model) return "";
-  return model.replace(/^litellm_proxy\//, "").replace(/^dashscope\//, "");
 }
 
 /** session 级短引用号：c1 / c12。与后端 ChunkAliasMap.ALIAS_RE 对齐。 */
@@ -745,22 +809,172 @@ function ToolResultImageGallery({
   );
 }
 
-/** 工具展开区统一高度；内容超出时在框内纵向滚动，保证完整可读 */
-const TOOL_CALL_DETAIL_BOX_CLASS =
-  "h-40 overflow-y-auto overflow-x-auto rounded-lg bg-gray-50 p-2 text-[11px] leading-5 text-foreground/80 whitespace-pre-wrap break-words";
+// ============================================================
+// DSH 风格工具结果框：无滚动条、中间行截断、右上角复制按钮
+// ============================================================
 
-function ToolCallDetailBlock({
+/**
+ * 截断阈值：超过此行数则隐藏中间行。
+ * 工具结果用 text-xs(12px) + leading-relaxed(~19.5px/行)，8 行 ≈ 156px，
+ * 加头部+内边距+截断标记 ≈ 230px，约占视口 1/4，避免撑满整屏。
+ */
+const TOOL_RESULT_TRUNCATE_THRESHOLD = 8;
+
+function ToolResultBox({
   label,
-  children,
+  content,
+  emptyText,
 }: {
   label: string;
-  children: ReactNode;
+  content: string;
+  emptyText?: string;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const lines = useMemo(
+    () => (content ? content.split("\n") : []),
+    [content],
+  );
+  const needsTruncation = !expanded && lines.length > TOOL_RESULT_TRUNCATE_THRESHOLD;
+  const headCount = Math.ceil(TOOL_RESULT_TRUNCATE_THRESHOLD / 2);
+  const tailCount = Math.floor(TOOL_RESULT_TRUNCATE_THRESHOLD / 2);
+  const hiddenCount = needsTruncation
+    ? lines.length - TOOL_RESULT_TRUNCATE_THRESHOLD
+    : 0;
+
+  const displayLines = needsTruncation
+    ? [
+        ...lines.slice(0, headCount),
+        "__TRUNCATION_MARKER__" as const,
+        ...lines.slice(-tailCount),
+      ]
+    : lines;
+
+  const handleCopy = useCallback(() => {
+    void navigator.clipboard.writeText(content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [content]);
+
+  // 空结果
+  if (!content && emptyText) {
+    return (
+      <div className="rounded-lg border border-hairline/60 bg-gray-50/80">
+        <div className="flex items-center justify-between border-b border-hairline/40 px-3 py-1.5">
+          <span className="text-xs font-medium text-muted">{label}</span>
+        </div>
+        <div className="px-3 py-2 text-xs leading-relaxed text-muted-subtle">
+          {emptyText}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div>
-      <div className="mb-1 text-[11px] text-muted">{label}</div>
-      <div className={TOOL_CALL_DETAIL_BOX_CLASS}>{children}</div>
+    <div className="rounded-lg border border-hairline/60 bg-gray-50/80">
+      {/* 头部：标签 + 复制按钮 */}
+      <div className="flex items-center justify-between border-b border-hairline/40 px-3 py-1.5">
+        <span className="text-xs font-medium text-muted">{label}</span>
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="flex items-center gap-1 text-xs text-muted-faint transition-colors hover:text-foreground"
+        >
+          {copied ? (
+            <>
+              <Check className="h-3 w-3 text-emerald-600" />
+              <span className="text-emerald-600">已复制</span>
+            </>
+          ) : (
+            <>
+              <Copy className="h-3 w-3" />
+              <span>复制</span>
+            </>
+          )}
+        </button>
+      </div>
+      {/* 内容：中间行截断，无滚动条 */}
+      <div className="px-3 py-2 font-mono text-xs leading-relaxed text-foreground/80 whitespace-pre-wrap break-words">
+        {displayLines.map((line, i) =>
+          line === "__TRUNCATION_MARKER__" ? (
+            <div
+              key={`trunc-${i}`}
+              onClick={() => setExpanded(true)}
+              className="cursor-pointer select-none py-1 text-primary transition-colors hover:text-primary-deep"
+            >
+              ... 其余 {hiddenCount} 行
+            </div>
+          ) : (
+            <div key={i}>{line || "\u00A0"}</div>
+          ),
+        )}
+        {expanded && lines.length > TOOL_RESULT_TRUNCATE_THRESHOLD ? (
+          <div
+            onClick={() => setExpanded(false)}
+            className="cursor-pointer select-none pt-1 text-primary transition-colors hover:text-primary-deep"
+          >
+            收起
+          </div>
+        ) : null}
+      </div>
     </div>
+  );
+}
+
+/**
+ * 思考内容中间行截断：按 \n 拆行，超过阈值时显示前 N 行 + 截断标记 + 后 N 行，
+ * 点击截断标记全量展开，展开后底部显示「收起」。
+ * 思考内容是 Markdown，因此按段落拆分后分别交给 CitationPreviewMarkdown 渲染。
+ */
+function TruncatedMarkdown({
+  content,
+  maxLines = 8,
+  className,
+}: {
+  content: string;
+  maxLines?: number;
+  className?: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  const lines = useMemo(() => content.split("\n"), [content]);
+  const needsTruncation = lines.length > maxLines;
+
+  if (!needsTruncation || expanded) {
+    return (
+      <>
+        <CitationPreviewMarkdown content={content} className={className} />
+        {needsTruncation ? (
+          <div
+            onClick={() => setExpanded(false)}
+            className="cursor-pointer select-none pt-1 text-xs text-primary transition-colors hover:text-primary-deep"
+          >
+            收起
+          </div>
+        ) : null}
+      </>
+    );
+  }
+
+  const headCount = Math.ceil(maxLines / 2);
+  const tailCount = Math.floor(maxLines / 2);
+  const hiddenCount = lines.length - maxLines;
+  const headContent = lines.slice(0, headCount).join("\n");
+  const tailContent = lines.slice(-tailCount).join("\n");
+
+  return (
+    <>
+      <CitationPreviewMarkdown content={headContent} className={className} />
+      <div
+        onClick={() => setExpanded(true)}
+        className="cursor-pointer select-none py-1 text-xs text-primary transition-colors hover:text-primary-deep"
+      >
+        ... 其余 {hiddenCount} 行
+      </div>
+      <CitationPreviewMarkdown content={tailContent} className={className} />
+    </>
   );
 }
 
@@ -782,6 +996,9 @@ function TraceToolRow({
   const isSearchTool = KB_SEARCH_TOOLS.has(tc.name);
   const isImageTool = IMAGE_TOOL_NAMES.has(tc.name);
   const executionModelLabel = formatExecutionModelLabel(tc.execution_model);
+  const Icon = getToolIcon(tc.name);
+  const friendlyName = getToolFriendlyName(tc.name);
+  const toolSummary = extractToolSummary(tc);
 
   // 历史落库后 arguments.chunk_ids 可能已是真实 id；与结果头里的 alias 按序对齐补一张表
   const resolvedAliasMap = useMemo(() => {
@@ -839,93 +1056,93 @@ function TraceToolRow({
     );
 
   return (
-    <TraceRow
-      node={
-        /* 空结果落回中性色：工具跑完了但没取到东西，和"产出了证据"不该同色 */
-        <TraceIconMark
-          icon={toolTraceIcon(tc.name)}
-          tone={isEmpty ? "muted" : "primary"}
-          inflight={inflight}
-        />
-      }
-      label={tc.name || "tool_call"}
-      labelClass={cn(
-        "font-mono",
-        inflight
-          ? "text-primary-deep"
-          : isEmpty
-            ? "text-muted-subtle"
-            : "text-foreground/80",
-      )}
-      badge={
-        executionModelLabel ? (
-          <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-muted">
+    <div className="w-full">
+      <div
+        className="group flex items-center gap-2 px-2 py-1.5 select-none cursor-pointer"
+        onClick={() => !inflight && setOpen((v) => !v)}
+      >
+        {/* 默认显示工具图标，hover 时替换为展开箭头（同位置覆盖） */}
+        {inflight ? (
+          <Icon className="h-4 w-4 shrink-0 text-primary animate-pulse" />
+        ) : open ? (
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-faint transition-transform duration-150" />
+        ) : (
+          <>
+            <Icon className="h-4 w-4 shrink-0 text-muted-faint group-hover:hidden" />
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-faint hidden group-hover:flex transition-transform duration-150" />
+          </>
+        )}
+        <span
+          className={cn(
+            "shrink-0 text-[13px] font-medium leading-normal transition-colors",
+            inflight
+              ? "text-primary-deep"
+              : isEmpty
+                ? "text-muted-subtle"
+                : "text-foreground/85 group-hover:text-foreground",
+          )}
+        >
+          {friendlyName}
+        </span>
+        <span className="text-muted-faint select-none">·</span>
+        <span
+          className="truncate text-muted-subtle text-xs font-mono leading-normal transition-colors group-hover:text-muted"
+          title={toolSummary}
+        >
+          {inflight ? stageLabel : toolSummary}
+        </span>
+        {!inflight && tc.time_ms != null && formatSeconds(tc.time_ms) !== "0.0s" ? (
+          <span className="shrink-0 text-xs text-muted-faint tabular-nums leading-normal">
+            {formatSeconds(tc.time_ms)}
+          </span>
+        ) : null}
+
+        {executionModelLabel ? (
+          <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-muted-faint leading-tight">
             {executionModelLabel}
           </span>
-        ) : null
-      }
-      right={
-        <span className="flex items-center gap-2 text-[11px] tabular-nums">
-          {inflight ? (
-            <span className="text-primary-deep">{stageLabel}</span>
-          ) : (
-            <span className={isEmpty ? "text-muted-subtle" : "text-muted"}>
-              {isEmpty ? "无结果" : `${tc.items_added} 条`}
-            </span>
-          )}
-          {!inflight && tc.time_ms != null ? (
-            <span className="w-10 text-right text-muted-subtle">
-              {formatSeconds(tc.time_ms)}
-            </span>
-          ) : null}
-        </span>
-      }
-      trailing={
-        canOpenSources ? (
+        ) : null}
+
+        {canOpenSources ? (
           <button
             type="button"
-            onClick={() =>
+            onClick={(e) => {
+              e.stopPropagation();
               onViewSearchResults?.(
                 retrievalChunksToCitations(tc.retrieval_chunks),
                 tc.retrieval_params,
                 tc.recall_stats,
-              )
-            }
-            className="shrink-0 rounded-md px-1.5 py-0.5 text-[11px] text-primary-deep transition-colors hover:bg-primary/10"
+              );
+            }}
+            className="shrink-0 px-1.5 py-0.5 text-xs font-medium text-primary hover:text-primary-deep hover:underline leading-normal rounded"
           >
             查看
           </button>
-        ) : null
-      }
-      open={open}
-      onToggle={() => setOpen((v) => !v)}
-    >
-      <ToolCallDetailBlock label={isSearchTool ? "查询" : "参数"}>
-        {argsPreview}
-      </ToolCallDetailBlock>
-      {inflight ? (
-        <ToolCallDetailBlock label="结果">
-          <span className="inline-flex items-center gap-1.5 text-muted">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            {stageLabel}
-          </span>
-        </ToolCallDetailBlock>
-      ) : tc.result_brief ? (
-        <ToolCallDetailBlock label="结果">
-          {isImageTool ? (
+        ) : null}
+      </div>
+
+      {open ? (
+        <div className="my-1.5 ml-2 mr-1 space-y-2">
+          <ToolResultBox
+            label={isSearchTool ? "查询参数" : "输入参数"}
+            content={argsPreview}
+          />
+
+          {isImageTool && tc.result_brief ? (
             <ToolResultImageGallery
               text={tc.result_brief}
               aliasToChunkId={resolvedAliasMap}
             />
           ) : null}
-          {tc.result_brief}
-        </ToolCallDetailBlock>
-      ) : (
-        <ToolCallDetailBlock label="结果">
-          <span className="text-muted-subtle">（工具未返回结果）</span>
-        </ToolCallDetailBlock>
-      )}
-    </TraceRow>
+
+          <ToolResultBox
+            label="执行结果"
+            content={tc.result_brief ?? ""}
+            emptyText="（工具未返回结果）"
+          />
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -1857,8 +2074,8 @@ function AssistantRoundBlock({
           </div>
         </div>
       ) : showAnswer ? (
-        <div className="text-[13.5px] leading-7 text-foreground">
-          <div className="markdown-body prose prose-sm max-w-none text-foreground prose-pre:bg-gray-900 prose-pre:text-gray-100">
+        <div className="text-[14px] sm:text-[15px] leading-relaxed sm:leading-7 text-foreground">
+          <div className="markdown-body prose prose-sm max-w-none text-foreground text-[14px] sm:text-[15px] leading-relaxed sm:leading-7 prose-p:leading-relaxed sm:prose-p:leading-7 prose-li:leading-relaxed sm:prose-li:leading-7 prose-p:my-2 prose-li:my-0.5 prose-headings:font-semibold prose-headings:leading-snug prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:leading-relaxed prose-blockquote:leading-relaxed">
             <MarkdownAnswer
               content={m.content}
               citations={allCitations}
@@ -2102,8 +2319,8 @@ function ChatTurnBlock({
       {/* 用户提问：右对齐轻气泡，hover 显示复制与时间 */}
       {userMessage ? (
         <div className="group relative flex flex-col items-end gap-1 pt-1">
-          <div className="relative max-w-[85%] rounded-[20px_20px_4px_20px] bg-primary/5 px-4 py-2.5 text-[13.5px] leading-6 text-foreground sm:px-5 sm:py-3 transition-colors hover:bg-primary/10 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
-            <div className="whitespace-pre-wrap break-words">{userMessage.content}</div>
+          <div className="relative max-w-[85%] rounded-[20px_20px_4px_20px] bg-primary/5 px-4 py-2.5 text-[14px] sm:text-[15px] leading-relaxed sm:leading-7 text-foreground sm:px-5 sm:py-3 transition-colors hover:bg-primary/10 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+            <div className="whitespace-pre-wrap break-words leading-relaxed sm:leading-7">{userMessage.content}</div>
             {userMessage.retrieval ? (
               <div className="mt-2">
                 <RetrievalChip
@@ -2155,9 +2372,9 @@ function ChatTurnBlock({
           ) : null}
         </div>
 
-        {/* 推理轨道：整组思考 + 旁白 + 工具调用 */}
+        {/* 推理轨道：整组思考 + 旁白 + 工具调用（DeepSeek Harness 扁平无边框风格） */}
         {traceSteps.length > 0 ? (
-          <div className="rounded-xl border border-hairline/80 bg-gray-50/60 p-2.5">
+          <div className="w-full">
             <TraceTimeline
               steps={traceSteps}
               inflight={isTurnInflight}
@@ -2169,8 +2386,8 @@ function ChatTurnBlock({
 
         {/* 规划中 / 等待中指示器 */}
         {showTurnPlanning ? (
-          <div className="flex items-center gap-2 py-1.5 text-xs text-muted-subtle">
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+          <div className="flex items-center gap-2 py-1.5 text-sm text-muted-subtle">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
             <span className="text-shimmer font-medium">正在检索与推理…</span>
           </div>
         ) : null}
@@ -2511,7 +2728,7 @@ function SessionDrawer({
 function ModelCapabilityIcons({ model }: { model: ChatModelItem }) {
   return (
     <span className="inline-flex shrink-0 items-center gap-1">
-      <Brain
+      <ThinkingBulbIcon
         className={cn(
           "h-3 w-3",
           model.supports_thinking ? "text-primary" : "text-gray-300",
@@ -3054,7 +3271,7 @@ function UnifiedModelPicker({
                   </span>
                   <span className="flex items-center gap-2">
                     <span className="inline-flex items-center gap-0.5">
-                      <Brain className="h-2.5 w-2.5 text-primary" /> 思考
+                      <ThinkingBulbIcon className="h-2.5 w-2.5 text-primary" /> 思考
                     </span>
                     <span className="inline-flex items-center gap-0.5">
                       <Eye className="h-2.5 w-2.5 text-primary" /> 视觉
@@ -3200,7 +3417,7 @@ function PlusConfigMenu({
     thinkingAvailable
       ? {
           key: "thinking" as const,
-          icon: Brain,
+          icon: ThinkingBulbIcon,
           label: switchOnlyThinking ? "Thinking" : "思考强度",
           value: thinkingValue,
         }
@@ -3429,7 +3646,7 @@ function PlusConfigMenu({
                                     selected && "bg-primary/5",
                                   )}
                                 >
-                                  <Brain
+                                  <ThinkingBulbIcon
                                     className={cn(
                                       "h-3.5 w-3.5 shrink-0",
                                       it.lvl === "off"
