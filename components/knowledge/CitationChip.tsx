@@ -489,14 +489,14 @@ export function CitationChip({
         onMouseLeave={scheduleClose}
         disabled={!citation?.file_id}
         className={cn(
-          "inline-flex items-center gap-0.5 rounded px-1 py-px text-[10px] font-medium leading-none align-middle mx-0.5 transition-colors",
+          "inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] font-medium leading-none align-middle mx-0.5 transition-colors",
           hasFullMeta
             ? "bg-primary/10 text-primary hover:bg-primary/20 cursor-pointer ring-1 ring-primary/20"
             : "bg-gray-100 text-gray-500 ring-1 ring-gray-200 cursor-default"
         )}
         title={hasFullMeta ? "点击打开原文档" : "引用片段（无法跳转）"}
       >
-        <ChunkIcon className="h-2.5 w-2.5" />
+        <ChunkIcon className="h-3 w-3" />
         <span>{index}</span>
       </button>
       {popoverEl}
