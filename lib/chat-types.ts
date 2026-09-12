@@ -285,11 +285,6 @@ export interface RecallStats {
   final_chunk_ids?: string[];
   /** Phase 5.5 精排后阈值过滤掉的数量 */
   dropped_by_threshold?: number;
-  /**
-   * 已废弃：直答短路已移除，后端恒为 false。
-   * 旧会话若仍带 true，前端不再据此替换整张召回图。
-   */
-  short_circuited?: boolean;
   /** qa_dense 高置信置顶：对齐 / 融合 / rerank 仍已执行 */
   qa_pinned?: boolean;
 }
