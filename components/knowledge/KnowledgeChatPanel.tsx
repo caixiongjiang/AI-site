@@ -654,6 +654,7 @@ function TraceThinkRow({
         <div className="pl-[32px] pr-2 pt-1 pb-1.5 text-[13.5px] text-muted leading-relaxed">
           <TruncatedMarkdown
             content={step.thinking}
+            disableTruncation={step.inflight}
             className="text-[13.5px] leading-relaxed text-muted prose-p:leading-relaxed prose-li:leading-relaxed prose-p:my-1.5 prose-headings:text-xs prose-headings:leading-snug prose-pre:text-xs prose-pre:leading-relaxed"
           />
         </div>
@@ -960,15 +961,18 @@ function TruncatedMarkdown({
   content,
   maxLines = 8,
   className,
+  disableTruncation = false,
 }: {
   content: string;
   maxLines?: number;
   className?: string;
+  /** 为 true 时跳过截断，全量展示（用于 inflight 期间实时看完整思考流） */
+  disableTruncation?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
 
   const lines = useMemo(() => content.split("\n"), [content]);
-  const needsTruncation = lines.length > maxLines;
+  const needsTruncation = !disableTruncation && lines.length > maxLines;
 
   if (!needsTruncation || expanded) {
     return (
