@@ -389,11 +389,14 @@ function extractToolSummary(tc: ToolCallRecord): string {
     return String(args.document_id || args.file_name);
   }
   if (tc.name === "drill_down") {
-    const target = args.target_granularity ? ` → ${args.target_granularity}` : "";
-    return `${args.anchor_id || ""}${target}`.trim() || "下钻检索";
+    const anchor = args.section_id || args.document_id || "";
+    const target = args.target ? ` → ${args.target}` : "";
+    return `${anchor}${target}`.trim() || "下钻检索";
   }
-  if (tc.name === "roll_up" && args.anchor_id) {
-    return String(args.anchor_id);
+  if (tc.name === "roll_up") {
+    const anchor = args.chunk_id || args.section_id || "";
+    const target = args.target ? ` → ${args.target}` : "";
+    return `${anchor}${target}`.trim() || "向上回溯";
   }
   if (tc.name === "context_window" && args.chunk_id) {
     return `chunk: ${args.chunk_id}`;
@@ -494,6 +497,7 @@ function TraceTimeline({
   inflight,
   onViewSearchResults,
   aliasToChunkId,
+  answerStarted = false,
 }: {
   steps: TraceStep[];
   inflight: boolean;
@@ -503,12 +507,33 @@ function TraceTimeline({
     recallStats?: RecallStats,
   ) => void;
   aliasToChunkId: Map<string, string>;
+  /** 主对话区是否已开始输出正文（最后一条 assistant 消息有 content 增量） */
+  answerStarted?: boolean;
 }) {
   const [open, setOpen] = useState(inflight);
+  // 用户是否手动点击过折叠按钮：一旦点击，本 turn 内不再被自动 effect 覆盖
+  const userToggled = useRef(false);
+  const prevInflight = useRef(inflight);
 
+  // 推理阶段（思考/工具调用）自动展开；主对话开始输出正文时自动折叠。
+  // 必须合并为单个 effect 且依赖 [inflight, answerStarted]：
+  // 中间轮旁白 content 会让 answerStarted 提前变 true，最终答案轮若同帧
+  // 创建+输出，answerStarted 无跳变；此时靠 inflight 跳变触发本 effect
+  // 重算 setOpen(!answerStarted)，折叠才不会丢失。
+  //
+  // 用户手动点击后设 userToggled=true，本 turn 内 effect 不再覆盖；
+  // 新 turn 开始（inflight false→true）时重置 userToggled。
   useEffect(() => {
-    if (inflight) setOpen(true);
-  }, [inflight]);
+    if (inflight && !prevInflight.current) {
+      userToggled.current = false;
+    }
+    prevInflight.current = inflight;
+
+    if (!inflight) return;
+    if (!userToggled.current) {
+      setOpen(!answerStarted);
+    }
+  }, [inflight, answerStarted]);
 
   if (steps.length === 0) return null;
 
@@ -519,7 +544,10 @@ function TraceTimeline({
       {/* 极简折叠头（对齐 DeepSeek Harness：8 次工具调用 · 5 次思考 · 7.4s） */}
       <div
         className="flex w-full items-center py-1.5 text-left text-muted select-none cursor-pointer"
-        onClick={() => !inflight && setOpen((v) => !v)}
+        onClick={() => {
+          userToggled.current = true;
+          setOpen((v) => !v);
+        }}
       >
         <div className="flex min-w-0 items-center gap-1.5 pr-2">
           {inflight ? (
@@ -652,7 +680,7 @@ function TraceNoteRow({
   );
 }
 
-/** session 级短引用号：c1 / c12。与后端 ChunkAliasMap.ALIAS_RE 对齐。 */
+/** session 级短引用号：c1 / c12。与后端 NavAliasMap.ALIAS_RE 对齐。 */
 const CHUNK_ALIAS_RE = /^c\d+$/;
 
 function isChunkAlias(id: string): boolean {
@@ -2297,6 +2325,11 @@ function ChatTurnBlock({
   const isTurnInflight = assistantMessages.some((m) => m.inflight);
   const lastMsg = assistantMessages[assistantMessages.length - 1];
   const hasContent = assistantMessages.some((m) => m.content);
+  // 主对话区是否已开始输出正文：最后一条 assistant 消息（最终回答轮）已有 content
+  // 主对话区是否已开始输出正文：最后一条 assistant 消息已有 content 且没有 tool_calls
+  // （有 tool_calls 说明是中间轮旁白，不是最终答案；旁白不应触发折叠）
+  const answerStarted =
+    Boolean(lastMsg?.content) && (lastMsg?.tool_calls?.length ?? 0) === 0;
 
   // 整组的思考、旁白与工具调用合并成一条轨道
   const traceSteps = useMemo(
@@ -2380,6 +2413,7 @@ function ChatTurnBlock({
               inflight={isTurnInflight}
               onViewSearchResults={onViewSearchResults}
               aliasToChunkId={previewAliasToChunkId}
+              answerStarted={answerStarted}
             />
           </div>
         ) : null}
