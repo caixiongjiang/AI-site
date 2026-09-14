@@ -329,6 +329,7 @@ function KnowledgeWorkspace() {
   /** null = 未自定义，按 SPLIT_RATIO_DEFAULT 计算 */
   const [leftRatio, setLeftRatio] = useState<number | null>(null);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -1385,7 +1386,7 @@ function KnowledgeWorkspace() {
   return (
     <>
       <div
-        className="grid h-screen grid-cols-1 bg-white xl:grid-cols-[var(--knowledge-left-width)_6px_minmax(0,1fr)]"
+        className="flex h-[calc(100dvh-3.5rem)] md:h-screen w-full bg-white xl:grid xl:grid-cols-[var(--knowledge-left-width)_6px_minmax(0,1fr)]"
         style={
           {
             "--knowledge-left-width": `${
@@ -1394,14 +1395,15 @@ function KnowledgeWorkspace() {
           } as React.CSSProperties
         }
       >
-        <div className="flex min-w-0 overflow-hidden">
+        {/* 桌面端左侧树面板 (xl 及以上显示) */}
+        <div className="hidden min-w-0 overflow-hidden xl:flex">
           {leftCollapsed ? (
             <div className="flex h-full w-full items-start justify-center border-r border-gray-200 py-2.5">
               <button
                 type="button"
                 onClick={toggleLeftCollapsed}
                 aria-expanded={false}
-                className="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-gray-100 hover:text-foreground"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-gray-100 hover:text-foreground cursor-pointer"
                 title="展开知识库管理"
                 aria-label="展开知识库管理"
               >
@@ -1473,15 +1475,6 @@ function KnowledgeWorkspace() {
               }}
             />
           </div>
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.md,.markdown,.json,.png,.jpg,.jpeg,.gif,.webp,.svg,.bmp"
-            className="hidden"
-            onChange={handleFileSelect}
-          />
         </div>
 
         {/* 可拖拽分割条：仅在 xl 及以上可用。
@@ -1518,7 +1511,7 @@ function KnowledgeWorkspace() {
           )}
         </div>
 
-        <div className="relative flex min-h-0 min-w-0 overflow-hidden">
+        <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
           <KnowledgeChatPanel
             knowledgeBaseId={chatScope?.kbId ?? null}
             knowledgeBaseName={chatScope?.kbName}
@@ -1528,10 +1521,99 @@ function KnowledgeWorkspace() {
             disabledReason={chatDisabledReason ?? undefined}
             noticeBanner={chatNoticeBanner ?? undefined}
             enabled
+            onToggleMobileTree={() => setMobileDrawerOpen((v) => !v)}
             className="h-full w-full"
           />
         </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.md,.markdown,.json,.png,.jpg,.jpeg,.gif,.webp,.svg,.bmp"
+          className="hidden"
+          onChange={handleFileSelect}
+        />
       </div>
+
+      {/* 移动端知识库/文件管理抽屉 (xl 以下) */}
+      <div
+        className={cn(
+          "fixed inset-0 z-[1100] bg-black/40 backdrop-blur-xs transition-opacity duration-300 xl:hidden",
+          mobileDrawerOpen ? "opacity-100" : "pointer-events-none opacity-0"
+        )}
+        onClick={() => setMobileDrawerOpen(false)}
+      />
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-[1101] flex h-full w-[min(380px,88vw)] flex-col bg-white shadow-2xl transition-transform duration-300 ease-out xl:hidden",
+          mobileDrawerOpen ? "translate-x-0" : "-translate-x-full"
+        )}
+      >
+        <div className="flex items-center justify-between border-b border-gray-100 bg-gray-50/80 px-4 py-3">
+          <span className="text-sm font-semibold text-foreground">知识库与文件管理</span>
+          <button
+            type="button"
+            onClick={() => setMobileDrawerOpen(false)}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-muted hover:bg-gray-200/70 hover:text-foreground cursor-pointer"
+            aria-label="关闭"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <KnowledgeTree
+            knowledgeBases={knowledgeBasesView}
+            selectedKbId={selectedKbId}
+            foldersByKb={foldersByKb}
+            filesByKb={filesByKb}
+            loadingKbIds={loadingKbIds}
+            onRequestKbContents={ensureKbContents}
+            uploadTasks={uploadTasks}
+            selectedFolderId={selectedFolderId}
+            searchTerm={searchTerm}
+            canMoveFiles={canMoveFiles}
+            onSelectKb={(id) => {
+              setSelectedKbId(id);
+            }}
+            chatKbId={chatScope?.kbId ?? null}
+            onChatWithKb={(kb) => {
+              setSelectedKbId(kb.knowledge_base_id);
+              startKbChat(kb);
+              setMobileDrawerOpen(false);
+            }}
+            onCreateKb={handleCreateKnowledgeBase}
+            onDeleteKb={(kb) => handleDeleteKnowledgeBase(kb)}
+            onSelectFolder={(id) => {
+              startFolderChat(id);
+              setMobileDrawerOpen(false);
+            }}
+            onOpenFile={handleOpenFile}
+            onCreateFolder={handleCreateFolder}
+            onUploadFile={handleUploadClick}
+            onDeleteFolder={handleDeleteFolder}
+            onDeleteFile={handleDeleteFile}
+            onRetryFile={handleRetryFile}
+            onSearchChange={setSearchTerm}
+            onMoveFileToFolder={async (file, targetFolderId) => {
+              try {
+                setIsBusy("move");
+                await moveFile(file.file_id, targetFolderId);
+                await loadKnowledgeBaseWorkspace(
+                  file.knowledge_base_id || selectedKbId
+                );
+                setNotice(`文件「${file.file_name}」已移动。`);
+              } catch (error) {
+                setNotice(
+                  error instanceof Error ? `移动失败：${error.message}` : "移动失败"
+                );
+              } finally {
+                setIsBusy(null);
+              }
+            }}
+          />
+        </div>
+      </aside>
 
       <ConfirmModal
         action={confirmAction}
@@ -1565,7 +1647,7 @@ function KnowledgeWorkspace() {
       ) : null}
 
       {notice ? (
-        <div className="fixed bottom-6 left-1/2 z-[100] -translate-x-1/2 animate-in fade-in slide-in-from-bottom-4 duration-300">
+        <div className="fixed bottom-16 md:bottom-6 left-1/2 z-[100] -translate-x-1/2 animate-in fade-in slide-in-from-bottom-4 duration-300 max-w-[calc(100vw-2rem)] w-auto">
           <div
             className={cn(
               "flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm shadow-lg backdrop-blur-sm",

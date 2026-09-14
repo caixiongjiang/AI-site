@@ -147,7 +147,7 @@ export function UploadProgressCard({
   // 1. 胶囊最小化悬浮态
   if (isMinimized) {
     return (
-      <div className="fixed bottom-5 right-6 z-[95] flex items-center gap-2.5 rounded-full border border-gray-200/90 bg-white/95 px-4 py-2.5 shadow-xl backdrop-blur-md transition-all duration-300 hover:shadow-2xl">
+      <div className="fixed bottom-16 md:bottom-5 right-3 md:right-6 z-[95] flex items-center gap-2.5 rounded-full border border-gray-200/90 bg-white/95 px-4 py-2.5 shadow-xl backdrop-blur-md transition-all duration-300 hover:shadow-2xl max-w-[calc(100vw-1.5rem)]">
         {summary.uploadingCount > 0 && (
           <div className="flex items-center gap-2">
             <UploadCloud className="h-4 w-4 animate-bounce text-primary" />
@@ -207,7 +207,7 @@ export function UploadProgressCard({
 
   // 2. 完整悬浮面板
   return (
-    <div className="fixed bottom-5 right-6 z-[95] w-[420px] max-w-[calc(100vw-2rem)] rounded-2xl border border-gray-200/90 bg-white/95 p-4 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-4 duration-300">
+    <div className="fixed bottom-16 md:bottom-5 right-3 md:right-6 z-[95] w-[420px] max-w-[calc(100vw-1.5rem)] rounded-2xl border border-gray-200/90 bg-white/95 p-4 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-4 duration-300">
       {/* 头部摘要 */}
       <div className="flex items-center justify-between pb-3 border-b border-gray-100">
         <div className="flex items-center gap-2.5 min-w-0">

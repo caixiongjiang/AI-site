@@ -387,14 +387,14 @@ export default function SettingsPage() {
 
       {/* 顶部与下方双栏共用同一套 max-w + 水平内边距，保证左右对齐 */}
       <header className="sticky top-0 z-30 border-b border-gray-200/80 bg-white/80 backdrop-blur-md">
-        <div className="mx-auto max-w-6xl px-6 py-4 sm:px-10">
+        <div className="mx-auto max-w-6xl px-4 py-3 sm:px-10 sm:py-4">
           <h1 className="text-lg font-bold text-foreground">系统设置与偏好</h1>
           <p className="text-xs text-muted">定制您的 AI 工作区、模型参数与账号资料</p>
         </div>
       </header>
 
       {/* 主体双栏区域 */}
-      <main className="mx-auto max-w-6xl px-6 py-6 sm:px-10">
+      <main className="mx-auto max-w-6xl px-4 py-4 sm:px-10 sm:py-6">
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[240px_minmax(0,1fr)]">
           {/* 左侧选项卡导航 */}
           <aside className="flex flex-row gap-1.5 overflow-x-auto rounded-2xl border border-gray-200/80 bg-white p-2 shadow-xs lg:flex-col lg:overflow-visible">
