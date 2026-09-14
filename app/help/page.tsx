@@ -67,13 +67,13 @@ export default function HelpPage() {
   return (
     <div className="min-h-screen bg-gray-50/50">
       <header className="sticky top-0 z-30 border-b border-gray-200/80 bg-white/80 backdrop-blur-md">
-        <div className="mx-auto max-w-3xl px-6 py-4 sm:px-10">
+        <div className="mx-auto max-w-3xl px-4 py-3 sm:px-10 sm:py-4">
           <h1 className="text-lg font-bold text-foreground">关于开发者</h1>
           <p className="text-xs text-muted">作者信息与开源项目</p>
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl space-y-5 px-6 py-8 sm:px-10">
+      <main className="mx-auto max-w-3xl space-y-5 px-4 py-6 sm:px-10 sm:py-8">
         <section className="rounded-2xl border border-gray-200/80 bg-white p-6 shadow-xs sm:p-8">
           <div className="flex flex-col gap-5 sm:flex-row sm:items-start">
             <UserAvatar

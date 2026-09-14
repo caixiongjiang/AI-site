@@ -20,6 +20,7 @@ import {
   Bot,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   ChevronUp,
   Compass,
@@ -133,6 +134,8 @@ interface KnowledgeChatPanelProps {
    */
   compact?: boolean;
   className?: string;
+  /** 移动端打开/收起知识库目录与文件树抽屉 */
+  onToggleMobileTree?: () => void;
 }
 
 const STARTER_PROMPTS = [
@@ -184,7 +187,8 @@ function PhasePill({ phase }: { phase: ChatPhase }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px]",
+        // shrink-0 + nowrap：状态胶囊在移动端窄头部里不能被标题挤到换行
+        "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px]",
         tone === "muted" && "bg-gray-100 text-muted",
         tone === "ok" && "bg-emerald-50 text-emerald-700",
         tone === "running" && "bg-primary/10 text-primary",
@@ -1524,7 +1528,7 @@ function ReferencesSidePanel({
 
   return (
     <aside
-      className="flex min-h-0 w-[min(340px,36vw)] max-w-[100vw] shrink-0 flex-col border-l border-hairline/80 bg-gray-50/50 shadow-xs"
+      className="fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-hairline/80 bg-white shadow-2xl sm:relative sm:z-auto sm:w-[min(340px,36vw)] sm:bg-gray-50/50 sm:shadow-xs"
       aria-label="全部来源"
     >
       <div className="flex shrink-0 items-center justify-between border-b border-hairline/60 bg-white/80 px-4 py-2.5 backdrop-blur-xs">
@@ -3001,6 +3005,12 @@ function UnifiedModelPicker({
     return EFFORT_LEVEL_TITLES[thinkingLevel] ?? thinkingLevel;
   }, [currentModel, thinkingLevel, switchOnlyThinking]);
 
+  /**
+   * 移动端触发按钮的文案：只表达思考档位。
+   * 关闭或模型不支持思考时恒为「关」，模型列表尚未加载时退回「模型」。
+   */
+  const mobileThinkingLabel = currentEffortLabel ?? (currentModel ? "关" : "模型");
+
   // 当前模型支持的思考档位
   const availableThinkingLevels = useMemo(() => {
     if (!currentModel?.supports_thinking) return [];
@@ -3053,7 +3063,9 @@ function UnifiedModelPicker({
   }, [models, searchQuery, currentModel]);
 
   return (
-    <div className="relative shrink-0" ref={containerRef}>
+    // 移动端保持 static：浮层改为相对输入框整宽展开（见下方 bottom-full left-0 right-0），
+    // sm 以上才把定位上下文收回按钮自身，维持原来的右对齐浮层。
+    <div className="shrink-0 sm:relative" ref={containerRef}>
       {/* 底部触发按钮 */}
       <button
         type="button"
@@ -3074,9 +3086,19 @@ function UnifiedModelPicker({
             : displayModelLabel
         }
       >
-        <span className="font-normal">{displayModelLabel}</span>
+        {/* 移动端：只留思考档位（无档位时显示「关」），模型名只在弹层里出现 */}
+        <span
+          className={cn(
+            "inline-flex items-center gap-1 sm:hidden",
+            currentEffortLabel ? "text-primary-deep" : "text-neutral-500",
+          )}
+        >
+          <ThinkingBulbIcon className="h-3 w-3 shrink-0" />
+          {mobileThinkingLabel}
+        </span>
+        <span className="hidden font-normal sm:inline">{displayModelLabel}</span>
         {currentEffortLabel ? (
-          <span className="text-neutral-400 font-normal">
+          <span className="hidden text-neutral-400 font-normal sm:inline">
             {currentEffortLabel}
           </span>
         ) : null}
@@ -3086,13 +3108,23 @@ function UnifiedModelPicker({
       {/* 弹出浮层：主卡片弹出在正上方 */}
       {open ? (
         <div
-          className="absolute bottom-full right-0 z-50 mb-2 select-none"
+          className={cn(
+            "absolute bottom-full z-50 mb-2 select-none max-w-[calc(100vw-1.5rem)]",
+            // 移动端：贴着输入框整宽展开，左右都不出屏
+            "left-0 right-0",
+            // sm 以上：回到触发按钮正上方的右对齐浮层
+            "sm:left-auto sm:right-0 sm:w-auto"
+          )}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* 主卡片（正上方）：Effort 思考强度选择 + Model 切换入口 */}
+          {/* 主卡片（正上方）：Effort 思考强度选择 + Model 切换入口。
+              移动端展开模型列表时整张让位给列表卡片（见下方），避免两张卡上下叠高。 */}
           <div
             ref={firstCardRef}
-            className="w-40 sm:w-44 shrink-0 rounded-2xl border border-neutral-200/90 bg-white p-1.5 shadow-2xl animate-in fade-in zoom-in-95 duration-100 relative"
+            className={cn(
+              "w-full sm:w-44 max-w-[calc(100vw-2rem)] shrink-0 rounded-2xl border border-neutral-200/90 bg-white p-1.5 shadow-2xl animate-in fade-in zoom-in-95 duration-100 relative",
+              showAllModels && "hidden sm:block",
+            )}
           >
             {/* 思考：强度模型显示 Effort；开关模型显示关/开 */}
             <div className="px-2 py-1 text-[10px] font-semibold tracking-wider text-neutral-400 uppercase">
@@ -3197,128 +3229,140 @@ function UnifiedModelPicker({
                 )}
               />
             </button>
-
-            {/* 第二张卡片：所有模型具体信息（点击 Model 后展开；根据屏幕空间动态在右边或左边显示） */}
-            {showAllModels ? (
-              <div
-                className={cn(
-                  "w-64 sm:w-72 rounded-2xl border border-neutral-200/90 bg-white shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-100",
-                  placement === "right"
-                    ? "absolute bottom-0 left-full ml-1.5 z-50"
-                    : "absolute bottom-0 right-full mr-1.5 z-50",
-                )}
-              >
-                {/* 顶部搜索框 */}
-                <div className="flex items-center gap-2 border-b border-neutral-100 px-3 py-2 bg-neutral-50/50">
-                  <Search className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
-                  <input
-                    autoFocus
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search models"
-                    className="min-w-0 flex-1 bg-transparent text-xs text-neutral-900 outline-none placeholder:text-neutral-400"
-                  />
-                  {searchQuery ? (
-                    <button
-                      type="button"
-                      onClick={() => setSearchQuery("")}
-                      className="text-neutral-400 hover:text-neutral-600"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  ) : null}
-                </div>
-
-                {/* 模型列表 */}
-                <div className="max-h-72 overflow-y-auto p-1.5 space-y-0.5">
-                  {models.length === 0 ? (
-                    <div className="flex items-center justify-center gap-2 py-8 text-xs text-neutral-400">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      <span>加载模型中…</span>
-                    </div>
-                  ) : displayedModels.length === 0 ? (
-                    <div className="py-8 text-center text-xs text-neutral-400">
-                      未找到匹配模型
-                    </div>
-                  ) : (
-                    displayedModels.map((m) => {
-                      const isSelected = m.id === modelId;
-                      // 只有支持强度的模型才展示默认/当前强度。开关模型的
-                      // ``medium`` 是内部的“开”哨兵，不能被误展示为 Medium。
-                      const effortText = isEffortThinking(m.thinking_levels)
-                        ? (EFFORT_LEVEL_TITLES[
-                            isSelected
-                              ? thinkingLevel
-                              : m.default_thinking_level || "medium"
-                          ] ?? (isSelected ? thinkingLevel : "Medium"))
-                        : null;
-
-                      return (
-                        <button
-                          key={m.id}
-                          type="button"
-                          onClick={() => {
-                            recordRecentModelId(m.id);
-                            onModelChange(m.id);
-                            setOpen(false);
-                          }}
-                          className={cn(
-                            "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-neutral-100",
-                            isSelected
-                              ? "bg-neutral-100/90 font-medium text-neutral-900"
-                              : "text-neutral-700",
-                          )}
-                        >
-                          <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                            <span
-                              className={cn(
-                                "truncate",
-                                isSelected
-                                  ? "font-medium text-neutral-900"
-                                  : "text-neutral-700",
-                              )}
-                            >
-                              {m.label}
-                            </span>
-                            {effortText && effortText !== "Off" ? (
-                              <span className="shrink-0 text-[11px] text-neutral-400 font-normal">
-                                {effortText}
-                              </span>
-                            ) : null}
-                          </div>
-
-                          <div className="flex shrink-0 items-center gap-1.5 ml-1.5">
-                            <ModelCapabilityIcons model={m} />
-                            {isSelected ? (
-                              <Check className="h-3.5 w-3.5 text-neutral-900 shrink-0" />
-                            ) : null}
-                          </div>
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-
-                {/* 底部信息条 */}
-                <div className="border-t border-neutral-100 px-3 py-1.5 bg-neutral-50/50 flex items-center justify-between text-[10px] text-neutral-400">
-                  <span>
-                    {searchQuery
-                      ? `${displayedModels.length} 个结果`
-                      : `常用 ${displayedModels.length} 个模型 (共 ${models.length} 个)`}
-                  </span>
-                  <span className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-0.5">
-                      <ThinkingBulbIcon className="h-2.5 w-2.5 text-primary" /> 思考
-                    </span>
-                    <span className="inline-flex items-center gap-0.5">
-                      <Eye className="h-2.5 w-2.5 text-primary" /> 视觉
-                    </span>
-                  </span>
-                </div>
-              </div>
-            ) : null}
           </div>
+
+          {/* 第二张卡片：所有模型具体信息（点击 Model 后展开）。
+              与主卡片同级：主卡片在移动端 hidden 时才不会连带把它一起 display:none，
+              桌面端依旧靠 left-full / right-full 贴在主卡片左右两侧。 */}
+          {showAllModels ? (
+            <div
+              className={cn(
+                "w-full max-w-[calc(100vw-2rem)] rounded-2xl border border-neutral-200/90 bg-white shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-100",
+                "sm:absolute sm:bottom-0 sm:w-72",
+                placement === "right"
+                  ? "sm:left-full sm:ml-1.5"
+                  : "sm:right-full sm:mr-1.5",
+              )}
+            >
+              {/* 顶部搜索框（移动端带返回，回到思考档位卡片） */}
+              <div className="flex items-center gap-2 border-b border-neutral-100 px-3 py-2 bg-neutral-50/50">
+                <button
+                  type="button"
+                  onClick={() => setShowAllModels(false)}
+                  className="-ml-1 flex h-5 w-5 shrink-0 items-center justify-center rounded text-neutral-400 transition-colors hover:text-neutral-700 sm:hidden"
+                  title="返回思考设置"
+                  aria-label="返回思考设置"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </button>
+                <Search className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
+                <input
+                  autoFocus
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search models"
+                  className="min-w-0 flex-1 bg-transparent text-xs text-neutral-900 outline-none placeholder:text-neutral-400"
+                />
+                {searchQuery ? (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery("")}
+                    className="text-neutral-400 hover:text-neutral-600"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                ) : null}
+              </div>
+
+              {/* 模型列表（移动端按视口高度收敛，避免小屏上顶出屏幕） */}
+              <div className="max-h-[45vh] overflow-y-auto p-1.5 space-y-0.5 sm:max-h-72">
+                {models.length === 0 ? (
+                  <div className="flex items-center justify-center gap-2 py-8 text-xs text-neutral-400">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>加载模型中…</span>
+                  </div>
+                ) : displayedModels.length === 0 ? (
+                  <div className="py-8 text-center text-xs text-neutral-400">
+                    未找到匹配模型
+                  </div>
+                ) : (
+                  displayedModels.map((m) => {
+                    const isSelected = m.id === modelId;
+                    // 只有支持强度的模型才展示默认/当前强度。开关模型的
+                    // ``medium`` 是内部的“开”哨兵，不能被误展示为 Medium。
+                    const effortText = isEffortThinking(m.thinking_levels)
+                      ? (EFFORT_LEVEL_TITLES[
+                          isSelected
+                            ? thinkingLevel
+                            : m.default_thinking_level || "medium"
+                        ] ?? (isSelected ? thinkingLevel : "Medium"))
+                      : null;
+
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => {
+                          recordRecentModelId(m.id);
+                          onModelChange(m.id);
+                          setOpen(false);
+                        }}
+                        className={cn(
+                          "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-neutral-100",
+                          isSelected
+                            ? "bg-neutral-100/90 font-medium text-neutral-900"
+                            : "text-neutral-700",
+                        )}
+                      >
+                        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                          <span
+                            className={cn(
+                              "truncate",
+                              isSelected
+                                ? "font-medium text-neutral-900"
+                                : "text-neutral-700",
+                            )}
+                          >
+                            {m.label}
+                          </span>
+                          {effortText && effortText !== "Off" ? (
+                            <span className="shrink-0 text-[11px] text-neutral-400 font-normal">
+                              {effortText}
+                            </span>
+                          ) : null}
+                        </div>
+
+                        <div className="flex shrink-0 items-center gap-1.5 ml-1.5">
+                          <ModelCapabilityIcons model={m} />
+                          {isSelected ? (
+                            <Check className="h-3.5 w-3.5 text-neutral-900 shrink-0" />
+                          ) : null}
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* 底部信息条 */}
+              <div className="border-t border-neutral-100 px-3 py-1.5 bg-neutral-50/50 flex items-center justify-between text-[10px] text-neutral-400">
+                <span>
+                  {searchQuery
+                    ? `${displayedModels.length} 个结果`
+                    : `常用 ${displayedModels.length} 个模型 (共 ${models.length} 个)`}
+                </span>
+                <span className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-0.5">
+                    <ThinkingBulbIcon className="h-2.5 w-2.5 text-primary" /> 思考
+                  </span>
+                  <span className="inline-flex items-center gap-0.5">
+                    <Eye className="h-2.5 w-2.5 text-primary" /> 视觉
+                  </span>
+                </span>
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -3791,6 +3835,7 @@ export const KnowledgeChatPanel = ({
   enabled = true,
   compact = false,
   className,
+  onToggleMobileTree,
 }: KnowledgeChatPanelProps) => {
   const chat = useKnowledgeChat({
     knowledgeBaseId,
@@ -4416,11 +4461,24 @@ export const KnowledgeChatPanel = ({
       ) : null}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {/* 顶部全宽状态栏 */}
-        <div className="shrink-0 border-b border-hairline/70 bg-white/95 px-4 py-2.5 backdrop-blur-xs sm:px-6">
+        {/* 顶部全宽状态栏。
+            relative 是 ContextIndicator 移动端浮层（占满头部宽度）的定位上下文，
+            移除前请先确认 ContextIndicator 的 static sm:relative 定位链。 */}
+        <div className="relative shrink-0 border-b border-hairline/70 bg-white/95 px-4 py-2.5 backdrop-blur-xs sm:px-6">
           <div className="flex items-center justify-between gap-3">
             {/* 左侧：标题 + 状态胶囊 + 范围面包屑 */}
-            <div className="flex items-center min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
+              {onToggleMobileTree ? (
+                <button
+                  type="button"
+                  onClick={onToggleMobileTree}
+                  className="flex xl:hidden h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-hairline bg-gray-50/80 text-muted transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary-deep cursor-pointer"
+                  title="打开知识库目录与文件管理"
+                  aria-label="打开知识库目录"
+                >
+                  <Folder className="h-4 w-4 text-primary" />
+                </button>
+              ) : null}
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   {renaming ? (
@@ -4471,7 +4529,7 @@ export const KnowledgeChatPanel = ({
               </div>
             </div>
 
-            {/* 右侧：上下文指示器 + 紧凑模式控制 */}
+            {/* 右侧：上下文指示器 + 会话控制 */}
             <div className="flex items-center gap-2 shrink-0">
               <ContextIndicator report={contextStatus} />
               {compact ? (
@@ -4479,7 +4537,7 @@ export const KnowledgeChatPanel = ({
                   <button
                     type="button"
                     onClick={() => void handleNewSession()}
-                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-hairline bg-white text-muted transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-hairline bg-white text-muted transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary cursor-pointer"
                     title="新建会话"
                     aria-label="新建会话"
                   >
@@ -4494,7 +4552,27 @@ export const KnowledgeChatPanel = ({
                     onDelete={handleSessionDelete}
                   />
                 </div>
-              ) : null}
+              ) : (
+                <div className="flex items-center gap-1 lg:hidden">
+                  <button
+                    type="button"
+                    onClick={() => void handleNewSession()}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-hairline bg-white text-muted transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary cursor-pointer"
+                    title="新建会话"
+                    aria-label="新建会话"
+                  >
+                    <MessageSquarePlus className="h-3.5 w-3.5" />
+                  </button>
+                  <SessionPopover
+                    sessions={sessions}
+                    activeSessionId={activeSessionId}
+                    onSelect={(id) => void handleSelectSession(id)}
+                    onNew={() => void handleNewSession()}
+                    onRename={handleSessionRename}
+                    onDelete={handleSessionDelete}
+                  />
+                </div>
+              )}
             </div>
           </div>
         </div>

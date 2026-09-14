@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { ContextStatusReport } from "@/lib/chat-types";
 
@@ -43,6 +43,17 @@ export function ContextIndicator({
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // 移动端没有 hover：点开后点外面要能收起，否则面板会一直压着对话
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
 
   // 口径与 Cursor 一致：满窗口做分母（输出预留不计入 used）
   const pct = useMemo(() => {
@@ -80,7 +91,7 @@ export function ContextIndicator({
         )}
         title="上下文用量暂不可用"
       >
-        Context —
+        <span className="hidden sm:inline">Context&nbsp;</span>—
       </span>
     );
   }
@@ -88,8 +99,11 @@ export function ContextIndicator({
   const denom = Math.max(report.max_context, 1);
 
   return (
+    // 移动端保持 static：面板要相对头部整宽展开（见下方 absolute left/right），
+    // 只有 sm 以上才把定位上下文收回按钮自身，做右对齐浮层。
     <div
-      className={cn("relative inline-flex", className)}
+      ref={rootRef}
+      className={cn("inline-flex sm:relative", className)}
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
     >
@@ -103,6 +117,7 @@ export function ContextIndicator({
             : "border-gray-200 bg-white text-muted hover:border-gray-300 hover:text-foreground"
         )}
         title={`Context ${pct}% · ${formatTokens(report.used_tokens)} / ${formatTokens(report.max_context)}`}
+        aria-expanded={open}
       >
         <span className="relative h-1.5 w-8 overflow-hidden rounded-full bg-gray-200" aria-hidden>
           <span
@@ -113,11 +128,27 @@ export function ContextIndicator({
             style={{ width: `${pct}%` }}
           />
         </span>
-        <span>Context {pct}%</span>
+        {/* 窄屏只留百分比，把宽度让给标题与状态胶囊 */}
+        <span className="hidden sm:inline">Context&nbsp;</span>
+        <span>{pct}%</span>
       </button>
 
       {open ? (
-        <div className="absolute right-0 top-full z-30 mt-1 w-80 rounded-xl border border-gray-200 bg-white p-3 text-[11px] shadow-xl">
+        <div
+          className={cn(
+            // 移动端：相对头部整宽下落，左右各留一点边距，看起来像一块贴边面板；
+            // sm 以上：回到按钮下方右对齐的 320px 浮层。
+            "absolute left-3 right-3 top-full z-30 mt-1.5 max-h-[min(70vh,28rem)] overflow-y-auto",
+            "rounded-2xl border border-gray-200 bg-white p-3.5 text-xs shadow-2xl ring-1 ring-black/5",
+            "sm:left-auto sm:right-0 sm:mt-1 sm:w-80 sm:rounded-xl sm:p-3 sm:text-[11px]"
+          )}
+        >
+          {/* 小三角：仅桌面端指向触发按钮 */}
+          <span
+            aria-hidden
+            className="absolute -top-1 right-8 hidden h-2 w-2 rotate-45 border-l border-t border-gray-200 bg-white sm:block"
+          />
+
           <div className="mb-2 flex items-center justify-between text-foreground">
             <span className="font-medium">Context Usage</span>
             <span className="text-muted">{report.counting}</span>
@@ -137,7 +168,12 @@ export function ContextIndicator({
             {visibleSegments.map((s) => (
               <span
                 key={s.key}
-                style={{ width: `${(s.value / denom) * 100}%`, backgroundColor: s.color }}
+                style={{
+                  width: `${(s.value / denom) * 100}%`,
+                  // 极小占比也要留得住颜色，否则 4% 时几乎看不到这一段
+                  minWidth: 3,
+                  backgroundColor: s.color,
+                }}
                 title={`${s.label} ${formatTokens(s.value)}`}
               />
             ))}
@@ -145,16 +181,16 @@ export function ContextIndicator({
 
           <div className="space-y-1">
             {visibleSegments.map((s) => (
-              <div key={s.key} className="flex items-center justify-between">
-                <span className="flex items-center gap-1.5 text-foreground">
+              <div key={s.key} className="flex items-center justify-between gap-3">
+                <span className="flex min-w-0 items-center gap-1.5 text-foreground">
                   <span
                     className="h-2 w-2 shrink-0 rounded-[2px]"
                     style={{ backgroundColor: s.color }}
                     aria-hidden
                   />
-                  {s.label}
+                  <span className="truncate">{s.label}</span>
                 </span>
-                <span className="text-muted">{formatTokens(s.value)}</span>
+                <span className="shrink-0 text-muted">{formatTokens(s.value)}</span>
               </div>
             ))}
           </div>
