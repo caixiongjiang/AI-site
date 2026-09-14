@@ -317,14 +317,31 @@ function formatExecutionModelLabel(model?: string | null): string {
 }
 
 /** 提取思考文本首部摘要（单行预览） */
-function extractThinkSummary(thinking: string): string {
-  if (!thinking) return "";
-  const clean = thinking
+/** 清洗思考正文：去掉行首 markdown 噪声、压平换行，得到单行文本 */
+function cleanThinkText(thinking: string): string {
+  return thinking
     .replace(/^[#\s*`>-]+/gm, "")
     .replace(/\n+/g, " ")
     .trim();
+}
+
+/** 思考结束后的稳定摘要：取单行文本头部 */
+function extractThinkSummary(thinking: string): string {
+  const clean = cleanThinkText(thinking);
   if (clean.length <= 90) return clean;
   return clean.slice(0, 90) + "…";
+}
+
+/**
+ * 流式思考的单行滚动预览：取单行文本**尾部**。
+ *
+ * 取头部的话，前 90 字之后预览就冻结了，看起来像卡住；取尾部才能随增量
+ * 持续变化，形成「一行上不断变化的文字」。
+ */
+function extractThinkRollingPreview(thinking: string, maxLen = 110): string {
+  const clean = cleanThinkText(thinking);
+  if (clean.length <= maxLen) return clean;
+  return "…" + clean.slice(-maxLen);
 }
 
 /** 友好中文工具名称映射（对齐 DeepSeek / Harness 风格） */
@@ -595,26 +612,21 @@ function TraceThinkRow({
 }: {
   step: Extract<TraceStep, { kind: "think" }>;
 }) {
-  const [open, setOpen] = useState(step.inflight);
-  const wasInflight = useRef(step.inflight);
-
-  useEffect(() => {
-    if (step.inflight) {
-      setOpen(true);
-      wasInflight.current = true;
-    } else if (wasInflight.current) {
-      setOpen(false);
-      wasInflight.current = false;
-    }
-  }, [step.inflight]);
+  // 默认收起：思考过程不再自动展开（流式期间也不展开），只有用户点击才展开；
+  // 展开后不会被自动收回，完全由用户控制。
+  const [open, setOpen] = useState(false);
 
   const summary = extractThinkSummary(step.thinking);
+  // 收起态单行文案：流式中给滚动预览（随增量持续变化），结束后给稳定摘要
+  const collapsedText = step.inflight
+    ? extractThinkRollingPreview(step.thinking) || "正在深度思考…"
+    : summary || "思考过程";
 
   return (
     <div className="w-full">
       <div
         className="group flex items-center gap-2 px-2 py-1 select-none cursor-pointer"
-        onClick={() => !step.inflight && setOpen((v) => !v)}
+        onClick={() => setOpen((v) => !v)}
       >
         {/* 默认显示灯泡图标，hover 时替换为展开箭头（同位置覆盖） */}
         {step.inflight ? (
@@ -638,12 +650,12 @@ function TraceThinkRow({
           思考
         </span>
 
-        {/* 收起态显示单行摘要，展开态只保留「思考」标题 */}
+        {/* 收起态显示单行文案（流式中为滚动预览），展开态只保留「思考」标题 */}
         {!open ? (
           <>
             <span className="text-muted-faint select-none">·</span>
-            <span className="truncate text-muted-subtle text-[13px] font-normal leading-normal transition-colors group-hover:text-muted">
-              {step.inflight ? "正在深度思考…" : summary || "思考过程"}
+            <span className="min-w-0 flex-1 truncate text-muted-subtle text-[13px] font-normal leading-normal transition-colors group-hover:text-muted">
+              {collapsedText}
             </span>
           </>
         ) : null}
