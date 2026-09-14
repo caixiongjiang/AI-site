@@ -13,24 +13,40 @@
 
   body {
     @apply bg-dark text-foreground font-sans antialiased;
+    -webkit-tap-highlight-color: transparent;
   }
 
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
   }
 
   ::-webkit-scrollbar-track {
-    @apply bg-gray-100;
+    @apply bg-transparent;
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-gray-300 rounded;
+    @apply bg-gray-300/80 rounded-full;
   }
 
   ::-webkit-scrollbar-thumb:hover {
     @apply bg-gray-400;
   }
+}
+
+/* 移动端安全区域与公式防溢出 */
+.safe-area-pb {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.safe-area-pt {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
 }
 
 /* 流式等待时的"Planning next moves"文字微光：一束高光从左向右飘过 */

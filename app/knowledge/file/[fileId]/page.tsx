@@ -133,13 +133,13 @@ export default function KnowledgeFilePage() {
       </div>
 
       {chatOpen ? (
-        <aside className="flex w-[380px] shrink-0 flex-col border-l border-gray-200 bg-gray-50">
+        <aside className="fixed inset-0 z-50 flex w-full flex-col bg-white md:relative md:z-auto md:w-[380px] md:shrink-0 md:border-l md:border-gray-200 md:bg-gray-50">
           <div className="flex items-center justify-between border-b border-gray-200 px-4 py-2">
             <span className="text-xs font-medium text-foreground">文件问答</span>
             <button
               type="button"
               onClick={() => setChatOpen(false)}
-              className="flex h-7 w-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-gray-200 hover:text-foreground"
+              className="flex h-7 w-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-gray-200 hover:text-foreground cursor-pointer"
             >
               <X className="h-3.5 w-3.5" />
             </button>
