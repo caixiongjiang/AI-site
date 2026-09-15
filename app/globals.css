@@ -84,3 +84,38 @@
     -webkit-text-fill-color: #6b7280;
   }
 }
+
+/* markdown-body 表格样式：项目未安装 @tailwindcss/typography（plugins: []），
+   prose 类不生效，GFM 表格会渲染成无样式裸表格。这里手动补齐。
+   仅作用于回答区容器（.markdown-body），不影响全局。 */
+.markdown-body table {
+  display: block;
+  width: 100%;
+  margin: 0.75rem 0;
+  overflow-x: auto;
+  border-collapse: collapse;
+  border-spacing: 0;
+  font-size: 0.875em;
+  line-height: 1.6;
+}
+
+.markdown-body thead {
+  background-color: rgb(249 250 251); /* gray-50 */
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid #DFE7E4; /* hairline */
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-body th {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.markdown-body tbody tr:nth-child(even) {
+  background-color: rgb(250 251 251);
+}
