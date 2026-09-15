@@ -26,6 +26,7 @@
 
 import { Children, useMemo } from "react";
 import type { ReactNode } from "react";
+import type { PluggableList } from "unified";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -163,6 +164,20 @@ export function MarkdownAnswer({
   // 仅用于去重 console.warn；不参与渲染序号
   const warnedUnknown = useMemo(() => new Set<string>(), [lookup]);
 
+  // 流式公式缓冲（方案1）：inflight 期间半截 LaTeX 触发 KaTeX ParseError 时，
+  // rehype-katex 默认把公式渲染成红色（#cc0000）原始文本——红色"错误"语义在
+  // 流式中间态是误导（内容只是还没写完，不是真错误）。这里仅在流式期间把
+  // errorColor 换成灰色（gray-400），生成结束后恢复 KaTeX 默认红色，保留
+  // "最终态红色 = 真错误"的语义。插件数组随 inflight 变化重建，代价可忽略
+  //（流式收尾只切换一次）。
+  const rehypePlugins = useMemo(
+    () =>
+      inflight
+        ? ([[rehypeKatex, { errorColor: "#9ca3af" }]] as PluggableList)
+        : ([[rehypeKatex, { errorColor: "#cc0000" }]] as PluggableList),
+    [inflight],
+  );
+
   // react-markdown 的 components 钩子；这里覆盖所有可能携带文本的容器。
   // 注意 `code` / `pre` 不拦截（代码里出现的 [chunk-xxx] / [cN] 不应被替换）。
   const components = useMemo(() => {
@@ -199,7 +214,7 @@ export function MarkdownAnswer({
     <div className="relative">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
+        rehypePlugins={rehypePlugins}
         components={components}
       >
         {content}

@@ -148,6 +148,9 @@ const SESSION_DEFAULT_VISIBLE = 5;
 
 /** 对话主内容最大宽度，居中排版（现代流式布局，保持舒适行宽与适度留白） */
 const CHAT_CONTENT_CLASS = "mx-auto w-full max-w-[880px]";
+// 输入区比对话区左右各宽 24px（居中对称）：对话内容保持 880px 阅读列宽，
+// 输入框作为独立悬浮控件适度加宽以示区分。
+const COMPOSER_CONTENT_CLASS = "mx-auto w-full max-w-[928px]";
 
 interface ChatSettings {
   interactionMode: InteractionMode;
@@ -4416,9 +4419,7 @@ export const KnowledgeChatPanel = ({
 
   const placeholder = effectiveDisabled
     ? "当前上下文不可问答"
-    : selectedFolderName
-      ? `向文件夹「${selectedFolderName}」提问...`
-      : `直接向「${activeSession?.title || knowledgeBaseName || "知识库"}」提问...`;
+    : "描述你想要查询的内容，/调用指令和技能，@知识库中的文件";
 
   const sessionScopeLabel = selectedFolderName
     ? `文件夹「${selectedFolderName}」`
@@ -4781,7 +4782,7 @@ export const KnowledgeChatPanel = ({
 
             {/* 输入区：参数扁平化 toolbar + textarea + 发送/停止 */}
             <div className="shrink-0">
-              <div className={cn(CHAT_CONTENT_CLASS, "px-4 pb-4 pt-2 sm:px-5")}>
+              <div className={cn(COMPOSER_CONTENT_CLASS, "px-4 pb-4 pt-2 sm:px-5")}>
                 {disabledReason ? (
                   <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
                     {disabledReason}
