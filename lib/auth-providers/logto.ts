@@ -1,4 +1,5 @@
 import { AuthSession, AuthUser } from "@/lib/auth";
+import { AuthCallbackResult, AuthProviderClient } from "./types";
 
 interface OpenIdConfiguration {
   authorization_endpoint: string;
@@ -419,3 +420,14 @@ export async function buildLogtoLogoutUrl(idToken?: string): Promise<string> {
 
   return url.toString();
 }
+
+/**
+ * Logto Provider 适配器（公网部署，NEXT_PUBLIC_AUTH_PROVIDER=logto）
+ */
+export const logtoAuthProvider: AuthProviderClient = {
+  label: "Logto",
+  startSignIn: startLogtoSignIn,
+  handleCallback: async (search: URLSearchParams): Promise<AuthCallbackResult> =>
+    handleLogtoCallback(search),
+  buildLogoutUrl: buildLogtoLogoutUrl,
+};

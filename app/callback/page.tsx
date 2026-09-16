@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertCircle, LoaderCircle } from "lucide-react";
 import { useAuth } from "@/components/auth/AuthProvider";
-import { handleLogtoCallback } from "@/lib/logto";
+import { getAuthProvider, getAuthProviderLabel } from "@/lib/auth-providers";
 
 export default function CallbackPage() {
   const router = useRouter();
@@ -16,7 +16,7 @@ export default function CallbackPage() {
 
     const run = async () => {
       try {
-        const { session, nextPath } = await handleLogtoCallback(
+        const { session, nextPath } = await getAuthProvider().handleCallback(
           new URLSearchParams(window.location.search)
         );
 
@@ -63,7 +63,7 @@ export default function CallbackPage() {
             <LoaderCircle className="mx-auto h-10 w-10 animate-spin text-primary" />
             <h1 className="mt-4 text-2xl font-bold text-foreground">正在完成登录</h1>
             <p className="mt-3 text-sm leading-6 text-muted">
-              正在与 Logto 交换令牌并恢复你的登录态，请稍候。
+              正在与 {getAuthProviderLabel()} 交换令牌并恢复你的登录态，请稍候。
             </p>
           </>
         )}

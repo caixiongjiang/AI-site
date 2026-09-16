@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { LoaderCircle, LogIn, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/components/auth/AuthProvider";
+import { getAuthProviderLabel } from "@/lib/auth-providers";
 
 export default function LoginPage() {
   const router = useRouter();
   const { isAuthenticated, isReady, login } = useAuth();
+  const providerLabel = getAuthProviderLabel();
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [nextPath, setNextPath] = useState("/");
@@ -33,11 +35,11 @@ export default function LoginPage() {
     try {
       await login(nextPath);
     } catch (loginError) {
-      setError(
-        loginError instanceof Error
-          ? loginError.message
-          : "跳转 Logto 登录失败，请重试"
-      );
+setError(
+          loginError instanceof Error
+            ? loginError.message
+            : "跳转登录失败，请重试"
+        );
     } finally {
       setIsSubmitting(false);
     }
@@ -53,13 +55,13 @@ export default function LoginPage() {
           </div>
           <h1 className="mt-5 text-2xl font-bold text-foreground">统一登录</h1>
           <p className="mt-2 text-sm leading-6 text-muted">
-            使用 Logto 完成身份认证，登录后即可访问知识库、Agent 和文件操作能力。
+            使用 {providerLabel} 完成身份认证，登录后即可访问知识库、Agent 和文件操作能力。
           </p>
         </div>
 
         <div className="space-y-4">
           <div className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-4 text-sm leading-6 text-muted">
-            当前页面不会直接采集用户名和密码，点击下方按钮后会跳转到你部署好的 Logto 服务端完成登录。
+            当前页面不会直接采集用户名和密码，点击下方按钮后会跳转到 {providerLabel} 完成登录。
           </div>
           {error && (
             <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
@@ -78,7 +80,7 @@ export default function LoginPage() {
             ) : (
               <LogIn className="h-4 w-4" />
             )}
-            {isSubmitting ? "正在跳转到 Logto..." : "前往 Logto 登录"}
+            {isSubmitting ? "正在跳转..." : `前往 ${providerLabel} 登录`}
           </button>
         </div>
       </div>

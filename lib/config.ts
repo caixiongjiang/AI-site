@@ -57,16 +57,31 @@ export function getCurrentUserId(): string {
 }
 
 /**
+ * 获取 query 通道（WS / react-pdf / img 直读）使用的鉴权 token。
+ *
+ * 这些通道无法自定义请求头，只能把凭证放进 URL：
+ * - OA 模式下后端要求校验本域 JWT，因此必须带 accessToken
+ * - Logto 模式沿用原有 user_id 通道（后端透传，保持兼容）
+ */
+export function getQueryAuthToken(): string {
+  const provider = (process.env.NEXT_PUBLIC_AUTH_PROVIDER || "logto").toLowerCase();
+  if (provider === "oa") {
+    return getAuthToken() || getCurrentUserId();
+  }
+  return getCurrentUserId();
+}
+
+/**
  * 推导知识库对话 WebSocket 的连接 URL。
  *
  * 规则：
  * - 优先用 NEXT_PUBLIC_CHAT_WS_URL（允许部署时显式覆盖完整 URL，含协议）
  * - 其次基于 API_CONFIG.BASE_URL 推导：http(s) -> ws(s)
  * - 兜底：基于 window.location.origin（同源部署）
- * - 自动追加 ?token=<user_id> 用于鉴权（与后端 §4.1 query token 通道一致）
+ * - 自动追加 ?token=<accessToken|user_id> 用于鉴权（与后端 query token 通道一致）
  */
 export function getChatWsUrl(path: string = "/api/chat/ws"): string {
-  const userId = getCurrentUserId();
+  const token = getQueryAuthToken();
   const explicit = process.env.NEXT_PUBLIC_CHAT_WS_URL;
 
   let baseUrl: string;
@@ -93,7 +108,7 @@ export function getChatWsUrl(path: string = "/api/chat/ws"): string {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
 
   const separator = normalizedPath.includes("?") ? "&" : "?";
-  return `${wsUrl}${normalizedPath}${separator}token=${encodeURIComponent(userId)}`;
+  return `${wsUrl}${normalizedPath}${separator}token=${encodeURIComponent(token)}`;
 }
 
 /**

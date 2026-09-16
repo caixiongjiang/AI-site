@@ -9,7 +9,7 @@ import {
   setAuthSession,
 } from "@/lib/auth";
 import { migrateGuestHomeConversations } from "@/lib/home-chat";
-import { buildLogtoLogoutUrl, startLogtoSignIn } from "@/lib/logto";
+import { getAuthProvider } from "@/lib/auth-providers";
 
 interface AuthContextValue {
   isAuthenticated: boolean;
@@ -46,7 +46,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       token,
       user,
       login: async (nextPath = "/") => {
-        await startLogtoSignIn(nextPath);
+        await getAuthProvider().startSignIn(nextPath);
       },
       completeLogin: (nextSession: AuthSession) => {
         migrateGuestHomeConversations(
@@ -61,7 +61,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         let logoutUrl = "/login";
 
         try {
-          logoutUrl = await buildLogtoLogoutUrl(session?.idToken);
+          logoutUrl = await getAuthProvider().buildLogoutUrl(session?.idToken);
         } catch {
           logoutUrl = "/login";
         }
